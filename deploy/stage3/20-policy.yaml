@@ -1,0 +1,56 @@
+# Policy Engine (Этап 3): декларативные правила (JSON) → действие и вердикт.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-policy
+  namespace: mlscan-analytics
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "3"}
+data:
+  policy.json: |
+    {
+      "rules": [
+        {
+          "id": "block-rce",
+          "when": {"check_id_in": ["A-01", "A-13", "A-14", "A-15", "A-16", "A-17"], "min_confidence": 0.8},
+          "action": "block", "verdict": "Malicious",
+          "reason": "RCE-конструкции десериализации (опасные глобалы/форматы)"
+        },
+        {
+          "id": "block-code-exec",
+          "when": {"check_id_in": ["A-05", "F-32"], "min_confidence": 0.8},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Исполнение кода при загрузке (exec/compile в памяти)"
+        },
+        {
+          "id": "block-process-egress",
+          "when": {"check_id_in": ["F-30", "F-31"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Запуск процессов или сетевые обращения при загрузке"
+        },
+        {
+          "id": "block-tamper",
+          "when": {"check_id_in": ["F-20", "F-21", "F-22", "F-26"], "min_confidence": 0.8},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Модификация состояния процесса (builtins/import-хуки)"
+        },
+        {
+          "id": "allow-clean",
+          "when": {"max_severity_at_most": "info"},
+          "action": "allow", "verdict": "Safe",
+          "reason": "Опасных признаков не обнаружено"
+        },
+        {
+          "id": "quarantine-medium",
+          "when": {"min_severity": "medium"},
+          "action": "quarantine", "verdict": "Needs review",
+          "reason": "Находки среднего уровня требуют разбора"
+        },
+        {
+          "id": "allow-low",
+          "when": {"min_severity": "low"},
+          "action": "allow", "verdict": "Safe",
+          "reason": "Только низкоуровневые замечания"
+        }
+      ],
+      "default": {"action": "quarantine", "verdict": "Needs review", "reason": "Недостаточно данных"}
+    }

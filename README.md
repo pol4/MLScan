@@ -25,6 +25,7 @@
 | [`poc/runs.txt`](./poc/runs.txt) | Пример собранного отчёта PoC по демонстрационным данным |
 | [`deploy/stage1/`](./deploy/stage1) | **Этап 1:** развёртывание укреплённой песочницы в кластере (Kata, deception, sinkhole, NetworkPolicy, Falco) |
 | [`deploy/stage2/`](./deploy/stage2) | **Этап 2:** сервис тестирования (приём артефактов, запуск песочницы, нормализация, вердикт) |
+| [`deploy/stage3/`](./deploy/stage3) | **Этап 3:** аналитический движок + UI (скоринг, Policy Engine, evidence store, отчёты) |
 
 ### Документация
 
@@ -99,6 +100,17 @@ bash deploy/stage2/apply.sh                             # сервис тест�
 bash deploy/stage2/run-scan.sh poc/scan/evil0.pkl       # => Malicious (A-01, F-30)
 bash deploy/stage2/run-scan.sh poc/scan/evil2.pkl       # => Malicious (F-32, F-20)
 bash deploy/stage2/run-scan.sh poc/scan/evil6.pkl       # => Malicious (F-31, F-32)
+```
+
+**Этап 3 — Аналитический движок + UI** развёрнут в namespace `mlscan-analytics`: собирает
+результаты сервиса тестирования, считает риск-скор, применяет Policy Engine, ведёт
+append-only Evidence Store (hash-chain) и отдаёт отчёты (JSON/Markdown/SARIF) и веб-UI.
+Манифесты — в [`deploy/stage3/`](./deploy/stage3).
+
+```bash
+bash deploy/stage3/apply.sh
+bash deploy/stage3/run-demo.sh        # sync + вердикты + проверка evidence
+# UI: http://rtx-cluster:30808
 ```
 
 ---

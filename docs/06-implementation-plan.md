@@ -16,7 +16,7 @@ ML-моделей в формате pickle (см. `Concept.md` и `docs/01..05`)
 | **0** | **PoC (первый шаг)** | Один файл: статика + динамика в Docker + поведение → Markdown | Срез всех 3 компонент | ✅ опубликован |
 | 1 | Укрепление песочницы | Kata-микро-ВМ, eBPF (Falco), deception/canary, sinkhole, NetworkPolicy | Компонента 1 (Sandbox) | ✅ развёрнут |
 | 2 | Сервис тестирования | Полноценные probe-наборы, нормализация результатов, очереди | Компонента 2 (Testing Service) | ✅ развёрнут |
-| 3 | Аналитический движок + UI | Корреляция, скоринг, Policy Engine, реестр, отчёты | Компонента 3 (Analytics+UI) | — |
+| 3 | Аналитический движок + UI | Корреляция, скоринг, Policy Engine, реестр, отчёты | Компонента 3 (Analytics+UI) | ✅ развёрнут |
 | 4 | Интеграции | CI/CD gate, Model Registry, SOC/SIEM, threat-intel | Сквозные | — |
 | 5 | Промышленная эксплуатация | GPU-изоляция, масштабирование, SLA, red-team | NFR | — |
 
@@ -285,15 +285,26 @@ benchmark-модели с `predict` нет. Примеры отравлений 
 (functional/robustness/backdoor/privacy/adversarial), PVC/стриминг для крупных артефактов,
 экранирование выходов модели. Текущий транспорт артефакта — ConfigMap (≤ ~900 КиБ).
 
-## 4. Этап 3 — Аналитический движок + UI
+## 4. Этап 3 — Аналитический движок + UI ✅ (реализован)
 
-- Orchestrator L0–L4, Correlation & Scoring (`04-risk-analysis-decision.md`), Policy Engine (OPA/Rego).
-- Evidence Store (append-only, подпись), Knowledge Base (детекторы/правила/baseline/IoC).
-- Report Generator (JSON/PDF/HTML/SARIF), Web UI (очередь, карточка, findings explorer,
-  behavior, policy editor, дашборды), Model Registry.
-- Человек в контуре: разбор `Needs review`/`Dangerous`/`Inconclusive`, обратная связь в детекторы.
+**Статус:** развёрнут в `mlscan-analytics` и проверен. Артефакты — `deploy/stage3/`,
+подробности — `deploy/stage3/README.md`.
 
-Выход: единое управление, анализ и заключение (Компонента 3).
+Реализовано (stdlib-only):
+- **Сбор результатов** сервиса тестирования (poller + `POST /sync`).
+- **Скоринг** (`risk_score = min(10, max_вес + 0.2·Σпрочих)`) и корреляция L1/L3.
+- **Policy Engine** (`policy.json`): декларативные правила → `action`/`verdict`
+  (`block-rce`, `block-code-exec`, `block-process-egress`, `block-tamper`, `allow-clean`,
+  `quarantine-medium`, `allow-low`).
+- **Evidence Store**: append-only `/data/evidence.jsonl` с hash-цепочкой + `GET /api/evidence/verify`.
+- **Report Generator**: JSON / Markdown / SARIF 2.1.0.
+- **Web UI** (dashboard + карточка артефакта, NodePort 30808) и JSON-API.
+
+Проверки (evidence): `evil6` → `Malicious`, score 10.0, policy `block-rce→block`, отчёты
+`.md`/`.sarif` валидны; `benign`/`toy` → `Safe`; evidence chain `ok`.
+
+Осталось: OPA/Rego вместо JSON-правил, очередь/retest, Knowledge Base (IoC/baseline),
+Model Registry, PDF/HTML-отчёты, auth для UI, человек-в-контуре (feedback в детекторы).
 
 ## 5. Этап 4 — Интеграции и эксплуатация
 
