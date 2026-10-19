@@ -376,4 +376,5 @@ GPU-изоляция не применялась (шаблон готов); **г
 - `docs/03-isolation.md` — методы изоляции (этап 1).
 - `docs/04-risk-analysis-decision.md` — обработка результатов и решения (этап 3).
 - `docs/05-architecture.md` — детальная архитектура.
+- `docs/07-implemented-architecture.md` — реализованная архитектура (as-built): компоненты и сетевая схема.
 - `poc/mlscan_poc.py` — реализация первого шага (этот PoC).

@@ -583,6 +583,7 @@ sequenceDiagram
 - `docs/04-risk-analysis-decision.md` — обработка результатов и решения.
 - `docs/05-architecture.md` — детальная архитектура, API, модель данных, развёртывание.
 - `docs/06-implementation-plan.md` — план реализации; первый шаг — минимальный PoC.
+- `docs/07-implemented-architecture.md` — реализованная архитектура (as-built): компоненты и схема сетевого взаимодействия.
 - `poc/mlscan_poc.py` — реализация PoC (один файл, Docker-песочница, Markdown-отчёт).
 
 **Развёрнутая реализация (кластер rtx-cluster):**
