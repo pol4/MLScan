@@ -589,6 +589,7 @@ sequenceDiagram
 - `deploy/stage1/` — укреплённая песочница (Kata-микро-ВМ, deception, sinkhole, NetworkPolicy, Falco eBPF).
 - `deploy/stage2/` — сервис тестирования (HTTP API, запуск песочницы, нормализация, вердикт).
 - `deploy/stage3/` — аналитический движок + UI (скоринг, Policy Engine, evidence store, отчёты).
+- `deploy/stage4/` — интеграции (Model Registry, CI/CD gate, SIEM-экспорт, threat-intel).
 
 ## Приложение D. Открытые вопросы для уточнения
 1. Требуемый уровень изоляции (микро-ВМ обязателен или достаточно gVisor-контейнеров)?

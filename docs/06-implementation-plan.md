@@ -17,7 +17,7 @@ ML-моделей в формате pickle (см. `Concept.md` и `docs/01..05`)
 | 1 | Укрепление песочницы | Kata-микро-ВМ, eBPF (Falco), deception/canary, sinkhole, NetworkPolicy | Компонента 1 (Sandbox) | ✅ развёрнут |
 | 2 | Сервис тестирования | Полноценные probe-наборы, нормализация результатов, очереди | Компонента 2 (Testing Service) | ✅ развёрнут |
 | 3 | Аналитический движок + UI | Корреляция, скоринг, Policy Engine, реестр, отчёты | Компонента 3 (Analytics+UI) | ✅ развёрнут |
-| 4 | Интеграции | CI/CD gate, Model Registry, SOC/SIEM, threat-intel | Сквозные | — |
+| 4 | Интеграции | CI/CD gate, Model Registry, SOC/SIEM, threat-intel | Сквозные | ✅ развёрнут |
 | 5 | Промышленная эксплуатация | GPU-изоляция, масштабирование, SLA, red-team | NFR | — |
 
 Принцип: **каждый этап расширяет работающий срез**, не переписывая предыдущий.
@@ -306,11 +306,24 @@ benchmark-модели с `predict` нет. Примеры отравлений 
 Осталось: OPA/Rego вместо JSON-правил, очередь/retest, Knowledge Base (IoC/baseline),
 Model Registry, PDF/HTML-отчёты, auth для UI, человек-в-контуре (feedback в детекторы).
 
-## 5. Этап 4 — Интеграции и эксплуатация
+## 5. Этап 4 — Интеграции ✅ (реализован)
 
-- CI/CD gate (блок сборки при ≥ Dangerous), Model Registry, SOC/SIEM, тикет-системы.
-- GPU-изоляция (MIG/vGPU), горизонтальное масштабирование, SLA, непрерывный retest.
-- Регулярные red-team/эскейп-тесты; threat-intel sync; метрики качества (TPR/FPR/coverage).
+**Статус:** развёрнут в `mlscan-integrations` и проверен. Артефакты — `deploy/stage4/`,
+подробности — `deploy/stage4/README.md`.
+
+Реализовано (stdlib-only):
+- **Model Registry** — решения по артефактам (ключ SHA-256): вердикт, action, риск-скор, проверки;
+  синхронизация из Analytics (`poller` / `POST /sync`).
+- **CI/CD Gate** — `GET /gate?sha256=|?name=` (по реестру) и `POST /gate/scan` (on-demand скан);
+  хелпер `mlscan-gate.sh` с кодами выхода (0 allow / 1 block / 2 review); пример workflow.
+- **SIEM/SOC Export** — NDJSON (`/events`) и CEF (`/export/cef`).
+- **Threat Intel** — `known_bad_sha256` (seed: демо-образцы) и `watch_checks`; учитывается в решении gate.
+
+Проверки (evidence): `/gate?sha256=<evil0>` → **403 block** (threat-intel); `/gate?name=benign` → **200 allow**;
+`mlscan-gate.sh evil4.pkl` → **exit 1 BLOCK**, `mlscan-gate.sh benign.pkl` → **exit 0 ALLOW**; CEF-строки формируются.
+
+Осталось (Этап 5): GPU-изоляция, масштабирование, SLA, непрерывный retest, тикет-системы,
+подпись реестра/attestation, внешние фиды threat-intel, admission-controller.
 
 ---
 

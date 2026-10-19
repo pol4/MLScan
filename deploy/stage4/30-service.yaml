@@ -1,0 +1,72 @@
+# Сервис интеграций (Компонента 4): Model Registry, CI/CD Gate, SIEM-экспорт, threat-intel.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlscan-integrations
+  namespace: mlscan-integrations
+  labels: {app: mlscan-integrations, app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "4"}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mlscan-integrations}
+  template:
+    metadata:
+      labels: {app: mlscan-integrations}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: integrations
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command: ["python", "/opt/svc/mlscan_integrations.py"]
+        env:
+        - {name: ANALYTICS_URL, value: "http://mlscan-analytics.mlscan-analytics.svc.cluster.local:8080"}
+        - {name: TESTING_URL, value: "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080"}
+        - {name: DATA_DIR, value: /data}
+        - {name: INTEL_PATH, value: /etc/mlscan/intel.json}
+        - {name: PORT, value: "8080"}
+        - {name: POLL_INTERVAL, value: "20"}
+        - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+        - {name: PYTHONUTF8, value: "1"}
+        - {name: TMPDIR, value: /tmp}
+        ports:
+        - {name: http, containerPort: 8080}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+        readinessProbe:
+          httpGet: {path: /healthz, port: 8080}
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        resources:
+          requests: {cpu: "100m", memory: "128Mi"}
+          limits: {cpu: "500m", memory: "512Mi"}
+        volumeMounts:
+        - {name: svc-code, mountPath: /opt/svc, readOnly: true}
+        - {name: intel, mountPath: /etc/mlscan, readOnly: true}
+        - {name: data, mountPath: /data}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - {name: svc-code, configMap: {name: mlscan-integrations-code}}
+      - {name: intel, configMap: {name: mlscan-intel}}
+      - {name: data, persistentVolumeClaim: {claimName: mlscan-integrations-data}}
+      - {name: tmp, emptyDir: {sizeLimit: 128Mi, medium: Memory}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlscan-integrations
+  namespace: mlscan-integrations
+  labels: {app: mlscan-integrations}
+spec:
+  type: NodePort
+  selector: {app: mlscan-integrations}
+  ports:
+  - {name: http, port: 8080, targetPort: 8080, nodePort: 30809}

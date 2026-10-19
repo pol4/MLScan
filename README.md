@@ -26,6 +26,7 @@
 | [`deploy/stage1/`](./deploy/stage1) | **Этап 1:** развёртывание укреплённой песочницы в кластере (Kata, deception, sinkhole, NetworkPolicy, Falco) |
 | [`deploy/stage2/`](./deploy/stage2) | **Этап 2:** сервис тестирования (приём артефактов, запуск песочницы, нормализация, вердикт) |
 | [`deploy/stage3/`](./deploy/stage3) | **Этап 3:** аналитический движок + UI (скоринг, Policy Engine, evidence store, отчёты) |
+| [`deploy/stage4/`](./deploy/stage4) | **Этап 4:** интеграции (Model Registry, CI/CD gate, SIEM-экспорт, threat-intel) |
 
 ### Документация
 
@@ -111,6 +112,16 @@ append-only Evidence Store (hash-chain) и отдаёт отчёты (JSON/Markd
 bash deploy/stage3/apply.sh
 bash deploy/stage3/run-demo.sh        # sync + вердикты + проверка evidence
 # UI: http://rtx-cluster:30808
+```
+
+**Этап 4 — Интеграции** развёрнут в namespace `mlscan-integrations`: Model Registry (по SHA-256),
+CI/CD gate (по реестру и on-demand), SIEM-экспорт (NDJSON/CEF), threat-intel.
+Манифесты — в [`deploy/stage4/`](./deploy/stage4).
+
+```bash
+bash deploy/stage4/apply.sh
+bash deploy/stage4/run-demo.sh                       # registry + gate + CEF
+bash deploy/stage4/mlscan-gate.sh poc/scan/evil4.pkl # exit 1 = BLOCK
 ```
 
 ---

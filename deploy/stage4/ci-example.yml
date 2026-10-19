@@ -1,0 +1,13 @@
+# Пример интеграции в CI (псевдо-GitHub Actions).
+# Скопируйте в .github/workflows/ и адаптируйте URL gate-сервиса.
+name: mlscan-model-gate
+on: [push]
+jobs:
+  scan-model:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: MLScan gate (scans artifact, blocks pipeline on Malicious)
+        run: |
+          bash deploy/stage4/mlscan-gate.sh model.pkl pickle http://rtx-cluster:30809
+      # exit code: 0=allow, 1=block (pipeline fails), 2=review
