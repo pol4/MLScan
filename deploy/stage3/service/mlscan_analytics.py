@@ -387,7 +387,8 @@ document.getElementById('f').addEventListener('submit',e=>{
   e.preventDefault();const file=document.querySelector('input[type=file]').files[0];if(!file)return;
   const ext=(file.name.split('.').pop()||'').toLowerCase();
   const fmt={pt:'torch',pth:'torch',bin:'torch',ckpt:'torch',npy:'numpy',npz:'numpy',
-             joblib:'joblib',dill:'dill',cloudpickle:'cloudpickle'}[ext]||'pickle';
+             joblib:'joblib',dill:'dill',cloudpickle:'cloudpickle',
+             zip:'zip',tar:'tar',gz:'tar',tgz:'tar'}[ext]||'pickle';
   const xhr=new XMLHttpRequest();
   xhr.open('POST','/upload?name='+encodeURIComponent(file.name)+'&fmt='+fmt);
   const box=document.getElementById('uprog'),bar=document.getElementById('ubar');
@@ -435,14 +436,31 @@ def ui_index() -> bytes:
 
 def ui_artifact(sid: str) -> bytes | None:
     rec = _index.get(sid)
-    live = None if rec else progress_of(sid)
-    if not rec and not live:
-        return None
+    live = None
     if not rec:
-        return _page("артефакт", f"<p><a href='/'>← к обзору</a></p><h2>{live.get('name')}</h2>"
-                                 f"<p>Состояние: <b>{live.get('state')}/{live.get('stage')}</b> "
-                                 f"({live.get('progress')}%)</p>"
-                                 f"<div class='pbar'><span style='width:{live.get('progress',0)}%'></span></div>")
+        live = progress_of(sid)
+        # Если скан уже завершён, но ещё не синхронизирован — анализируем «на месте».
+        if live and live.get("state") == "done":
+            try:
+                _append(analyze(live))
+                rec = _index.get(sid)
+            except Exception:  # noqa: BLE001
+                rec = None
+    if not rec:
+        if not live:
+            return None
+        # «Живая» страница прогресса с автообновлением до появления результата.
+        js = ("<script>setInterval(function(){fetch('/api/progress/%s')"
+              ".then(function(r){return r.ok?r.json():null;})"
+              ".then(function(d){if(d&&(d.state==='done'||d.state==='error'))location.reload();})"
+              ".catch(function(){});},3000);</script>") % sid
+        return _page("артефакт",
+                     f"<p><a href='/'>← к обзору</a></p><h2>{live.get('name')}</h2>"
+                     f"<p>Проверка выполняется: <b>{live.get('state')}/{live.get('stage')}</b> "
+                     f"({live.get('progress')}%)</p>"
+                     f"<div class='pbar'><span style='width:{live.get('progress',0)}%'></span></div>"
+                     f"<p style='color:#9aa4b2'>Страница обновится автоматически, когда результат будет готов.</p>",
+                     js)
     v = rec.get("verdict", "")
     rows = "".join(
         f"<tr><td>{f['level']}</td><td>{f['check_id']}</td><td>{f['severity']}</td>"
