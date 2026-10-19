@@ -316,6 +316,24 @@ import tempfile
 import time
 import zipfile
 
+# Совместимость с pickle в стиле Python 2 (модуль __builtin__) — чтобы вредоносный
+# payload действительно ДОСТИГ исполнения и дал динамические сигналы.
+try:
+    import builtins as _builtins
+    sys.modules.setdefault("__builtin__", _builtins)
+except Exception:
+    pass
+try:
+    import copyreg as _copyreg
+    sys.modules.setdefault("copy_reg", _copyreg)
+except Exception:
+    pass
+try:
+    import pickle as _pickle_mod
+    sys.modules.setdefault("cPickle", _pickle_mod)
+except Exception:
+    pass
+
 # Поддержка двух способов запуска:
 #   * base64-бутстрап (docker PoC): sys.argv = ['-c', <b64>, fmt, name]
 #   * прямой запуск (Kubernetes Job): sys.argv = ['harness.py', fmt, name]
@@ -413,7 +431,7 @@ def hook(event, args):
 def unpickle_bytes(data, errors):
     import pickle
     try:
-        return pickle.loads(data, fix_imports=False, encoding="latin1")
+        return pickle.loads(data, fix_imports=True, encoding="latin1")
     except Exception as e:
         errors.append("pickle.loads: %s: %s" % (type(e).__name__, e))
     try:
@@ -1001,8 +1019,16 @@ def decide(static: dict[str, Any], dynamic: dict[str, Any]) -> tuple[str, str]:
     if max_sev in ("critical", "high") and hard_dynamic:
         return "Malicious", f"Максимальная серьёзность {max_sev}; динамика: " + "; ".join(dyn_reasons)
     if max_sev in ("critical", "high"):
-        return "Dangerous", f"Находки уровня {max_sev} без подтверждения динамикой: " + \
-            "; ".join(dyn_reasons or ["требуется подтверждение динамикой"])
+        st = dynamic.get("status")
+        if st in (None, "skipped"):
+            note = "динамический этап не выполнялся"
+        elif st in ("error", "no-result"):
+            note = "динамический этап завершился без результата"
+        else:
+            note = ("динамический этап выполнен, но жёстких сигналов исполнения "
+                    "(процессы/сеть/exec) не зафиксировано")
+        extra = ("; " + "; ".join(dyn_reasons)) if dyn_reasons else ""
+        return "Dangerous", f"Опасные конструкции уровня {max_sev}: {note}{extra} — требуется ручное подтверждение"
     if hard_dynamic:
         return "Dangerous", "Динамика: " + "; ".join(dyn_reasons)
     if dynamic.get("status") == "skipped":

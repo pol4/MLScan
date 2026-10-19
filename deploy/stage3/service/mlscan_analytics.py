@@ -48,6 +48,11 @@ TEST_HOST = _u.hostname
 TEST_PORT = _u.port or 80
 
 
+def _esc(x) -> str:
+    s = "" if x is None else str(x)
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 # ----------------------------------------------------------------------------
 # HTTP к сервису тестирования
 # ----------------------------------------------------------------------------
@@ -436,9 +441,8 @@ def ui_index() -> bytes:
 
 def ui_artifact(sid: str) -> bytes | None:
     rec = _index.get(sid)
-    live = None
+    live = progress_of(sid)
     if not rec:
-        live = progress_of(sid)
         # Если скан уже завершён, но ещё не синхронизирован — анализируем «на месте».
         if live and live.get("state") == "done":
             try:
@@ -479,6 +483,18 @@ def ui_artifact(sid: str) -> bytes | None:
             f"<a href='/reports/{sid}.md'>Markdown</a> · <a href='/reports/{sid}.sarif'>SARIF</a></p>"
             "<table><tr><th>Ур.</th><th>ID</th><th>Severity</th><th>Увер.</th><th>Находка</th>"
             "<th>Доказательство</th></tr>" + rows + "</table>")
+    sb = (live or {}).get("sandbox") or {}
+    if sb:
+        load = sb.get("load") or {}
+        sm = {k: v for k, v in (sb.get("summary") or {}).items() if k != "imports"}
+        errs = load.get("errors") or []
+        body += ("<h3>Динамический этап (L2/L3)</h3>"
+                 f"<p>Статус: <b>{_esc(sb.get('status'))}</b>; загрузка: "
+                 f"{'ok' if load.get('ok') else 'fail'}; тип: {_esc(load.get('type'))}</p>"
+                 f"<p>Сигналы: <code>{_esc(json.dumps(sm, ensure_ascii=False))}</code></p>")
+        if errs:
+            body += ("<p>Ошибки загрузки:<br>"
+                     + "".join(f"<code>{_esc(e)}</code><br>" for e in errs[:5]) + "</p>")
     return _page(rec.get("name", "артефакт"), body)
 
 
