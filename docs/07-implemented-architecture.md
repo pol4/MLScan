@@ -39,6 +39,8 @@ MLScan — система автоматического анализа опас
 | hostpath-provisioner (`cdkbot`) | 1.5.0 | StorageClass `microk8s-hostpath` |
 | Falco | **0.45.0** (Helm-чарт `falco-9.2.0`), falcoctl 0.14.2 | eBPF runtime-мониторинг (driver `modern_ebpf`) |
 | Python | **3.12.14** (образ `python:3.12-slim`) | рантайм всех сервисов и in-sandbox harness — **только стандартная библиотека** |
+| PyTorch (CPU) | **2.14.1+cpu** (образ песочницы `mlscan-sandbox`, `deploy/sandbox-image/`) + numpy 2.5.4, joblib, dill, cloudpickle | динамическая загрузка torch-моделей в песочнице |
+| Kaniko | executor v1.23.2 | сборка образа песочницы в in-cluster registry |
 | `pickletools` / `zipfile` / `sys.addaudithook` | Python 3.12 stdlib | статический разбор (L1) и наблюдаемость (L2/L3) |
 | Helm | v3.15.4 | установка Falco |
 | OpenSSL | 3.0.13 | утилита узла (доступна) |
@@ -57,7 +59,7 @@ MLScan — система автоматического анализа опас
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
 | `sinkhole` (Deployment + ClusterIP Service) | :8080 HTTP, :4444/9001/1337 TCP | in-cluster «ловушка»: единственный разрешённый egress; логирует обращения |
-| sandbox Job (по запросу) | `runtimeClassName: kata` (Kata 3.32.0) | запуск harness из PoC над артефактом |
+| sandbox Job (по запросу) | `runtimeClassName: kata` (Kata 3.32.0), образ `mlscan-sandbox` | запуск harness из PoC над артефактом (torch/numpy) |
 | `mlscan-redteam` (Job) | kata | escape-тест изоляции (Этап 5) |
 | ConfigMap `mlscan-harness`, `mlscan-samples`, `mlscan-deception*`, `mlscan-sinkhole`, `mlscan-redteam` | — | код harness, демо-данные, honeypot-файлы, sinkhole-сервер, redteam-скрипт |
 | NetworkPolicy `default-deny-all`, `allow-dns-egress`, `sandbox-to-sinkhole`, `sinkhole-ingress` | — | сетевая изоляция (Calico) |

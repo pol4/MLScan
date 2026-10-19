@@ -42,6 +42,7 @@ SHA-256, размером, прогрессом проверки, вердикт
 | [`deploy/stage3/`](./deploy/stage3) | **Этап 3:** аналитический движок + UI (скоринг, Policy Engine, evidence store, отчёты) |
 | [`deploy/stage4/`](./deploy/stage4) | **Этап 4:** интеграции (Model Registry, CI/CD gate, SIEM-экспорт, threat-intel) |
 | [`deploy/stage5/`](./deploy/stage5) | **Этап 5:** эксплуатация (метрики/качество, retest, red-team, PDB, аттестация) |
+| [`deploy/sandbox-image/`](./deploy/sandbox-image) | Образ песочницы `mlscan-sandbox` (torch CPU) — сборка через Kaniko |
 
 ### Документация
 

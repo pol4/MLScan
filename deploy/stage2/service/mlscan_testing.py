@@ -51,6 +51,7 @@ MAX_UPLOAD = int(os.environ.get("MAX_UPLOAD", str(20 * 1024**3)))
 JOB_MEMORY = os.environ.get("JOB_MEMORY", "2Gi")
 JOB_EPHEMERAL = os.environ.get("JOB_EPHEMERAL", "8Gi")
 TMP_SIZE = os.environ.get("TMP_SIZE", "6Gi")
+SANDBOX_IMAGE = os.environ.get("SANDBOX_IMAGE", "python:3.12-slim")
 
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 K8S_HOST = os.environ.get("KUBERNETES_SERVICE_HOST", "")
@@ -176,7 +177,7 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                                         "seccompProfile": {"type": "RuntimeDefault"}},
                     "containers": [{
                         "name": "sandbox",
-                        "image": "python:3.12-slim", "imagePullPolicy": "IfNotPresent",
+                        "image": SANDBOX_IMAGE, "imagePullPolicy": "IfNotPresent",
                         "command": ["/bin/sh", "-c", cmd],
                         "env": [{"name": "ARTIFACT_URL", "value": artifact_url},
                                 {"name": "MODEL_NAME", "value": name},

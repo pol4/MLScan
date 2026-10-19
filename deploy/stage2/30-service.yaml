@@ -38,6 +38,7 @@ spec:
         - {name: JOB_MEMORY, value: "2Gi"}
         - {name: JOB_EPHEMERAL, value: "8Gi"}
         - {name: TMP_SIZE, value: "6Gi"}
+        - {name: SANDBOX_IMAGE, value: "localhost:32000/mlscan-sandbox:latest"}
         - {name: MAX_UPLOAD, value: "21474836480"}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: PYTHONUTF8, value: "1"}

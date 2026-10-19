@@ -133,9 +133,9 @@ NetworkPolicy `sandbox-to-testing-artifacts`; Job: `runcmd` с `urlretrieve` + `
   (`sys.modules['__builtin__'] = builtins`, `copy_reg`/`cPickle`, `fix_imports=True`) — теперь
   такие payload'ы реально исполняются и дают сигналы (проверено на `MaliciousPickles-main.zip` →
   `Malicious`, `subprocess=1`, `mem_exec=4`).
-- **Нужны библиотеки, которых нет в песочнице** (например, `torch`): загрузка не доходит до
-  payload. Базовый образ — `python:3.12-slim` (без torch/numpy). Для полного динамического
-  тестирования torch-моделей нужен образ с torch (см. `deploy/stage2`/план); сейчас такие
-  модели получают `Dangerous` (статика) без динамического подтверждения.
+- **Нужны библиотеки, которых нет в песочнице** (например, `torch`): загрузка не доходила до
+  payload. **Решено**: собран образ `mlscan-sandbox` (torch CPU + numpy/joblib/dill/cloudpickle,
+  см. `deploy/sandbox-image/`) и подключён как `SANDBOX_IMAGE`. Теперь torch-модели загружаются
+  и их payload'ы исполняются (проверено: `pytorch_model.bin` 265 МБ → `Malicious`, `mem_exec=2`).
 - Формулировка вердикта уточнена: различает «динамика не выполнялась» / «завершилась без
   результата» / «выполнена, но жёстких сигналов нет».
