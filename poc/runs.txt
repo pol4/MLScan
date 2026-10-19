@@ -1,0 +1,367 @@
+# Отчёт MLScanner PoC
+
+- **Артефакт:** `evil0.pkl`
+- **Размер:** 48 байт
+- **SHA-256:** `de4e240c47bb26dc9eb77e0cae169c4798845fe4aa8929c710bc7e92bcbb88bd`
+- **Формат:** `pickle`
+- **Вердикт:** **Malicious** — Максимальная серьёзность critical; динамика: запуск процессов/команд: 1; поведенческие находки: F-30
+- **Дата:** 2026-10-19 19:22:54
+
+## 1. Статический анализ (L1)
+| ID | Кат. | Severity | Уверенность | Находка | Доказательство |
+|----|------|----------|-------------|---------|----------------|
+| A-01 | A | critical | 0.90 | Опасный глобал posix system (evil0.pkl) | `GLOBAL posix system` |
+| A-02 | A | medium | 0.60 | Присутствуют REDUCE/BUILD (evil0.pkl) — вызовы при десериализации | `opcodes=['REDUCE']` |
+
+## 2. Динамический анализ в песочнице (L2)
+- Статус: `ok`, exit code: `0`, wall: 0.23 с
+- Загрузка: ok=`True`, тип=`int`, время=0.0057 с
+- Сеть: 0, процессы: 1, exec: 0 (в памяти: 0), dlopen: 0, запись файлов: 0, maxRSS: 17468 КБ
+
+Наблюдаемые события (первые 40):
+
+| t | phase | event | args |
+|---|-------|-------|------|
+| 2852.8168 | load | open | `'/tmp/mlscan-in-c0o1tqd_/evil0.pkl', 'r'` |
+| 2852.8168 | load | import | `'pickle', None` |
+| 2852.8168 | load | open | `'/usr/local/lib/python3.11/__pycache__/pickle.cpython-311.pyc', 'r'` |
+| 2852.8168 | load | open | `'/usr/local/lib/python3.11/pickle.py', 'r'` |
+| 2852.8212 | load | import | `'_compat_pickle', None` |
+| 2852.8212 | load | open | `'/usr/local/lib/python3.11/__pycache__/_compat_pickle.cpython-311.pyc', 'r'` |
+| 2852.8212 | load | open | `'/usr/local/lib/python3.11/_compat_pickle.py', 'r'` |
+| 2852.8217 | load | import | `'_pickle', None` |
+| 2852.8218 | load | import | `'_pickle', '/usr/local/lib/python3.11/lib-dynload/_pickle.cpython-311-x86_64-linux-gnu.so'` |
+| 2852.8219 | load | import | `'org.python.core', None` |
+| 2852.8219 | load | import | `'org.python', None` |
+| 2852.8219 | load | import | `'org', None` |
+| 2852.8221 | load | os.system | `b'echo pwned'` |
+
+## 3. Поведенческое тестирование (L3)
+Находки по поведению:
+
+| ID | Severity | Находка | Доказательство |
+|----|----------|---------|----------------|
+| F-30 | high | Запуск внешних процессов/команд при загрузке (×1) | `os.system(b'echo pwned')` |
+
+- Загруженный объект: тип `int`, `0`
+- Обнаруженные callable: —
+
+Вызовы модели не обнаружены (payload действует на этапе загрузки).
+
+## Ограничения PoC
+- Наблюдаемость на уровне Python audit hooks + изоляции Docker (не eBPF и не микро-ВМ); при необходимости — `--runtime runsc` (gVisor).
+- Вредоносный payload может уклоняться от песочницы (sandbox evasion).
+- Отсутствие находок при пропущенной динамике трактуется как Inconclusive.
+
+# Отчёт MLScanner PoC
+
+- **Артефакт:** `evil1.pkl`
+- **Размер:** 53 байт
+- **SHA-256:** `7947b93d3a9ddc23c0c941599d937f7cb42a9530b0e1b09b0fbca6a20270c947`
+- **Формат:** `pickle`
+- **Вердикт:** **Malicious** — Максимальная серьёзность critical; динамика: запуск процессов/команд: 1; поведенческие находки: F-30
+- **Дата:** 2026-10-19 19:22:58
+
+## 1. Статический анализ (L1)
+| ID | Кат. | Severity | Уверенность | Находка | Доказательство |
+|----|------|----------|-------------|---------|----------------|
+| A-01 | A | critical | 0.90 | Опасный глобал posix system (evil1.pkl) | `GLOBAL posix system` |
+| A-02 | A | medium | 0.60 | Присутствуют REDUCE/BUILD (evil1.pkl) — вызовы при десериализации | `opcodes=['REDUCE']` |
+
+## 2. Динамический анализ в песочнице (L2)
+- Статус: `ok`, exit code: `0`, wall: 0.219 с
+- Загрузка: ok=`True`, тип=`int`, время=0.0064 с
+- Сеть: 0, процессы: 1, exec: 0 (в памяти: 0), dlopen: 0, запись файлов: 0, maxRSS: 17392 КБ
+
+Наблюдаемые события (первые 40):
+
+| t | phase | event | args |
+|---|-------|-------|------|
+| 2856.6757 | load | open | `'/tmp/mlscan-in-rdm2ev9b/evil1.pkl', 'r'` |
+| 2856.6758 | load | import | `'pickle', None` |
+| 2856.6758 | load | open | `'/usr/local/lib/python3.11/__pycache__/pickle.cpython-311.pyc', 'r'` |
+| 2856.6758 | load | open | `'/usr/local/lib/python3.11/pickle.py', 'r'` |
+| 2856.6801 | load | import | `'_compat_pickle', None` |
+| 2856.6802 | load | open | `'/usr/local/lib/python3.11/__pycache__/_compat_pickle.cpython-311.pyc', 'r'` |
+| 2856.6802 | load | open | `'/usr/local/lib/python3.11/_compat_pickle.py', 'r'` |
+| 2856.6807 | load | import | `'_pickle', None` |
+| 2856.6807 | load | import | `'_pickle', '/usr/local/lib/python3.11/lib-dynload/_pickle.cpython-311-x86_64-linux-gnu.so'` |
+| 2856.6809 | load | import | `'org.python.core', None` |
+| 2856.6809 | load | import | `'org.python', None` |
+| 2856.6809 | load | import | `'org', None` |
+| 2856.681 | load | os.system | `b'cat /etc/passwd'` |
+
+## 3. Поведенческое тестирование (L3)
+Находки по поведению:
+
+| ID | Severity | Находка | Доказательство |
+|----|----------|---------|----------------|
+| F-30 | high | Запуск внешних процессов/команд при загрузке (×1) | `os.system(b'cat /etc/passwd')` |
+
+- Загруженный объект: тип `int`, `0`
+- Обнаруженные callable: —
+
+Вызовы модели не обнаружены (payload действует на этапе загрузки).
+
+## Ограничения PoC
+- Наблюдаемость на уровне Python audit hooks + изоляции Docker (не eBPF и не микро-ВМ); при необходимости — `--runtime runsc` (gVisor).
+- Вредоносный payload может уклоняться от песочницы (sandbox evasion).
+- Отсутствие находок при пропущенной динамике трактуется как Inconclusive.
+
+# Отчёт MLScanner PoC
+
+- **Артефакт:** `evil2.pkl`
+- **Размер:** 105 байт
+- **SHA-256:** `470f22229c52200771baaf31971fa31a9141544cbf6511ec534ee9e8decd799a`
+- **Формат:** `pickle`
+- **Вердикт:** **Malicious** — Максимальная серьёзность critical; динамика: исполнение кода в памяти (exec <string>): 1; поведенческие находки: F-32, F-20
+- **Дата:** 2026-10-19 19:23:01
+
+## 1. Статический анализ (L1)
+| ID | Кат. | Severity | Уверенность | Находка | Доказательство |
+|----|------|----------|-------------|---------|----------------|
+| A-01 | A | critical | 0.90 | Опасный глобал builtins exec (evil2.pkl) | `GLOBAL builtins exec` |
+| A-02 | A | medium | 0.60 | Присутствуют REDUCE/BUILD (evil2.pkl) — вызовы при десериализации | `opcodes=['REDUCE']` |
+
+## 2. Динамический анализ в песочнице (L2)
+- Статус: `ok`, exit code: `0`, wall: 0.313 с
+- Загрузка: ok=`True`, тип=`NoneType`, время=0.0054 с
+- Сеть: 0, процессы: 0, exec: 2 (в памяти: 1), dlopen: 0, запись файлов: 0, maxRSS: 17720 КБ
+
+Наблюдаемые события (первые 40):
+
+| t | phase | event | args |
+|---|-------|-------|------|
+| 2859.8869 | load | open | `'/tmp/mlscan-in-tsw83gpd/evil2.pkl', 'r'` |
+| 2859.8869 | load | import | `'pickle', None` |
+| 2859.887 | load | open | `'/usr/local/lib/python3.11/__pycache__/pickle.cpython-311.pyc', 'r'` |
+| 2859.887 | load | open | `'/usr/local/lib/python3.11/pickle.py', 'r'` |
+| 2859.8913 | load | import | `'_compat_pickle', None` |
+| 2859.8914 | load | open | `'/usr/local/lib/python3.11/__pycache__/_compat_pickle.cpython-311.pyc', 'r'` |
+| 2859.8914 | load | open | `'/usr/local/lib/python3.11/_compat_pickle.py', 'r'` |
+| 2859.8919 | load | import | `'_pickle', None` |
+| 2859.8919 | load | import | `'_pickle', '/usr/local/lib/python3.11/lib-dynload/_pickle.cpython-311-x86_64-linux-gnu.so'` |
+| 2859.8921 | load | import | `'org.python.core', None` |
+| 2859.8921 | load | import | `'org.python', None` |
+| 2859.8921 | load | import | `'org', None` |
+| 2859.8922 | load | compile | `b"import builtins; builtins.setattr(builtins, 'abs', builtins.print)"` |
+| 2859.8923 | load | exec | `<code object <module> at 0x7f2109017e30, file "<string>", line 1>` |
+
+## 3. Поведенческое тестирование (L3)
+Находки по поведению:
+
+| ID | Severity | Находка | Доказательство |
+|----|----------|---------|----------------|
+| F-32 | high | Исполнение кода в памяти (exec) при загрузке (×1) | `exec с code <string>/<stdin>` |
+| F-20 | high | Модификация builtins при загрузке: abs | `builtins changed/added: ['abs']` |
+
+- Изменения состояния при загрузке: `{"builtins_changed": ["abs"]}`
+- Загруженный объект: тип `NoneType`, `None`
+- Обнаруженные callable: —
+
+Вызовы модели не обнаружены (payload действует на этапе загрузки).
+
+## Ограничения PoC
+- Наблюдаемость на уровне Python audit hooks + изоляции Docker (не eBPF и не микро-ВМ); при необходимости — `--runtime runsc` (gVisor).
+- Вредоносный payload может уклоняться от песочницы (sandbox evasion).
+- Отсутствие находок при пропущенной динамике трактуется как Inconclusive.
+
+# Отчёт MLScanner PoC
+
+- **Артефакт:** `evil3.pkl`
+- **Размер:** 87 байт
+- **SHA-256:** `f089fe8054b78227173c64e7e6d6ca35a47dc9fc838c2697cb4648fe168163f2`
+- **Формат:** `pickle`
+- **Вердикт:** **Malicious** — Максимальная серьёзность critical; динамика: попытки сетевого доступа: 12; исполнение кода в памяти (exec <string>): 3; поведенческие находки: F-31, F-32
+- **Дата:** 2026-10-19 19:23:04
+
+## 1. Статический анализ (L1)
+| ID | Кат. | Severity | Уверенность | Находка | Доказательство |
+|----|------|----------|-------------|---------|----------------|
+| A-01 | A | critical | 0.90 | Опасный глобал urllib.request urlopen (evil3.pkl) | `GLOBAL urllib.request urlopen` |
+| A-02 | A | medium | 0.60 | Присутствуют REDUCE/BUILD (evil3.pkl) — вызовы при десериализации | `opcodes=['REDUCE']` |
+| A-20 | A | medium | 0.50 | Подозрительная подстрока «http://» (network) в evil3.pkl | `network` |
+
+## 2. Динамический анализ в песочнице (L2)
+- Статус: `ok`, exit code: `0`, wall: 0.28 с
+- Загрузка: ok=`True`, тип=`NoneType`, время=0.0562 с
+  - ошибка загрузки: `pickle.loads: URLError: <urlopen error [Errno 111] Connection refused>`
+  - ошибка загрузки: `probe.load: URLError: <urlopen error [Errno 111] Connection refused>`
+- Сеть: 12, процессы: 0, exec: 6 (в памяти: 3), dlopen: 0, запись файлов: 0, maxRSS: 26252 КБ
+
+Наблюдаемые события (первые 40):
+
+| t | phase | event | args |
+|---|-------|-------|------|
+| 2862.7545 | load | open | `'/tmp/mlscan-in-hjqy7ox1/evil3.pkl', 'r'` |
+| 2862.7545 | load | import | `'pickle', None` |
+| 2862.7545 | load | open | `'/usr/local/lib/python3.11/__pycache__/pickle.cpython-311.pyc', 'r'` |
+| 2862.7545 | load | open | `'/usr/local/lib/python3.11/pickle.py', 'r'` |
+| 2862.7589 | load | import | `'_compat_pickle', None` |
+| 2862.7589 | load | open | `'/usr/local/lib/python3.11/__pycache__/_compat_pickle.cpython-311.pyc', 'r'` |
+| 2862.759 | load | open | `'/usr/local/lib/python3.11/_compat_pickle.py', 'r'` |
+| 2862.7595 | load | import | `'_pickle', None` |
+| 2862.7595 | load | import | `'_pickle', '/usr/local/lib/python3.11/lib-dynload/_pickle.cpython-311-x86_64-linux-gnu.so'` |
+| 2862.7596 | load | import | `'org.python.core', None` |
+| 2862.7596 | load | import | `'org.python', None` |
+| 2862.7596 | load | import | `'org', None` |
+| 2862.7598 | load | import | `'urllib.request', None` |
+| 2862.7598 | load | open | `'/usr/local/lib/python3.11/urllib/__pycache__/request.cpython-311.pyc', 'r'` |
+| 2862.7598 | load | open | `'/usr/local/lib/python3.11/urllib/request.py', 'r'` |
+| 2862.7667 | load | import | `'email', None` |
+| 2862.7667 | load | open | `'/usr/local/lib/python3.11/email/__pycache__/__init__.cpython-311.pyc', 'r'` |
+| 2862.7667 | load | open | `'/usr/local/lib/python3.11/email/__init__.py', 'r'` |
+| 2862.7668 | load | import | `'hashlib', None` |
+| 2862.7669 | load | open | `'/usr/local/lib/python3.11/__pycache__/hashlib.cpython-311.pyc', 'r'` |
+| 2862.7669 | load | open | `'/usr/local/lib/python3.11/hashlib.py', 'r'` |
+| 2862.7675 | load | import | `'_hashlib', None` |
+| 2862.7675 | load | import | `'_hashlib', '/usr/local/lib/python3.11/lib-dynload/_hashlib.cpython-311-x86_64-linux-gnu.so'` |
+| 2862.7687 | load | import | `'_blake2', None` |
+| 2862.7688 | load | import | `'_blake2', '/usr/local/lib/python3.11/lib-dynload/_blake2.cpython-311-x86_64-linux-gnu.so'` |
+| 2862.7688 | load | import | `'http.client', None` |
+| 2862.7688 | load | import | `'http', None` |
+| 2862.7689 | load | open | `'/usr/local/lib/python3.11/http/__pycache__/__init__.cpython-311.pyc', 'r'` |
+| 2862.7689 | load | open | `'/usr/local/lib/python3.11/http/__init__.py', 'r'` |
+| 2862.7695 | load | open | `'/usr/local/lib/python3.11/http/__pycache__/client.cpython-311.pyc', 'r'` |
+| 2862.7695 | load | open | `'/usr/local/lib/python3.11/http/client.py', 'r'` |
+| 2862.7724 | load | import | `'email.parser', None` |
+| 2862.7725 | load | open | `'/usr/local/lib/python3.11/email/__pycache__/parser.cpython-311.pyc', 'r'` |
+| 2862.7725 | load | open | `'/usr/local/lib/python3.11/email/parser.py', 'r'` |
+| 2862.7728 | load | import | `'email.feedparser', None` |
+| 2862.7728 | load | open | `'/usr/local/lib/python3.11/email/__pycache__/feedparser.cpython-311.pyc', 'r'` |
+| 2862.7728 | load | open | `'/usr/local/lib/python3.11/email/feedparser.py', 'r'` |
+| 2862.7738 | load | import | `'email.errors', None` |
+| 2862.7738 | load | open | `'/usr/local/lib/python3.11/email/__pycache__/errors.cpython-311.pyc', 'r'` |
+| 2862.7738 | load | open | `'/usr/local/lib/python3.11/email/errors.py', 'r'` |
+
+## 3. Поведенческое тестирование (L3)
+Находки по поведению:
+
+| ID | Severity | Находка | Доказательство |
+|----|----------|---------|----------------|
+| F-31 | high | Сетевые обращения при загрузке (×12) | `urllib.Request('http://localhost:8000/sandbox_test_ping', None, {}, 'GET'); socket.getaddrinfo('localhost', 8000, 0, 1, 0); socket.__new__(<socket.socket fd=-1,` |
+| F-32 | high | Исполнение кода в памяти (exec) при загрузке (×3) | `exec с code <string>/<stdin>` |
+
+- Загруженный объект: тип `NoneType`, `None`
+- Обнаруженные callable: —
+
+Вызовы модели не обнаружены (payload действует на этапе загрузки).
+
+## Ограничения PoC
+- Наблюдаемость на уровне Python audit hooks + изоляции Docker (не eBPF и не микро-ВМ); при необходимости — `--runtime runsc` (gVisor).
+- Вредоносный payload может уклоняться от песочницы (sandbox evasion).
+- Отсутствие находок при пропущенной динамике трактуется как Inconclusive.
+
+# Отчёт MLScanner PoC
+
+- **Артефакт:** `evil4.pkl`
+- **Размер:** 55 байт
+- **SHA-256:** `a61a00194164e724db2843626e900610969f40e8c4fcba3e73e2bd7f289e8d7f`
+- **Формат:** `pickle`
+- **Вердикт:** **Malicious** — Максимальная серьёзность critical; динамика: запуск процессов/команд: 1; поведенческие находки: F-30
+- **Дата:** 2026-10-19 19:23:07
+
+## 1. Статический анализ (L1)
+| ID | Кат. | Severity | Уверенность | Находка | Доказательство |
+|----|------|----------|-------------|---------|----------------|
+| A-01 | A | critical | 0.90 | Опасный глобал posix system (evil4.pkl) | `GLOBAL posix system` |
+| A-02 | A | medium | 0.60 | Присутствуют REDUCE/BUILD (evil4.pkl) — вызовы при десериализации | `opcodes=['REDUCE']` |
+
+## 2. Динамический анализ в песочнице (L2)
+- Статус: `ok`, exit code: `0`, wall: 0.286 с
+- Загрузка: ok=`True`, тип=`int`, время=0.0058 с
+- Сеть: 0, процессы: 1, exec: 0 (в памяти: 0), dlopen: 0, запись файлов: 0, maxRSS: 17500 КБ
+
+Наблюдаемые события (первые 40):
+
+| t | phase | event | args |
+|---|-------|-------|------|
+| 2866.1262 | load | open | `'/tmp/mlscan-in-mi_bqvtg/evil4.pkl', 'r'` |
+| 2866.1262 | load | import | `'pickle', None` |
+| 2866.1262 | load | open | `'/usr/local/lib/python3.11/__pycache__/pickle.cpython-311.pyc', 'r'` |
+| 2866.1263 | load | open | `'/usr/local/lib/python3.11/pickle.py', 'r'` |
+| 2866.1306 | load | import | `'_compat_pickle', None` |
+| 2866.1306 | load | open | `'/usr/local/lib/python3.11/__pycache__/_compat_pickle.cpython-311.pyc', 'r'` |
+| 2866.1306 | load | open | `'/usr/local/lib/python3.11/_compat_pickle.py', 'r'` |
+| 2866.1311 | load | import | `'_pickle', None` |
+| 2866.1312 | load | import | `'_pickle', '/usr/local/lib/python3.11/lib-dynload/_pickle.cpython-311-x86_64-linux-gnu.so'` |
+| 2866.1313 | load | import | `'org.python.core', None` |
+| 2866.1313 | load | import | `'org.python', None` |
+| 2866.1313 | load | import | `'org', None` |
+| 2866.1315 | load | os.system | `b'echo "Test Alert"'` |
+
+## 3. Поведенческое тестирование (L3)
+Находки по поведению:
+
+| ID | Severity | Находка | Доказательство |
+|----|----------|---------|----------------|
+| F-30 | high | Запуск внешних процессов/команд при загрузке (×1) | `os.system(b'echo "Test Alert"')` |
+
+- Загруженный объект: тип `int`, `0`
+- Обнаруженные callable: —
+
+Вызовы модели не обнаружены (payload действует на этапе загрузки).
+
+## Ограничения PoC
+- Наблюдаемость на уровне Python audit hooks + изоляции Docker (не eBPF и не микро-ВМ); при необходимости — `--runtime runsc` (gVisor).
+- Вредоносный payload может уклоняться от песочницы (sandbox evasion).
+- Отсутствие находок при пропущенной динамике трактуется как Inconclusive.
+
+# Отчёт MLScanner PoC
+
+- **Артефакт:** `evil5.pkl`
+- **Размер:** 105 байт
+- **SHA-256:** `470f22229c52200771baaf31971fa31a9141544cbf6511ec534ee9e8decd799a`
+- **Формат:** `pickle`
+- **Вердикт:** **Malicious** — Максимальная серьёзность critical; динамика: исполнение кода в памяти (exec <string>): 1; поведенческие находки: F-32, F-20
+- **Дата:** 2026-10-19 19:23:10
+
+## 1. Статический анализ (L1)
+| ID | Кат. | Severity | Уверенность | Находка | Доказательство |
+|----|------|----------|-------------|---------|----------------|
+| A-01 | A | critical | 0.90 | Опасный глобал builtins exec (evil5.pkl) | `GLOBAL builtins exec` |
+| A-02 | A | medium | 0.60 | Присутствуют REDUCE/BUILD (evil5.pkl) — вызовы при десериализации | `opcodes=['REDUCE']` |
+
+## 2. Динамический анализ в песочнице (L2)
+- Статус: `ok`, exit code: `0`, wall: 0.221 с
+- Загрузка: ok=`True`, тип=`NoneType`, время=0.0054 с
+- Сеть: 0, процессы: 0, exec: 2 (в памяти: 1), dlopen: 0, запись файлов: 0, maxRSS: 17704 КБ
+
+Наблюдаемые события (первые 40):
+
+| t | phase | event | args |
+|---|-------|-------|------|
+| 2869.5214 | load | open | `'/tmp/mlscan-in-cv3jf_2b/evil5.pkl', 'r'` |
+| 2869.5214 | load | import | `'pickle', None` |
+| 2869.5214 | load | open | `'/usr/local/lib/python3.11/__pycache__/pickle.cpython-311.pyc', 'r'` |
+| 2869.5214 | load | open | `'/usr/local/lib/python3.11/pickle.py', 'r'` |
+| 2869.5259 | load | import | `'_compat_pickle', None` |
+| 2869.5259 | load | open | `'/usr/local/lib/python3.11/__pycache__/_compat_pickle.cpython-311.pyc', 'r'` |
+| 2869.5259 | load | open | `'/usr/local/lib/python3.11/_compat_pickle.py', 'r'` |
+| 2869.5264 | load | import | `'_pickle', None` |
+| 2869.5265 | load | import | `'_pickle', '/usr/local/lib/python3.11/lib-dynload/_pickle.cpython-311-x86_64-linux-gnu.so'` |
+| 2869.5266 | load | import | `'org.python.core', None` |
+| 2869.5266 | load | import | `'org.python', None` |
+| 2869.5266 | load | import | `'org', None` |
+| 2869.5268 | load | compile | `b"import builtins; builtins.setattr(builtins, 'abs', builtins.print)"` |
+| 2869.5268 | load | exec | `<code object <module> at 0x7f11aad97e30, file "<string>", line 1>` |
+
+## 3. Поведенческое тестирование (L3)
+Находки по поведению:
+
+| ID | Severity | Находка | Доказательство |
+|----|----------|---------|----------------|
+| F-32 | high | Исполнение кода в памяти (exec) при загрузке (×1) | `exec с code <string>/<stdin>` |
+| F-20 | high | Модификация builtins при загрузке: abs | `builtins changed/added: ['abs']` |
+
+- Изменения состояния при загрузке: `{"builtins_changed": ["abs"]}`
+- Загруженный объект: тип `NoneType`, `None`
+- Обнаруженные callable: —
+
+Вызовы модели не обнаружены (payload действует на этапе загрузки).
+
+## Ограничения PoC
+- Наблюдаемость на уровне Python audit hooks + изоляции Docker (не eBPF и не микро-ВМ); при необходимости — `--runtime runsc` (gVisor).
+- Вредоносный payload может уклоняться от песочницы (sandbox evasion).
+- Отсутствие находок при пропущенной динамике трактуется как Inconclusive.
+
