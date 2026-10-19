@@ -14,6 +14,7 @@ echo "[4/5] ConfigMap (код движка)"
 python3 "$HERE/40-gen-configmaps.py" | kubectl apply -f -
 echo "[5/5] Deployment + Service (NodePort 30808)"
 kubectl apply -f "$HERE/30-service.yaml"
+kubectl -n "$NS" rollout restart deploy/mlscan-analytics
 kubectl -n "$NS" rollout status deploy/mlscan-analytics --timeout=240s
 
 echo

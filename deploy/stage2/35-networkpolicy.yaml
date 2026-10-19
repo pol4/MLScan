@@ -1,0 +1,17 @@
+# Узкое исключение для транспорта артефакта: песочница может скачать СВОЙ артефакт
+# с Artifact-сервера сервиса тестирования (порт 8090) по одноразовому токену.
+# Всё остальное (в т.ч. внешний egress) остаётся запрещённым (default-deny-all).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-to-testing-artifacts
+  namespace: mlscan-sandbox
+spec:
+  podSelector: {matchLabels: {app: mlscan-sandbox}}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: mlscan-testing}}
+      podSelector: {matchLabels: {app: mlscan-testing}}
+    ports:
+    - {protocol: TCP, port: 8090}

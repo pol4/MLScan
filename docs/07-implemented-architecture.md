@@ -75,9 +75,10 @@ MLScan — система автоматического анализа опас
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `mlscan-testing` (Deployment + ClusterIP Service :8080) | stdlib HTTP | приём артефактов, L1 (статика), запуск Job, сбор L2/L3, нормализация, вердикт |
+| `mlscan-testing` (Deployment + ClusterIP Service :8080 + :8090) | stdlib HTTP | потоковый приём артефактов любого размера (PVC `/artifacts`), L1 (статика), запуск Job, Artifact-сервер (8090, отдача в песочницу по токену), сбор L2/L3, нормализация, вердикт, `/stats` |
 | ServiceAccount `mlscan-testing` + Role/RoleBinding в `mlscan-sandbox` | RBAC | create/delete Jobs+ConfigMaps, get pods/logs в песочнице |
 | PVC `mlscan-testing-data` | hostpath 1Gi | записи сканов (`/data/scans/*.json`) |
+| PVC `mlscan-artifacts` | hostpath 20Gi | загруженные модели (`/artifacts/<scan_id>/<name>`) |
 | ConfigMap `mlscan-poc-lib`, `mlscan-testing-code` | — | общий анализ (PoC) + код сервиса |
 
 ### 2.4 `mlscan-analytics` — аналитический движок + UI (Компонента 3)
@@ -175,6 +176,7 @@ flowchart TB
 | `allow-dns-egress` | Egress | DNS к `kube-dns` (UDP/TCP 53) |
 | `sandbox-to-sinkhole` | Egress | `app=mlscan-sandbox → app=sinkhole` (любые порты) |
 | `sinkhole-ingress` | Ingress | в sinkhole — только от `app=mlscan-sandbox` |
+| `sandbox-to-testing-artifacts` | Egress | `mlscan-sandbox → mlscan-testing:8090` (скачивание СВОЕГО артефакта по токену) |
 
 Проверено: `1.1.1.1:443` и `example.com:80` → **DENY** (timeout), `sinkhole:8080` → **OK**.
 
@@ -185,7 +187,8 @@ flowchart TB
 | `mlscan-analytics` | NodePort | 30808 | веб-UI + JSON API |
 | `mlscan-integrations` | NodePort | 30809 | gate/registry/SIEM/intel API |
 | `mlscan-ops` | NodePort | 30810 | метрики/качество/SLA |
-| `mlscan-testing` | ClusterIP | — | внутренний (доступ через port-forward/gate) |
+| `mlscan-testing` | ClusterIP | — | внутренний API (8080) + Artifact-сервер (8090) |
+| `mlscan-testing-api` | NodePort | 30811 | прямой API тестирования (загрузка больших файлов) |
 | `sinkhole` | ClusterIP | — | внутренний |
 
 ---
@@ -207,6 +210,7 @@ sequenceDiagram
   TS->>TS: L1 static analysis
   TS->>K8S: create ConfigMap + Job
   K8S->>SB: schedule (kata, restricted)
+  SB->>TS: GET /a/<scan_id>/<token>/<name> (artifact, :8090)
   SB->>SB: load under audit-hooks (L2/L3)
   SB-->>TS: pod logs (MLSCAN_RESULT_JSON)
   TS->>K8S: delete Job + ConfigMap
@@ -226,7 +230,7 @@ sequenceDiagram
 
 | Компонент | PVC | Файлы состояния |
 |-----------|-----|-----------------|
-| testing | `mlscan-testing-data` (1Gi) | `/data/scans/<id>.json` |
+| testing | `mlscan-testing-data` (1Gi), `mlscan-artifacts` (20Gi) | `/data/scans/<id>.json`; `/artifacts/<scan_id>/<name>` |
 | analytics | `mlscan-analytics-data` (1Gi) | `/data/evidence.jsonl` (hash-chain) |
 | integrations | `mlscan-integrations-data` (512Mi) | `/data/registry.json`, `/data/events.jsonl` |
 | ops | — (stateless) | состояние в памяти |

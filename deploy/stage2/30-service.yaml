@@ -1,4 +1,5 @@
 # Сервис тестирования (Компонента 2). stdlib-only, non-root, read-only rootfs.
+# Транспорт артефакта: PVC /artifacts + отдача в песочницу на порту 8090 по токену.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,12 +30,21 @@ spec:
         env:
         - {name: SANDBOX_NS, value: mlscan-sandbox}
         - {name: DATA_DIR, value: /data}
+        - {name: ARTIFACTS_DIR, value: /artifacts}
         - {name: PORT, value: "8080"}
+        - {name: ARTIFACT_PORT, value: "8090"}
+        - {name: ARTIFACT_BASE, value: "http://mlscan-testing.mlscan-testing.svc.cluster.local:8090"}
+        - {name: JOB_TIMEOUT, value: "600"}
+        - {name: JOB_MEMORY, value: "2Gi"}
+        - {name: JOB_EPHEMERAL, value: "8Gi"}
+        - {name: TMP_SIZE, value: "6Gi"}
+        - {name: MAX_UPLOAD, value: "21474836480"}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
         ports:
         - {name: http, containerPort: 8080}
+        - {name: artifacts, containerPort: 8090}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -49,17 +59,19 @@ spec:
           periodSeconds: 20
         resources:
           requests: {cpu: "100m", memory: "128Mi"}
-          limits: {cpu: "500m", memory: "512Mi"}
+          limits: {cpu: "1", memory: "1Gi"}
         volumeMounts:
         - {name: poc-lib, mountPath: /opt/mlscan, readOnly: true}
         - {name: svc-code, mountPath: /opt/svc, readOnly: true}
         - {name: data, mountPath: /data}
+        - {name: artifacts, mountPath: /artifacts}
         - {name: tmp, mountPath: /tmp}
       volumes:
       - {name: poc-lib, configMap: {name: mlscan-poc-lib}}
       - {name: svc-code, configMap: {name: mlscan-testing-code}}
       - {name: data, persistentVolumeClaim: {claimName: mlscan-testing-data}}
-      - {name: tmp, emptyDir: {sizeLimit: 128Mi, medium: Memory}}
+      - {name: artifacts, persistentVolumeClaim: {claimName: mlscan-artifacts}}
+      - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
 ---
 apiVersion: v1
 kind: Service
@@ -71,3 +83,17 @@ spec:
   selector: {app: mlscan-testing}
   ports:
   - {name: http, port: 8080, targetPort: 8080}
+  - {name: artifacts, port: 8090, targetPort: 8090}
+---
+# Прямой доступ к API тестирования (в т.ч. загрузка больших файлов с рабочей станции).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlscan-testing-api
+  namespace: mlscan-testing
+  labels: {app: mlscan-testing}
+spec:
+  type: NodePort
+  selector: {app: mlscan-testing}
+  ports:
+  - {name: http, port: 8080, targetPort: 8080, nodePort: 30811}

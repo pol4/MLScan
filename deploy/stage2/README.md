@@ -88,3 +88,36 @@ curl --noproxy '*' "http://127.0.0.1:18080/scans/<scan_id>"
 service/mlscan_testing.py код сервиса
 apply.sh / run-scan.sh   развёртывание и запуск проверки
 ```
+
+---
+
+## Доработка (Этап 2+): загрузка больших файлов, прогресс, статистика
+
+- **Потоковая загрузка**: `POST /scans/upload?name=&fmt=` — тело пишется чанками (1 МиБ) прямо
+  на PVC `/artifacts` (том `mlscan-artifacts`, 20Gi); ограничение `MAX_UPLOAD` (по умолч. 20 ГиБ).
+  Compute sha256 — на лету. Совместимый алиас: `POST /scans`.
+- **Транспорт артефакта в песочницу**: Job больше не использует ConfigMap. Он скачивает СВОЙ
+  артефакт с Artifact-сервера сервиса (порт **8090**) по одноразовому токенизированному URL
+  `http://mlscan-testing...:8090/a/<scan_id>/<token>/<name>`, затем запускает harness.
+  Единственное сетевое исключение — NetworkPolicy `sandbox-to-testing-artifacts` (sandbox →
+  testing:8090); всё остальное и внешний egress остаются запрещены.
+- **Прогресс**: запись скана содержит `state` (`queued → running → done|error`), `stage`
+  (`queued/static/submitted/running/collecting/done/error`) и `progress` (0…100), а также
+  `timings` (`static_s`, `sandbox_s`).
+- **Статистика**: `GET /stats` — число сканов, распределение по состояниям и вердиктам,
+  суммарный объём, число уникальных sha256.
+- **Прямой API**: добавлен NodePort `mlscan-testing-api` **30811** → 8080 (загрузка с рабочей станции).
+
+Примеры:
+```bash
+# большой файл напрямую
+curl --noproxy '*' -X POST --data-binary @model.pt \
+  "http://192.168.20.116:30811/scans/upload?name=model.pt&fmt=torch"
+# прогресс и статистика
+curl --noproxy '*' "http://192.168.20.116:30811/scans/<id>"
+curl --noproxy '*' "http://192.168.20.116:30811/stats"
+```
+
+Новые ресурсы: PVC `mlscan-artifacts` (20Gi), порт/сервис 8090, NodePort 30811,
+NetworkPolicy `sandbox-to-testing-artifacts`; Job: `runcmd` с `urlretrieve` + `/tmp` увеличен
+(`TMP_SIZE=6Gi`, memory 2Gi).

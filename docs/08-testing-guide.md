@@ -92,6 +92,35 @@ curl -sS --noproxy '*' "$B/reports/$SID.md"
 curl -sS --noproxy '*' "$B/reports/$SID.sarif" | python3 -m json.tool | head
 ```
 
+### Загрузка модели через UI (в т.ч. большие файлы)
+
+1. Откройте **http://192.168.20.116:30808**.
+2. Форма **«Загрузить модель»** → выберите файл → **«Загрузить и проверить»**
+   (формат определяется по расширению).
+3. Наблюдайте **прогресс загрузки** (браузер) и **прогресс проверки** (колонка «Прогресс»,
+   таблица автообновляется каждые 3 с).
+4. Результат: строка с **SHA-256**, размером, вердиктом и действием policy; клик по имени —
+   карточка артефакта (sha256, размер, тайминги `static_s`/`sandbox_s`, находки, отчёты).
+
+API (через UI-прокси Analytics):
+```bash
+B=http://192.168.20.116:30808
+curl --noproxy '*' -X POST --data-binary @model.pt "$B/upload?name=model.pt&fmt=torch"
+curl --noproxy '*' "$B/api/progress/<scan_id>"      # state/stage/progress
+curl --noproxy '*' "$B/api/overview" | python3 -m json.tool | head
+curl --noproxy '*' "$B/api/stats"                   # вердикты, объём, число хэшей
+```
+
+Прямо в сервис тестирования (NodePort **30811**, без UI-прокси):
+```bash
+curl --noproxy '*' -X POST --data-binary @big.pkl   "http://192.168.20.116:30811/scans/upload?name=big.pkl&fmt=pickle"
+curl --noproxy '*' "http://192.168.20.116:30811/scans/<id>"
+curl --noproxy '*' "http://192.168.20.116:30811/stats"
+```
+
+> Проверено: файл ~50 МБ загружается за ~1.2 с, проверяется в Kata; прогресс виден
+> (`queued→static→running→done`), вердикт выставляется, sha256/размер/тайминги сохраняются.
+
 ### Этап 4 — Integrations / CI/CD Gate / SIEM
 ```bash
 B=http://192.168.20.116:30809

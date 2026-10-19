@@ -111,6 +111,11 @@ bash deploy/stage2/run-scan.sh poc/scan/evil6.pkl       # => Malicious (F-31, F-
 append-only Evidence Store (hash-chain) и отдаёт отчёты (JSON/Markdown/SARIF) и веб-UI.
 Манифесты — в [`deploy/stage3/`](./deploy/stage3).
 
+**UI умеет загружать модели (в т.ч. большие файлы)**, показывать прогресс проверки и
+статистику с хэшами: форма загрузки на `http://<node>:30808`, потоковая передача через
+сервис тестирования (PVC `/artifacts`, порт 8090), живые стадии `queued→static→running→done`,
+`/api/stats` (вердикты, объём, число sha256). См. `docs/08-testing-guide.md`.
+
 ```bash
 bash deploy/stage3/apply.sh
 bash deploy/stage3/run-demo.sh        # sync + вердикты + проверка evidence
