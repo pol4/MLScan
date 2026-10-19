@@ -1,0 +1,52 @@
+# Непрерывный retest: периодически перепроверяет golden-набор через сервис тестирования.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mlscan-retest
+  namespace: mlscan-ops
+  labels: {app: mlscan-retest, app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "5"}
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels: {app: mlscan-retest}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+          - name: retest
+            image: python:3.12-slim
+            imagePullPolicy: IfNotPresent
+            command:
+            - python
+            - -c
+            - |
+              import urllib.request, json, sys
+              url = "http://mlscan-ops.mlscan-ops.svc.cluster.local:8080/retest"
+              req = urllib.request.Request(url, data=b"", method="POST")
+              with urllib.request.urlopen(req, timeout=280) as r:
+                  data = json.loads(r.read().decode())
+              print(json.dumps(data, ensure_ascii=False))
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities: {drop: ["ALL"]}
+            resources:
+              requests: {cpu: "50m", memory: "64Mi"}
+              limits: {cpu: "200m", memory: "128Mi"}
+            volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+          volumes:
+          - {name: tmp, emptyDir: {sizeLimit: 32Mi, medium: Memory}}

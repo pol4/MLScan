@@ -1,0 +1,32 @@
+# HA-заготовки (PodDisruptionBudget). На single-node microk8s с RWO hostpath
+# горизонтальное масштабирование сервисов ограничено (см. deploy/stage5/README.md);
+# PDB защищают от одновременного вытеснения подов.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mlscan-testing-pdb
+  namespace: mlscan-testing
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: mlscan-testing}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mlscan-analytics-pdb
+  namespace: mlscan-analytics
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: mlscan-analytics}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mlscan-integrations-pdb
+  namespace: mlscan-integrations
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: mlscan-integrations}

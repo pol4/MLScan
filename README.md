@@ -27,6 +27,7 @@
 | [`deploy/stage2/`](./deploy/stage2) | **Этап 2:** сервис тестирования (приём артефактов, запуск песочницы, нормализация, вердикт) |
 | [`deploy/stage3/`](./deploy/stage3) | **Этап 3:** аналитический движок + UI (скоринг, Policy Engine, evidence store, отчёты) |
 | [`deploy/stage4/`](./deploy/stage4) | **Этап 4:** интеграции (Model Registry, CI/CD gate, SIEM-экспорт, threat-intel) |
+| [`deploy/stage5/`](./deploy/stage5) | **Этап 5:** эксплуатация (метрики/качество, retest, red-team, PDB, аттестация) |
 
 ### Документация
 
@@ -122,6 +123,17 @@ CI/CD gate (по реестру и on-demand), SIEM-экспорт (NDJSON/CEF),
 bash deploy/stage4/apply.sh
 bash deploy/stage4/run-demo.sh                       # registry + gate + CEF
 bash deploy/stage4/mlscan-gate.sh poc/scan/evil4.pkl # exit 1 = BLOCK
+```
+
+**Этап 5 — Промышленная эксплуатация** развёрнут в namespace `mlscan-ops`: метрики (Prometheus),
+здоровье стека, метрики качества (TPR/FPR), непрерывный retest (CronJob), red-team/эскейп-тесты,
+PDB и аттестация evidence. Манифесты — в [`deploy/stage5/`](./deploy/stage5).
+
+```bash
+bash deploy/stage5/apply.sh
+bash deploy/stage5/run-demo.sh          # red-team + retest + quality + metrics
+bash deploy/stage5/60-attest.sh         # аттестация evidence
+# Ops API: http://rtx-cluster:30810  (/metrics /health/stack /quality /sla)
 ```
 
 ---

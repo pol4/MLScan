@@ -1,0 +1,47 @@
+# Red-team / escape-тест: проверяет, что ограничения песочницы соблюдаются.
+# Запускается в mlscan-sandbox (Kata, restricted, default-deny egress).
+# Создаётся через apply.sh или вручную; проверяется в run-demo.sh.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlscan-redteam
+  namespace: mlscan-sandbox
+  labels: {app: mlscan-sandbox, mlscan.io/stage: "5"}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 900
+  template:
+    metadata:
+      labels: {app: mlscan-sandbox}
+    spec:
+      runtimeClassName: kata
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: redteam
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command: ["python", "/opt/redteam/redteam.py"]
+        env:
+        - {name: HOME, value: /deception}
+        - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+        - {name: TMPDIR, value: /tmp}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+        resources:
+          requests: {cpu: "100m", memory: "128Mi"}
+          limits: {cpu: "500m", memory: "256Mi"}
+        volumeMounts:
+        - {name: redteam, mountPath: /opt/redteam, readOnly: true}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - {name: redteam, configMap: {name: mlscan-redteam}}
+      - {name: tmp, emptyDir: {sizeLimit: 64Mi, medium: Memory}}
