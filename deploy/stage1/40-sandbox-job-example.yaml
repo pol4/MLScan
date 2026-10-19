@@ -1,0 +1,63 @@
+# Пример sandbox-Job (Этап 1): запуск harness из PoC в микро-ВМ Kata,
+# с hardened securityContext, без сети (кроме sinkhole/DNS), с deception-монтированиями.
+# Обычно Job создаётся скриптом ./run-sandbox.sh <sample> [fmt].
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlscan-sandbox-evil2
+  namespace: mlscan-sandbox
+  labels: {app: mlscan-sandbox, mlscan.io/stage: "1"}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 900
+  template:
+    metadata:
+      labels: {app: mlscan-sandbox}
+    spec:
+      runtimeClassName: kata                 # микро-ВМ (своё ядро на под)
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: sandbox
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - exec python /opt/mlscan/harness.py "$MODEL_FMT" "$(basename "$MODEL_FILE")" < "$MODEL_FILE"
+        env:
+        - {name: MODEL_FILE, value: /scan/evil2.pkl}
+        - {name: MODEL_FMT, value: pickle}
+        - {name: HOME, value: /deception}          # ~/.aws, ~/.ssh, ~/.kube -> honeypot
+        - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+        - {name: PYTHONUTF8, value: "1"}
+        - {name: TMPDIR, value: /tmp}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+        resources:
+          requests: {cpu: "100m", memory: "128Mi"}
+          limits: {cpu: "1", memory: "512Mi", ephemeral-storage: "256Mi"}
+        volumeMounts:
+        - {name: harness, mountPath: /opt/mlscan, readOnly: true}
+        - {name: samples, mountPath: /scan, readOnly: true}
+        - {name: deception, mountPath: /deception, readOnly: true}
+        - {name: deception-aws, mountPath: /deception/.aws, readOnly: true}
+        - {name: deception-ssh, mountPath: /deception/.ssh, readOnly: true}
+        - {name: deception-kube, mountPath: /deception/.kube, readOnly: true}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - {name: harness, configMap: {name: mlscan-harness}}
+      - {name: samples, configMap: {name: mlscan-samples}}
+      - {name: deception, configMap: {name: mlscan-deception}}
+      - {name: deception-aws, configMap: {name: mlscan-deception-aws}}
+      - {name: deception-ssh, configMap: {name: mlscan-deception-ssh}}
+      - {name: deception-kube, configMap: {name: mlscan-deception-kube}}
+      - {name: tmp, emptyDir: {sizeLimit: 256Mi, medium: Memory}}

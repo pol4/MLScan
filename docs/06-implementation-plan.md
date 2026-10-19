@@ -11,14 +11,14 @@ ML-моделей в формате pickle (см. `Concept.md` и `docs/01..05`)
 
 ## 0. Обзор этапов (roadmap)
 
-| Этап | Название | Ключевой результат | Соответствие архитектуре |
-|------|----------|--------------------|--------------------------|
-| **0** | **PoC (первый шаг)** | Один файл: статика + динамика в Docker + поведение → Markdown | Срез всех 3 компонент |
-| 1 | Укрепление песочницы | gVisor/микро-ВМ, eBPF-мониторинг, deception/canary | Компонента 1 (Sandbox) |
-| 2 | Сервис тестирования | Полноценные probe-наборы, нормализация результатов, очереди | Компонента 2 (Testing Service) |
-| 3 | Аналитический движок + UI | Корреляция, скоринг, Policy Engine, реестр, отчёты | Компонента 3 (Analytics+UI) |
-| 4 | Интеграции | CI/CD gate, Model Registry, SOC/SIEM, threat-intel | Сквозные |
-| 5 | Промышленная эксплуатация | GPU-изоляция, масштабирование, SLA, red-team | NFR |
+| Этап | Название | Ключевой результат | Соответствие архитектуре | Статус |
+|------|----------|--------------------|--------------------------|--------|
+| **0** | **PoC (первый шаг)** | Один файл: статика + динамика в Docker + поведение → Markdown | Срез всех 3 компонент | ✅ опубликован |
+| 1 | Укрепление песочницы | Kata-микро-ВМ, eBPF (Falco), deception/canary, sinkhole, NetworkPolicy | Компонента 1 (Sandbox) | ✅ развёрнут |
+| 2 | Сервис тестирования | Полноценные probe-наборы, нормализация результатов, очереди | Компонента 2 (Testing Service) | — |
+| 3 | Аналитический движок + UI | Корреляция, скоринг, Policy Engine, реестр, отчёты | Компонента 3 (Analytics+UI) | — |
+| 4 | Интеграции | CI/CD gate, Model Registry, SOC/SIEM, threat-intel | Сквозные | — |
+| 5 | Промышленная эксплуатация | GPU-изоляция, масштабирование, SLA, red-team | NFR | — |
 
 Принцип: **каждый этап расширяет работающий срез**, не переписывая предыдущий.
 
@@ -231,14 +231,34 @@ benchmark-модели с `predict` нет. Примеры отравлений 
 
 ---
 
-## 2. Этап 1 — Укрепление песочницы
+## 2. Этап 1 — Укрепление песочницы ✅ (реализован)
 
-- gVisor (runsc) по умолчанию; опционально микро-ВМ (Firecracker/Kata) для high-risk артефактов.
-- eBPF-мониторинг (Falco/Tetragon): syscalls, сеть, ФС на уровне ядра; обнаружение эскейпов.
-- Deception: honeypot-креды (`~/.aws`, `~/.ssh`, kubeconfig), фальшивый IMDS, canary-файлы/URL.
-- Сетевой sinkhole + egress-прокси с allowlist и восстановлением нагрузки эксфильтрации.
-- Рандомизация окружения (имена/пути/env/тайминги) против sandbox evasion; множественные прогоны.
-- Иммутабельные образы, подпись (cosign), SBOM, attestation, авторитация.
+**Статус:** развёрнут в кластере `rtx-cluster` и проверен. Артефакты — `deploy/stage1/`,
+подробности — `deploy/stage1/README.md`.
+
+Реализовано:
+- **Микро-ВМ:** RuntimeClass `kata` (собственное ядро на под) вместо gVisor (Kata уже доступен
+  в кластере). Namespace `mlscan-sandbox` с Pod Security Admission `restricted`.
+- **Hardening пода:** non-root (65532), `readOnlyRootFilesystem`, `allowPrivilegeEscalation:false`,
+  `drop: [ALL]`, `seccompProfile: RuntimeDefault`, лимиты CPU/RAM/ephemeral-storage,
+  `automountServiceAccountToken:false`, tmpfs `/tmp`.
+- **eBPF-мониторинг:** Falco (`modern_ebpf`) в namespace `mlscan-monitoring` + кастомные правила
+  `MLScan sandbox *` (exec/egress/write). Для Kata syscalls гостя невидимы — там работает
+  внутригостевая инструментация (audit-hooks); для runc-подов Falco даёт хостовый уровень.
+- **Deception:** honeypot-файлы (`~/.aws`, `~/.ssh`, `~/.kube`, `.env`, canary), `HOME=/deception`.
+- **Сетевой sinkhole:** in-cluster HTTP+TCP «ловушка» вместо egress; Calico NetworkPolicy
+  `default-deny` + DNS + `sandbox→sinkhole`. Проверено: внешний egress запрещён, sinkhole доступен.
+- **Наблюдаемость:** сохранена полностью (audit-hooks harness + Falco).
+
+Проверки (evidence):
+- `run-sandbox.sh evil2.pkl` → Kata-под, `behavior_findings: [F-32, F-20]`.
+- `run-sandbox.sh evil6.pkl` → чтение `/deception/.aws/credentials`, sinkhole зафиксировал
+  `HTTP GET /exfil-canary?stolen=104`.
+- egress-test → `DENY 1.1.1.1:443`, `DENY example.com:80`, `OK sinkhole:8080`.
+- Falco → `MLScan sandbox harness exec / egress / write`.
+
+Осталось (в следующих этапах): рандомизация против sandbox evasion, множественные прогоны,
+подпись образов (cosign/SBOM/attestation), egress-прокси с восстановлением нагрузки.
 
 Выход: изолированное исполнение с ядерным уровнем наблюдаемости и deception.
 

@@ -1,0 +1,37 @@
+# Значения Helm для Falco (Этап 1): modern eBPF, свой набор правил для namespace песочницы.
+# Установка:  helm -n mlscan-monitoring upgrade --install falco falcosecurity/falco -f falco-values.yaml
+driver:
+  kind: modern_ebpf
+falcosidekick:
+  enabled: false
+tty: false
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 512Mi}
+
+# Правила НЕ зависят от k8s/container-метаданных (на microk8s-snap enrichment недоступен),
+# а ключуются по процессу harness. Применимо к runc-подам песочницы.
+# Для Kata (микро-ВМ) syscalls гостя невидимы для host-eBPF — там работает внутригостевая
+# инструментация harness (audit hooks).
+customRules:
+  mlscan_rules.yaml: |-
+    - rule: MLScan harness process exec
+      desc: MLScan sandbox harness process executed
+      condition: evt.type in (execve, execveat) and proc.cmdline contains "harness.py"
+      output: "MLScan sandbox harness exec (cmd=%proc.cmdline pid=%proc.pid)"
+      priority: NOTICE
+      tags: [mlscan, sandbox]
+
+    - rule: MLScan harness egress
+      desc: Outbound connect from MLScan sandbox harness
+      condition: evt.type=connect and proc.cmdline contains "harness.py"
+      output: "MLScan sandbox egress (cmd=%proc.cmdline daddr=%fd.rip:%fd.rport)"
+      priority: WARNING
+      tags: [mlscan, sandbox, network]
+
+    - rule: MLScan harness write tmpfs
+      desc: File write by MLScan sandbox harness
+      condition: evt.type in (open, openat) and evt.is_open_write=true and proc.cmdline contains "harness.py"
+      output: "MLScan sandbox write (cmd=%proc.cmdline file=%fd.name)"
+      priority: INFO
+      tags: [mlscan, sandbox]

@@ -23,6 +23,7 @@
 | [`poc/README.md`](./poc/README.md) | Подробное описание PoC |
 | [`poc/scan/`](./poc/scan) | **Демонстрационные данные** — 6 отравленных pickle (`evil0…evil5.pkl`) и генераторы |
 | [`poc/runs.txt`](./poc/runs.txt) | Пример собранного отчёта PoC по демонстрационным данным |
+| [`deploy/stage1/`](./deploy/stage1) | **Этап 1:** развёртывание укреплённой песочницы в кластере (Kata, deception, sinkhole, NetworkPolicy, Falco) |
 
 ### Документация
 
@@ -71,6 +72,25 @@ PoC выполняет:
 
 ---
 
+## Развёртывание на кластере (по этапам плана)
+
+**Этап 1 — Укреплённая песочница** развёрнут в кластере `rtx-cluster` (MicroK8s) в отдельных
+namespace: `mlscan-sandbox` (sandbox + deception + sinkhole + NetworkPolicy) и
+`mlscan-monitoring` (Falco, eBPF). Манифесты — в [`deploy/stage1/`](./deploy/stage1).
+
+```bash
+bash deploy/stage1/apply.sh        # Kata-песочница, deception, sinkhole, network policies
+bash deploy/stage1/60-falco.sh     # eBPF-мониторинг (Falco)
+
+# Проверка одного образца в песочнице
+bash deploy/stage1/run-sandbox.sh evil2.pkl pickle   # => F-32, F-20
+bash deploy/stage1/run-sandbox.sh evil6.pkl pickle   # => deception + sinkhole
+```
+
+Подробности и результаты проверок: [`deploy/stage1/README.md`](./deploy/stage1/README.md).
+
+---
+
 ## Демонстрационные данные
 
 `poc/scan/evil0…evil5.pkl` — намеренно **вредоносные** pickle разных классов:
@@ -80,6 +100,7 @@ PoC выполняет:
 | `evil0`, `evil1`, `evil4` | RCE через `os.system` (`posix.system`) |
 | `evil2`, `evil5` | Исполнение кода в памяти (`builtins.exec`) + модификация `builtins` |
 | `evil3` | Сетевой доступ при десериализации (`urllib.request.urlopen`) |
+| `evil6` | Чтение подставных кредов (deception) + «утечка» на sinkhole |
 
 Последний прогон по ним — в [`poc/runs.txt`](./poc/runs.txt).
 

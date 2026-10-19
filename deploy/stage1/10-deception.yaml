@@ -1,0 +1,64 @@
+# Deception (honeypot) resources для песочницы.
+# Монтируются в sandbox-поды; HOME=/deception, поэтому ~/.aws, ~/.ssh, ~/.kube
+# указывают на подставные файлы. Любое чтение логируется audit-hook'ом (L2).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-deception
+  namespace: mlscan-sandbox
+data:
+  canary.txt: |
+    MLSCAN_CANARY_7f3a9-SANDBOX-TOKEN-DO-NOT-USE
+  .env: |
+    AWS_ACCESS_KEY_ID=AKIA_MLSCAN_CANARY_FAKE
+    AWS_SECRET_ACCESS_KEY=mlscan-canary-fake-secret
+    DATABASE_URL=postgres://canary:canary@db.internal:5432/prod
+    CANARY_URL=http://sinkhole:8080/exfil-canary
+  .netrc: |
+    machine sinkhole login canary password canary
+  .git-credentials: |
+    https://canary:canary@sinkhole/git
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-deception-aws
+  namespace: mlscan-sandbox
+data:
+  credentials: |
+    [default]
+    aws_access_key_id = AKIA_MLSCAN_CANARY_FAKE
+    aws_secret_access_key = mlscan-canary-fake-secret
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-deception-ssh
+  namespace: mlscan-sandbox
+data:
+  id_rsa: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    MLSCAN-CANARY-FAKE-KEY-NOT-A-REAL-KEY
+    -----END OPENSSH PRIVATE KEY-----
+  known_hosts: |
+    sinkhole ssh-ed25519 AAAAcanary
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-deception-kube
+  namespace: mlscan-sandbox
+data:
+  config: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+    - name: sinkhole
+      cluster: {server: "https://sinkhole:8443"}
+    contexts:
+    - name: canary
+      context: {cluster: sinkhole, user: canary}
+    current-context: canary
+    users:
+    - name: canary
+      user: {token: MLSCAN-CANARY-FAKE-TOKEN}

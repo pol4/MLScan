@@ -316,9 +316,14 @@ import tempfile
 import time
 import zipfile
 
-FMT = sys.argv[2] if len(sys.argv) > 2 else "pickle"
-NAME = sys.argv[3] if len(sys.argv) > 3 else "sample.pkl"
+# Поддержка двух способов запуска:
+#   * base64-бутстрап (docker PoC): sys.argv = ['-c', <b64>, fmt, name]
+#   * прямой запуск (Kubernetes Job): sys.argv = ['harness.py', fmt, name]
+_args = sys.argv[1:]
+NAME = _args[-1] if _args else "sample.pkl"
+FMT = _args[-2] if len(_args) >= 2 else "pickle"
 RESULT_MARKER = "MLSCAN_RESULT_JSON:"
+SUMMARY_MARKER = "MLSCAN_SUMMARY:"
 
 
 def recv_target(name):
@@ -850,6 +855,14 @@ def main():
         rss1 = 0
     info["maxrss_kb"] = max(rss0, rss1)
     info["events"] = events
+    beh = info.get("behavior") or {}
+    sys.stdout.write(SUMMARY_MARKER + json.dumps({
+        "format": FMT, "load_ok": info["load"]["ok"], "load_type": info["load"]["type"],
+        "summary": info["summary"],
+        "behavior_findings": [f["check_id"] for f in (beh.get("findings") or [])],
+        "object_type": (beh.get("object") or {}).get("type"),
+        "callables": beh.get("callables"),
+    }, ensure_ascii=False) + "\n")
     sys.stdout.write(RESULT_MARKER + json.dumps(info, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 

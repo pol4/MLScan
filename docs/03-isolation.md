@@ -162,3 +162,23 @@ flowchart TB
 - побочные каналы через разделяемые ресурсы.
 Митигируются: свежесть компонентов, минимизация attack surface, сегментация, мониторинг,
 периодические эскейп-/red-team-тесты, «air-gap» для наиболее рискованных артефактов.
+
+---
+
+## 10. Реализация «Этап 1» (кластер rtx-cluster)
+
+Слои из §2 реализованы (см. `deploy/stage1/`):
+
+| Слой (док) | Реализация |
+|------------|------------|
+| Микро-ВМ | RuntimeClass `kata` (собственное ядро на под) |
+| ОС/hardening | PSA `restricted`; non-root 65532, read-only rootfs, drop ALL, no-new-privs, seccomp RuntimeDefault |
+| Ресурсы | limits CPU/RAM/ephemeral-storage; tmpfs `/tmp` |
+| Сеть | Calico NetworkPolicy: default-deny egress + DNS + `sandbox→sinkhole` (sinkhole HTTP/TCP) |
+| ФС/секреты | honeypot-файлы (`~/.aws`, `~/.ssh`, `~/.kube`, `.env`), `HOME=/deception`; без хостовых монтирований |
+| Мониторинг | внутригостевые audit-hooks (Kata) + Falco `modern_ebpf` (рatternы `MLScan sandbox *`, runc/хост) |
+| Секреты платформы | SA-токен не монтируется (`automountServiceAccountToken: false`) |
+
+Проверено: внешний egress запрещён, sinkhole доступен; чтение honeypot-кредов и утечка на
+sinkhole фиксируются; Kata-изоляция подтверждена отдельным ядром гостя.
+Остаточные пункты (рандомизация/anti-evasion, подпись образов, egress-прокси) — следующие этапы.

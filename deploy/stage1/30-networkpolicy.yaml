@@ -1,0 +1,56 @@
+# Сетевая изоляция (Calico). Итог: egress наружу запрещён всем подам namespace;
+# разрешены только DNS и трафик к sinkhole. Любые попытки эксфильтрации
+# блокируются сетью, а сам факт попытки виден в audit-hook'ах (L2).
+
+# 1) Default-deny: весь ingress и egress в namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: mlscan-sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# 2) Разрешаем DNS (kube-dns) — для попыток резолвинга имён
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: mlscan-sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: {}
+      podSelector: {matchLabels: {k8s-app: kube-dns}}
+    ports:
+    - {protocol: UDP, port: 53}
+    - {protocol: TCP, port: 53}
+---
+# 3) Sandbox -> sinkhole: единственный разрешённый «внешний» канал
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-to-sinkhole
+  namespace: mlscan-sandbox
+spec:
+  podSelector: {matchLabels: {app: mlscan-sandbox}}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - podSelector: {matchLabels: {app: sinkhole}}
+---
+# 4) Sinkhole принимает трафик только от sandbox-подов
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sinkhole-ingress
+  namespace: mlscan-sandbox
+spec:
+  podSelector: {matchLabels: {app: sinkhole}}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector: {matchLabels: {app: mlscan-sandbox}}

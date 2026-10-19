@@ -1,0 +1,117 @@
+# Sinkhole: внутрикластерная «ловушка» вместо доступа в сеть.
+# Принимает HTTP и TCP-соединения от sandbox-подов, логирует их (canary).
+# Никакого доступа во внешнюю сеть из namespace нет (см. NetworkPolicy).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-sinkhole
+  namespace: mlscan-sandbox
+data:
+  server.py: |
+    import http.server, socketserver, threading, time
+
+    def log(*a):
+        print("[sinkhole]", *a, flush=True)
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def _handle(self):
+            log("HTTP", self.command, self.path, "from", self.client_address[0],
+                "ua=", self.headers.get("User-Agent"))
+            try:
+                n = int(self.headers.get("Content-Length", "0") or "0")
+                if n:
+                    log("  body:", self.rfile.read(min(n, 2048))[:512])
+            except Exception:
+                pass
+            body = b"mlscan-sinkhole"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        do_GET = do_POST = do_PUT = do_DELETE = do_HEAD = _handle
+        def log_message(self, *a):
+            pass
+
+    class TCP(socketserver.BaseRequestHandler):
+        def handle(self):
+            log("TCP connect on", self.server.server_address[1], "from", self.client_address[0])
+            try:
+                data = self.request.recv(256)
+                if data:
+                    log("  data:", data[:160])
+            except Exception:
+                pass
+
+    def serve_http():
+        http.server.ThreadingHTTPServer(("0.0.0.0", 8080), H).serve_forever()
+
+    def serve_tcp(port):
+        socketserver.ThreadingTCPServer(("0.0.0.0", port), TCP).serve_forever()
+
+    def main():
+        threading.Thread(target=serve_http, daemon=True).start()
+        for p in (4444, 9001, 1337):
+            threading.Thread(target=serve_tcp, args=(p,), daemon=True).start()
+        log("sinkhole up: http 8080, tcp 4444/9001/1337")
+        while True:
+            time.sleep(3600)
+
+    main()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sinkhole
+  namespace: mlscan-sandbox
+  labels: {app: sinkhole, app.kubernetes.io/part-of: mlscan}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: sinkhole}
+  template:
+    metadata:
+      labels: {app: sinkhole}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: sinkhole
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command: ["python", "/opt/sinkhole/server.py"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+        resources:
+          requests: {cpu: "50m", memory: "64Mi"}
+          limits: {cpu: "500m", memory: "256Mi"}
+        ports:
+        - {name: http, containerPort: 8080}
+        - {name: tcp-4444, containerPort: 4444}
+        - {name: tcp-9001, containerPort: 9001}
+        - {name: tcp-1337, containerPort: 1337}
+        volumeMounts:
+        - {name: sinkhole, mountPath: /opt/sinkhole, readOnly: true}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - {name: sinkhole, configMap: {name: mlscan-sinkhole}}
+      - {name: tmp, emptyDir: {sizeLimit: 32Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sinkhole
+  namespace: mlscan-sandbox
+  labels: {app: sinkhole}
+spec:
+  selector: {app: sinkhole}
+  ports:
+  - {name: http, port: 8080, targetPort: 8080}
+  - {name: tcp-4444, port: 4444, targetPort: 4444}
+  - {name: tcp-9001, port: 9001, targetPort: 9001}
+  - {name: tcp-1337, port: 1337, targetPort: 1337}
