@@ -14,13 +14,39 @@ containerd, Calico, RuntimeClass `kata`) системы MLScan: компонен
 MLScan — система автоматического анализа опасности ML-моделей в формате pickle. Реализована
 как набор микросервисов в **шести namespace**, каждый из которых соответствует компоненте
 или слою архитектуры. Все сервисы — на стандартной библиотеке Python (без внешних
-зависимостей), образ `python:3.12-slim`.
+зависимостей), образ `python:3.12-slim` (Python 3.12.14).
 
 Ключевые принципы as-built:
 - артефакт **никогда не исполняется** в доверенной зоне — только в микро-ВМ Kata с сетевым
   запретом;
 - обмен между сервисами — по HTTP внутри кластера; наружу торчат только NodePort UI/API;
 - состояние — на локальных PVC (single-node); Evidence Store — append-only с hash-цепочкой.
+
+### 1.1 Используемые продукты и версии
+
+| Продукт | Версия | Роль в MLScan |
+|---------|--------|---------------|
+| MicroK8s / Kubernetes | **v1.33.13** (rev 9067) | кластер-платформа |
+| `kubectl` (клиент) | v1.28.13 | управление (операции, apply, exec) |
+| containerd | **1.7.29** | container runtime узла |
+| Kata Containers | **3.32.0** | микро-ВМ песочницы (RuntimeClass `kata`) |
+| Ubuntu | 24.04.4 LTS | ОС узла `rtx-cluster` |
+| Linux kernel (host) | 7.0.0-38-generic | ядро хоста |
+| Linux kernel (Kata guest) | 6.18.35 | ядро гостя микро-ВМ (изоляция) |
+| Calico | **v3.29.3** | CNI + NetworkPolicy |
+| CoreDNS | 1.12.1 | DNS кластера |
+| metrics-server | v0.7.2 | метрики ресурсов (готовность к HPA) |
+| hostpath-provisioner (`cdkbot`) | 1.5.0 | StorageClass `microk8s-hostpath` |
+| Falco | **0.45.0** (Helm-чарт `falco-9.2.0`), falcoctl 0.14.2 | eBPF runtime-мониторинг (driver `modern_ebpf`) |
+| Python | **3.12.14** (образ `python:3.12-slim`) | рантайм всех сервисов и in-sandbox harness — **только стандартная библиотека** |
+| `pickletools` / `zipfile` / `sys.addaudithook` | Python 3.12 stdlib | статический разбор (L1) и наблюдаемость (L2/L3) |
+| Helm | v3.15.4 | установка Falco |
+| OpenSSL | 3.0.13 | утилита узла (доступна) |
+| Реестр образов (addon `registry`) | `registry:2.8.3` (NodePort 32000) | приватный реестр (доступен; в текущей сборке не задействован) |
+| Istio | addon включён | присутствует; sidecar-инъекция не включена (не используется) |
+
+Все сервисы MLScan — собственный код на Python stdlib поверх образа `python:3.12-slim`;
+внешних сервисных зависимостей (БД, очередь, брокеры) нет — состояние в файлах на PVC.
 
 ---
 
@@ -31,7 +57,7 @@ MLScan — система автоматического анализа опас
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
 | `sinkhole` (Deployment + ClusterIP Service) | :8080 HTTP, :4444/9001/1337 TCP | in-cluster «ловушка»: единственный разрешённый egress; логирует обращения |
-| sandbox Job (по запросу) | `runtimeClassName: kata` | запуск harness из PoC над артефактом |
+| sandbox Job (по запросу) | `runtimeClassName: kata` (Kata 3.32.0) | запуск harness из PoC над артефактом |
 | `mlscan-redteam` (Job) | kata | escape-тест изоляции (Этап 5) |
 | ConfigMap `mlscan-harness`, `mlscan-samples`, `mlscan-deception*`, `mlscan-sinkhole`, `mlscan-redteam` | — | код harness, демо-данные, honeypot-файлы, sinkhole-сервер, redteam-скрипт |
 | NetworkPolicy `default-deny-all`, `allow-dns-egress`, `sandbox-to-sinkhole`, `sinkhole-ingress` | — | сетевая изоляция (Calico) |
@@ -43,7 +69,7 @@ MLScan — система автоматического анализа опас
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `falco` (DaemonSet) | modern eBPF driver | хостовые syscalls: exec/egress/write; правила `MLScan sandbox *` |
+| `falco` (DaemonSet) | Falco 0.45.0, modern eBPF driver | хостовые syscalls: exec/egress/write; правила `MLScan sandbox *` |
 
 ### 2.3 `mlscan-testing` — сервис тестирования (Компонента 2)
 
@@ -141,7 +167,7 @@ flowchart TB
 
 ## 4. Модель сетевого доступа и политики
 
-### 4.1 NetworkPolicy в `mlscan-sandbox` (Calico)
+### 4.1 NetworkPolicy в `mlscan-sandbox` (Calico v3.29.3)
 
 | Политика | Тип | Эффект |
 |----------|-----|--------|
@@ -218,7 +244,7 @@ RBAC: единственная cross-namespace связка — SA `mlscan-testi
 
 | Зона | Доверие | Изоляция |
 |------|---------|----------|
-| `mlscan-sandbox` (исполнение артефакта) | **недоверенная** | Kata-микро-ВМ, PSA restricted, non-root 65532, read-only rootfs, drop ALL, seccomp, лимиты, default-deny egress, deception |
+| `mlscan-sandbox` (исполнение артефакта) | **недоверенная** | Kata 3.32.0 (микро-ВМ), PSA restricted, non-root 65532, read-only rootfs, drop ALL, seccomp, лимиты, default-deny egress, deception |
 | `mlscan-monitoring` | доверенная (мониторинг) | DaemonSet, modern eBPF |
 | `mlscan-testing` / `mlscan-analytics` / `mlscan-integrations` / `mlscan-ops` | доверенная | PSA restricted, non-root, read-only rootfs, drop ALL, без лишних прав |
 
