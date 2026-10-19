@@ -330,6 +330,9 @@ form.upload{background:#161a23;border:1px solid #232a36;border-radius:10px;paddi
 input[type=file]{color:#e6e6e6} button{background:#3d7dd8;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
 .uprog{background:#232a36;border-radius:5px;height:12px;margin-top:10px;display:none}
 .uprog>span{display:block;height:100%;background:#5dd39e;width:0}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.controls input[type=search],.controls select{background:#161a23;color:#e6e6e6;border:1px solid #232a36;border-radius:6px;padding:7px 10px;font-size:14px}
+.controls input[type=search]{min-width:220px}
 </style>"""
 
 
@@ -344,6 +347,21 @@ def _page(title: str, body: str, script: str = "") -> bytes:
 _JS = """<script>
 function fmtBytes(b){b=+b||0;const u=['B','KiB','MiB','GiB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++;}return b.toFixed(b<10&&i>0?1:0)+' '+u[i];}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function shortDate(s){if(!s)return '—';s=String(s).replace('T',' ');return s.slice(0,16);}
+function currentRows(ov){
+  const q=(document.getElementById('q').value||'').trim().toLowerCase();
+  const vf=document.getElementById('vf').value;
+  const sort=document.getElementById('sort').value;
+  let rows=ov.filter(r=>{
+    if(q && !String(r.name||'').toLowerCase().includes(q)) return false;
+    if(vf){const v=r.verdict||'';if(vf==='__none__'){if(v!=='')return false;}else if(v!==vf)return false;}
+    return true;
+  });
+  const dir=sort.endsWith('_asc')?1:-1;
+  if(sort.startsWith('size')) rows.sort((a,b)=>((+a.size||0)-(+b.size||0))*dir);
+  else rows.sort((a,b)=>String(a.created||a.updated||'').localeCompare(String(b.created||b.updated||''))*dir);
+  return rows;
+}
 async function refresh(){
   const ov=(await (await fetch('/api/overview')).json()).scans||[];
   const st=await (await fetch('/api/stats')).json();
@@ -352,15 +370,19 @@ async function refresh(){
       `<div class="card"><div class="n v-${v.replace(' ','')}">${(st.by_verdict||{})[v]||0}</div><div class="l">${v}</div></div>`).join('')
     + `<div class="card"><div class="n">${st.scans||0}</div><div class="l">Всего</div></div>`
     + `<div class="card"><div class="n">${fmtBytes(st.total_bytes)}</div><div class="l">Объём</div></div>`;
-  const rows=ov.map(r=>{
-    const v=r.verdict||''; const pr=r.progress||0;
+  const shown=currentRows(ov);
+  const rows=shown.map(r=>{
+    const v=r.verdict||'';
     return `<tr><td><a href="/artifact/${r.scan_id}">${esc(r.name)}</a></td>`
+      +`<td>${shortDate(r.created||r.updated)}</td>`
       +`<td>${fmtBytes(r.size)}</td><td><code>${(r.sha256||'').slice(0,12)}…</code></td>`
-      +`<td>${esc(r.state)}${r.stage&&r.stage!=='done'?' / '+esc(r.stage):''}<div class="pbar"><span style="width:${pr}%"></span></div></td>`
+      +`<td>${esc(r.state)}${r.stage&&r.stage!=='done'?' / '+esc(r.stage):''}<div class="pbar"><span style="width:${r.progress||0}%"></span></div></td>`
       +`<td class="v-${String(v).replace(' ','')}">${esc(v||'—')}</td>`
       +`<td>${r.risk_score!=null?r.risk_score:'—'}</td><td>${esc(r.policy_action||'—')}</td></tr>`;}).join('');
   document.getElementById('rows').innerHTML=rows;
+  document.getElementById('count').textContent='Показано: '+shown.length+' из '+ov.length;
 }
+['q','vf','sort'].forEach(id=>{const e=document.getElementById(id);e.addEventListener('input',refresh);e.addEventListener('change',refresh);});
 document.getElementById('f').addEventListener('submit',e=>{
   e.preventDefault();const file=document.querySelector('input[type=file]').files[0];if(!file)return;
   const ext=(file.name.split('.').pop()||'').toLowerCase();
@@ -386,7 +408,26 @@ def ui_index() -> bytes:
             "<div class='uprog' id='uprog'><span id='ubar'></span></div>"
             "<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>"
             "Поддерживаются большие файлы; формат определяется по расширению.</div></form>"
-            "<table><thead><tr><th>Артефакт</th><th>Размер</th><th>SHA-256</th>"
+            "<div class='controls'>"
+            "<input id='q' type='search' placeholder='Фильтр по имени…'>"
+            "<select id='vf'>"
+            "<option value=''>Все вердикты</option>"
+            "<option value='Malicious'>Malicious</option>"
+            "<option value='Dangerous'>Dangerous</option>"
+            "<option value='Needs review'>Needs review</option>"
+            "<option value='Safe'>Safe</option>"
+            "<option value='Inconclusive'>Inconclusive</option>"
+            "<option value='__none__'>Без вердикта (в процессе)</option>"
+            "</select>"
+            "<select id='sort'>"
+            "<option value='date_desc'>Сортировка: новые сначала</option>"
+            "<option value='date_asc'>Сортировка: старые сначала</option>"
+            "<option value='size_desc'>Сортировка: объём ↓</option>"
+            "<option value='size_asc'>Сортировка: объём ↑</option>"
+            "</select>"
+            "<span id='count' style='color:#9aa4b2;font-size:12px'></span>"
+            "</div>"
+            "<table><thead><tr><th>Артефакт</th><th>Дата проверки</th><th>Размер</th><th>SHA-256</th>"
             "<th>Прогресс</th><th>Вердикт</th><th>Скор</th><th>Действие</th></tr></thead>"
             "<tbody id='rows'></tbody></table>")
     return _page("Обзор", body, _JS)
