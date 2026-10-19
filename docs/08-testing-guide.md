@@ -98,41 +98,42 @@ bash deploy/stage2/run-scan.sh poc/scan/benign.pkl pickle   # -> Safe
 ```
 
 ### Этап 3 — Аналитика + UI
-- Откройте в браузере **http://192.168.20.116:30808** (dashboard; карточки артефактов).
+
+Доступ — через Ingress-шлюз (см. §1). Хелпер:
+```bash
+GW=192.168.20.116:30217
+gw(){ curl -sS --noproxy '*' -H "Host: $1" "http://$GW$2"; }   # gw <host> <path>
+```
+- UI: откройте **http://analytics.mlscan.local:30217** (при hosts-записи) или `gw analytics.mlscan.local /`.
 - API:
 ```bash
-B=http://192.168.20.116:30808
-curl -sS --noproxy '*' "$B/api/scans" | python3 -m json.tool | head
-curl -sS --noproxy '*' "$B/api/evidence/verify"      # {"ok": true, "entries": N, ...}
-SID=$(curl -sS --noproxy '*' "$B/api/scans" | python3 -c 'import sys,json;print(json.load(sys.stdin)["scans"][0]["scan_id"])')
-curl -sS --noproxy '*' "$B/reports/$SID.md"
-curl -sS --noproxy '*' "$B/reports/$SID.sarif" | python3 -m json.tool | head
+gw analytics.mlscan.local /api/scans | python3 -m json.tool | head
+gw analytics.mlscan.local /api/evidence/verify
+SID=$(gw analytics.mlscan.local /api/scans | python3 -c 'import sys,json;print(json.load(sys.stdin)["scans"][0]["scan_id"])')
+gw analytics.mlscan.local "/reports/$SID.md"
+gw analytics.mlscan.local "/reports/$SID.sarif" | python3 -m json.tool | head
 ```
 
 ### Загрузка модели через UI (в т.ч. большие файлы)
 
-1. Откройте **http://192.168.20.116:30808**.
-2. Форма **«Загрузить модель»** → выберите файл → **«Загрузить и проверить»**
-   (формат определяется по расширению).
-3. Наблюдайте **прогресс загрузки** (браузер) и **прогресс проверки** (колонка «Прогресс»,
-   таблица автообновляется каждые 3 с).
-4. Результат: строка с **SHA-256**, размером, вердиктом и действием policy; клик по имени —
-   карточка артефакта (sha256, размер, тайминги `static_s`/`sandbox_s`, находки, отчёты).
+1. Откройте **http://analytics.mlscan.local:30217** (или `gw analytics.mlscan.local /`).
+2. Форма **«Загрузить модель»** → выберите файл → **«Загрузить и проверить»** (формат — по расширению).
+3. Прогресс загрузки (браузер) и проверки (колонка «Прогресс», автообновление каждые 3 с).
+4. Результат: строка с **SHA-256**, размером, вердиктом и действием policy; клик по имени — карточка артефакта.
 
-API (через UI-прокси Analytics):
+API (UI-прокси Analytics и прямой API тестирования):
 ```bash
-B=http://192.168.20.116:30808
-curl --noproxy '*' -X POST --data-binary @model.pt "$B/upload?name=model.pt&fmt=torch"
-curl --noproxy '*' "$B/api/progress/<scan_id>"      # state/stage/progress
-curl --noproxy '*' "$B/api/overview" | python3 -m json.tool | head
-curl --noproxy '*' "$B/api/stats"                   # вердикты, объём, число хэшей
-```
+# через Analytics (Host: analytics.mlscan.local)
+ID=$(curl -sS --noproxy '*' -H 'Host: analytics.mlscan.local' -X POST --data-binary @model.pkl \
+     "http://$GW/upload?name=model.pkl&fmt=pickle" | python3 -c 'import sys,json;print(json.load(sys.stdin)["scan_id"])')
+gw analytics.mlscan.local "/api/progress/$ID"      # state/stage/progress
+gw analytics.mlscan.local /api/overview | python3 -m json.tool | head
+gw analytics.mlscan.local /api/stats               # вердикты, объём, число хэшей
 
-Прямо в сервис тестирования (NodePort **30811**, без UI-прокси):
-```bash
-curl --noproxy '*' -X POST --data-binary @big.pkl   "http://192.168.20.116:30811/scans/upload?name=big.pkl&fmt=pickle"
-curl --noproxy '*' "http://192.168.20.116:30811/scans/<id>"
-curl --noproxy '*' "http://192.168.20.116:30811/stats"
+# прямой API тестирования (Host: api.mlscan.local)
+curl -sS --noproxy '*' -H 'Host: api.mlscan.local' -X POST --data-binary @big.pkl \
+     "http://$GW/scans/upload?name=big.pkl&fmt=pickle"
+gw api.mlscan.local /stats
 ```
 
 > Проверено: файл ~50 МБ загружается за ~1.2 с, проверяется в Kata; прогресс виден
@@ -140,33 +141,31 @@ curl --noproxy '*' "http://192.168.20.116:30811/stats"
 
 ### Этап 4 — Integrations / CI/CD Gate / SIEM
 ```bash
-B=http://192.168.20.116:30809
-curl -sS --noproxy '*' "$B/registry" | python3 -m json.tool | head
+gw integrations.mlscan.local /registry | python3 -m json.tool | head
 
-# Gate по известному-плохому хэшу (evil0) -> block
-curl -sS --noproxy '*' -o /dev/null -w "http=%{http_code}\n" \
-  "$B/gate?sha256=de4e240c47bb26dc9eb77e0cae169c4798845fe4aa8929c710bc7e92bcbb88bd"
+# Gate по известному-плохому хэшу (evil0) -> block (HTTP 403)
+gw integrations.mlscan.local "/gate?sha256=de4e240c47bb26dc9eb77e0cae169c4798845fe4aa8929c710bc7e92bcbb88bd"
 
 # CI-хелпер: сканирует артефакт и возвращает код выхода (0 allow / 1 block / 2 review)
-bash deploy/stage4/mlscan-gate.sh poc/scan/evil6.pkl pickle http://192.168.20.116:30809; echo "exit=$?"
-bash deploy/stage4/mlscan-gate.sh poc/scan/benign.pkl pickle http://192.168.20.116:30809; echo "exit=$?"
+#   аргументы: <file> <fmt> <gate-url> <host>
+bash deploy/stage4/mlscan-gate.sh poc/scan/evil6.pkl pickle http://192.168.20.116:30217 integrations.mlscan.local; echo "exit=$?"
+bash deploy/stage4/mlscan-gate.sh poc/scan/benign.pkl pickle http://192.168.20.116:30217 integrations.mlscan.local; echo "exit=$?"
 
 # SIEM-экспорт
-curl -sS --noproxy '*' "$B/export/cef" | tail
+gw integrations.mlscan.local /export/cef | tail
 ```
 
 ### Этап 5 — Эксплуатация / метрики
 ```bash
-B=http://192.168.20.116:30810
-curl -sS --noproxy '*' "$B/metrics" | grep '^mlscan_' | head -20
-curl -sS --noproxy '*' "$B/quality" | python3 -m json.tool | head     # TPR/FPR на golden-наборе
-curl -sS --noproxy '*' -X POST "$B/retest"                            # пересканировать golden-набор
-kubectl -n mlscan-ops get cronjob mlscan-retest                        # непрерывный retest */30
+gw ops.mlscan.local /metrics | grep '^mlscan_' | head -20
+gw ops.mlscan.local /quality | python3 -m json.tool | head     # TPR/FPR на golden-наборе
+curl -sS --noproxy '*' -H 'Host: ops.mlscan.local' -X POST "http://$GW/retest"
+kubectl -n mlscan-ops get cronjob mlscan-retest                # непрерывный retest */30
 ```
 
 ### Сквозной сценарий (end-to-end)
 ```bash
-bash deploy/stage4/mlscan-gate.sh poc/scan/evil0.pkl pickle http://192.168.20.116:30809
+bash deploy/stage4/mlscan-gate.sh poc/scan/evil0.pkl pickle http://192.168.20.116:30217 integrations.mlscan.local
 #  цепочка: gate -> testing (L1+L2/L3 в Kata) -> registry -> decision -> exit code
 ```
 
@@ -187,7 +186,7 @@ bash deploy/stage4/mlscan-gate.sh poc/scan/evil0.pkl pickle http://192.168.20.11
 ## 5. Ограничения тест-контура
 
 - GPU-тесты недоступны (`nvidia.com/gpu=0` на узле).
-- UI/API без аутентификации (тестовый контур); NodePort открыт в локальной сети.
+- UI/API без аутентификации (тестовый контур); доступ через Ingress-шлюз (HTTP, без TLS).
 - Горизонтальное масштабирование сервисов с RWO-PVC не проверяется (single-node).
 
 ### Почему бывает «Dangerous — требуется ручное подтверждение»

@@ -302,7 +302,7 @@ benchmark-модели с `predict` нет. Примеры отравлений 
   `quarantine-medium`, `allow-low`).
 - **Evidence Store**: append-only `/data/evidence.jsonl` с hash-цепочкой + `GET /api/evidence/verify`.
 - **Report Generator**: JSON / Markdown / SARIF 2.1.0.
-- **Web UI** (dashboard + карточка артефакта, NodePort 30808) и JSON-API.
+- **Web UI** (dashboard + карточка артефакта; внешний доступ — Ingress `analytics.mlscan.local`) и JSON-API.
 
 Проверки (evidence): `evil6` → `Malicious`, score 10.0, policy `block-rce→block`, отчёты
 `.md`/`.sarif` валидны; `benign`/`toy` → `Safe`; evidence chain `ok`.

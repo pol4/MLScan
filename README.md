@@ -128,14 +128,14 @@ append-only Evidence Store (hash-chain) и отдаёт отчёты (JSON/Markd
 Манифесты — в [`deploy/stage3/`](./deploy/stage3).
 
 **UI умеет загружать модели (в т.ч. большие файлы)**, показывать прогресс проверки и
-статистику с хэшами: форма загрузки на `http://<node>:30808`, потоковая передача через
+статистику с хэшами: форма загрузки в UI (`http://analytics.mlscan.local:30217` через Ingress), потоковая передача через
 сервис тестирования (PVC `/artifacts`, порт 8090), живые стадии `queued→static→running→done`,
 `/api/stats` (вердикты, объём, число sha256). См. `docs/08-testing-guide.md`.
 
 ```bash
 bash deploy/stage3/apply.sh
 bash deploy/stage3/run-demo.sh        # sync + вердикты + проверка evidence
-# UI: http://rtx-cluster:30808
+# UI: http://analytics.mlscan.local:30217   (Ingress; см. deploy/ingress)
 ```
 
 **Этап 4 — Интеграции** развёрнут в namespace `mlscan-integrations`: Model Registry (по SHA-256),
@@ -156,7 +156,7 @@ PDB и аттестация evidence. Манифесты — в [`deploy/stage5/
 bash deploy/stage5/apply.sh
 bash deploy/stage5/run-demo.sh          # red-team + retest + quality + metrics
 bash deploy/stage5/60-attest.sh         # аттестация evidence
-# Ops API: http://rtx-cluster:30810  (/metrics /health/stack /quality /sla)
+# Ops API: http://ops.mlscan.local:30217  (/metrics /health/stack /quality /sla)  (Ingress)
 ```
 
 ---

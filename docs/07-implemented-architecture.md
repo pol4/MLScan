@@ -22,7 +22,8 @@ MLScan — система автоматического анализа опас
 Ключевые принципы as-built:
 - артефакт **никогда не исполняется** в доверенной зоне — только в микро-ВМ Kata с сетевым
   запретом;
-- обмен между сервисами — по HTTP внутри кластера; наружу торчат только NodePort UI/API;
+- обмен между сервисами — по HTTP внутри кластера; внешний доступ — через единую точку входа
+  Istio Ingress Gateway (маршрутизация по хостам);
 - состояние — на локальных PVC (single-node); Evidence Store — append-only с hash-цепочкой.
 
 ### 1.1 Используемые продукты и версии
@@ -48,7 +49,7 @@ MLScan — система автоматического анализа опас
 | Helm | v3.15.4 | установка Falco |
 | OpenSSL | 3.0.13 | утилита узла (доступна) |
 | Реестр образов (addon `registry`) | `registry:2.8.3` (NodePort 32000) | приватный реестр; **хранит образ песочницы** `mlscan-sandbox:latest` |
-| Istio | addon включён | присутствует; sidecar-инъекция не включена (не используется) |
+| Istio | addon включён | **используется для Ingress** (Gateway + VirtualServices); sidecar-инъекция (mTLS/mesh) не включена; есть egress-gateway |
 
 Все сервисы MLScan — собственный код на Python stdlib поверх образа `python:3.12-slim`;
 внешних сервисных зависимостей (БД, очередь, брокеры) нет — состояние в файлах на PVC.
@@ -92,7 +93,7 @@ Per-scan ConfigMap-транспорт больше не используется
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `mlscan-analytics` (Deployment + NodePort Service :30808) | stdlib HTTP | сбор результатов, скоринг, Policy Engine, evidence, отчёты, веб-UI |
+| `mlscan-analytics` (Deployment + ClusterIP Service :8080; внешне — Ingress `analytics.mlscan.local`) | stdlib HTTP | сбор результатов, скоринг, Policy Engine, evidence, отчёты, веб-UI |
 | PVC `mlscan-analytics-data` | hostpath 1Gi | `/data/evidence.jsonl` (hash-chain) |
 | ConfigMap `mlscan-analytics-code`, `mlscan-policy` | — | код движка + `policy.json` |
 
@@ -100,7 +101,7 @@ Per-scan ConfigMap-транспорт больше не используется
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `mlscan-integrations` (Deployment + NodePort Service :30809) | stdlib HTTP | Model Registry, CI/CD gate, SIEM-экспорт, threat-intel |
+| `mlscan-integrations` (Deployment + ClusterIP Service :8080; внешне — Ingress `integrations.mlscan.local`) | stdlib HTTP | Model Registry, CI/CD gate, SIEM-экспорт, threat-intel |
 | PVC `mlscan-integrations-data` | hostpath 512Mi | `registry.json`, `events.jsonl` |
 | ConfigMap `mlscan-integrations-code`, `mlscan-intel` | — | код сервиса + seed threat-intel |
 
@@ -108,7 +109,7 @@ Per-scan ConfigMap-транспорт больше не используется
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `mlscan-ops` (Deployment + NodePort Service :30810) | stdlib HTTP | метрики Prometheus, здоровье стека, качество (TPR/FPR), SLA, retest |
+| `mlscan-ops` (Deployment + ClusterIP Service :8080; внешне — Ingress `ops.mlscan.local`) | stdlib HTTP | метрики Prometheus, здоровье стека, качество (TPR/FPR), SLA, retest |
 | CronJob `mlscan-retest` | `*/30 * * * *` | непрерывный retest golden-набора |
 | PDB `*-pdb` | — | PodDisruptionBudget для testing/analytics/integrations |
 | ConfigMap `mlscan-ops-code`, `mlscan-golden`, `mlscan-golden-samples` | — | код, golden-метки и образцы |
@@ -354,6 +355,7 @@ RBAC: единственная cross-namespace связка — SA `mlscan-testi
 | ops | `mlscan-ops.mlscan-ops.svc.cluster.local` | 8080 |
 | sinkhole | `sinkhole.mlscan-sandbox.svc.cluster.local` | 8080, 4444, 9001, 1337 |
 
+Внешний доступ — Ingress: `analytics|integrations|ops|api.mlscan.local` через `:30217`.
 Основные эндпоинты: `/scans` (testing), `/api/scans|/reports|/policy` (analytics),
 `/registry|/gate|/gate/scan|/events|/export/cef|/intel` (integrations),
 `/metrics|/health/stack|/quality|/sla|/retest` (ops).
