@@ -1,0 +1,73 @@
+# Сервис тестирования (Компонента 2). stdlib-only, non-root, read-only rootfs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlscan-testing
+  namespace: mlscan-testing
+  labels: {app: mlscan-testing, app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "2"}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mlscan-testing}
+  template:
+    metadata:
+      labels: {app: mlscan-testing}
+    spec:
+      serviceAccountName: mlscan-testing
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: testing
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command: ["python", "/opt/svc/mlscan_testing.py"]
+        env:
+        - {name: SANDBOX_NS, value: mlscan-sandbox}
+        - {name: DATA_DIR, value: /data}
+        - {name: PORT, value: "8080"}
+        - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+        - {name: PYTHONUTF8, value: "1"}
+        - {name: TMPDIR, value: /tmp}
+        ports:
+        - {name: http, containerPort: 8080}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+        readinessProbe:
+          httpGet: {path: /healthz, port: 8080}
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: {path: /healthz, port: 8080}
+          initialDelaySeconds: 10
+          periodSeconds: 20
+        resources:
+          requests: {cpu: "100m", memory: "128Mi"}
+          limits: {cpu: "500m", memory: "512Mi"}
+        volumeMounts:
+        - {name: poc-lib, mountPath: /opt/mlscan, readOnly: true}
+        - {name: svc-code, mountPath: /opt/svc, readOnly: true}
+        - {name: data, mountPath: /data}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - {name: poc-lib, configMap: {name: mlscan-poc-lib}}
+      - {name: svc-code, configMap: {name: mlscan-testing-code}}
+      - {name: data, persistentVolumeClaim: {claimName: mlscan-testing-data}}
+      - {name: tmp, emptyDir: {sizeLimit: 128Mi, medium: Memory}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlscan-testing
+  namespace: mlscan-testing
+  labels: {app: mlscan-testing}
+spec:
+  selector: {app: mlscan-testing}
+  ports:
+  - {name: http, port: 8080, targetPort: 8080}

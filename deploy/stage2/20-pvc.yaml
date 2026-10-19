@@ -1,0 +1,13 @@
+# Хранилище результатов сканирований (JSON на PVC).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlscan-testing-data
+  namespace: mlscan-testing
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "2"}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 1Gi

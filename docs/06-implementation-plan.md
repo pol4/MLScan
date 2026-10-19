@@ -15,7 +15,7 @@ ML-моделей в формате pickle (см. `Concept.md` и `docs/01..05`)
 |------|----------|--------------------|--------------------------|--------|
 | **0** | **PoC (первый шаг)** | Один файл: статика + динамика в Docker + поведение → Markdown | Срез всех 3 компонент | ✅ опубликован |
 | 1 | Укрепление песочницы | Kata-микро-ВМ, eBPF (Falco), deception/canary, sinkhole, NetworkPolicy | Компонента 1 (Sandbox) | ✅ развёрнут |
-| 2 | Сервис тестирования | Полноценные probe-наборы, нормализация результатов, очереди | Компонента 2 (Testing Service) | — |
+| 2 | Сервис тестирования | Полноценные probe-наборы, нормализация результатов, очереди | Компонента 2 (Testing Service) | ✅ развёрнут |
 | 3 | Аналитический движок + UI | Корреляция, скоринг, Policy Engine, реестр, отчёты | Компонента 3 (Analytics+UI) | — |
 | 4 | Интеграции | CI/CD gate, Model Registry, SOC/SIEM, threat-intel | Сквозные | — |
 | 5 | Промышленная эксплуатация | GPU-изоляция, масштабирование, SLA, red-team | NFR | — |
@@ -262,16 +262,28 @@ benchmark-модели с `predict` нет. Примеры отравлений 
 
 Выход: изолированное исполнение с ядерным уровнем наблюдаемости и deception.
 
-## 3. Этап 2 — Сервис тестирования (Testing Service)
+## 3. Этап 2 — Сервис тестирования (Testing Service) ✅ (реализован)
 
-- Probe-библиотека: functional, robustness (FGSM/PGD, текстовые), backdoor (триггер-скан,
-  аномалии активаций, diff с референсом), privacy (membership inference, model inversion, PII),
-  resource (latency/CPU/GPU/DoS).
-- Нормализация результатов в `Normalized Finding`; корреляция и дедуп по прогонам.
-- Очереди заданий, ретраи, квоты; изоляция прогонов «один инстанс = один артефакт».
-- Безопасная валидация/экранирование выходов модели перед передачей в analytics.
+**Статус:** развёрнут в `mlscan-testing` и проверен. Артефакты — `deploy/stage2/`,
+подробности — `deploy/stage2/README.md`.
 
-Выход: сервис подаёт запросы и безопасно контролирует результаты (Компонента 2).
+Реализовано:
+- HTTP-сервис (stdlib, без зависимостей): `POST /scans`, `GET /scans`, `GET /scans/<id>`, `GET /healthz`.
+- **L1** выполняется в сервисе (переиспользует `poc/mlscan_poc.py`: `static_stage`, `decide`).
+- **L2/L3** — постановка Job в `mlscan-sandbox` (Kata, hardened) через Kubernetes API; артефакт
+  передаётся ConfigMap'ом; чтение результата из логов пода (`MLSCAN_RESULT_JSON`).
+- **Нормализация**: находки приводятся к контракту (`level` L1/L3, `check_id`, `severity`,
+  `confidence`, `evidence`); вердикт — `mlscan_poc.decide`.
+- RBAC (SA в `mlscan-testing` → Role в `mlscan-sandbox`), хранение результатов на PVC,
+  изоляция прогонов «один инстанс = один артефакт», автоудаление Job/ConfigMap.
+
+Проверки (evidence):
+- `evil0` → `Malicious` (L1 A-01/A-02 + L3 F-30); `evil2` → `Malicious` (F-32, F-20);
+  `evil6` → `Malicious` (F-31, F-32); `benign` и модель с `predict` → `Safe`.
+
+Осталось (Этап 2+): очередь заданий с ретраями/квотами, полноценная probe-библиотека
+(functional/robustness/backdoor/privacy/adversarial), PVC/стриминг для крупных артефактов,
+экранирование выходов модели. Текущий транспорт артефакта — ConfigMap (≤ ~900 КиБ).
 
 ## 4. Этап 3 — Аналитический движок + UI
 

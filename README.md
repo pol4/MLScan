@@ -24,6 +24,7 @@
 | [`poc/scan/`](./poc/scan) | **Демонстрационные данные** — 6 отравленных pickle (`evil0…evil5.pkl`) и генераторы |
 | [`poc/runs.txt`](./poc/runs.txt) | Пример собранного отчёта PoC по демонстрационным данным |
 | [`deploy/stage1/`](./deploy/stage1) | **Этап 1:** развёртывание укреплённой песочницы в кластере (Kata, deception, sinkhole, NetworkPolicy, Falco) |
+| [`deploy/stage2/`](./deploy/stage2) | **Этап 2:** сервис тестирования (приём артефактов, запуск песочницы, нормализация, вердикт) |
 
 ### Документация
 
@@ -88,6 +89,17 @@ bash deploy/stage1/run-sandbox.sh evil6.pkl pickle   # => deception + sinkhole
 ```
 
 Подробности и результаты проверок: [`deploy/stage1/README.md`](./deploy/stage1/README.md).
+
+**Этап 2 — Сервис тестирования** развёрнут в namespace `mlscan-testing`: принимает артефакты по
+HTTP, выполняет L1 у себя, запускает L2/L3 в песочнице Этапа 1, нормализует находки и выдаёт
+вердикт. Манифесты — в [`deploy/stage2/`](./deploy/stage2).
+
+```bash
+bash deploy/stage2/apply.sh                             # сервис тестирования
+bash deploy/stage2/run-scan.sh poc/scan/evil0.pkl       # => Malicious (A-01, F-30)
+bash deploy/stage2/run-scan.sh poc/scan/evil2.pkl       # => Malicious (F-32, F-20)
+bash deploy/stage2/run-scan.sh poc/scan/evil6.pkl       # => Malicious (F-31, F-32)
+```
 
 ---
 

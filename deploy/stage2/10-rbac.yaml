@@ -1,0 +1,41 @@
+# RBAC: сервис тестирования (в mlscan-testing) управляет Job'ами/ConfigMap'ами
+# в namespace песочницы (mlscan-sandbox) и читает логи подов.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mlscan-testing
+  namespace: mlscan-testing
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "2"}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mlscan-testing-sandbox
+  namespace: mlscan-sandbox
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "delete", "get", "list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "delete", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlscan-testing-sandbox
+  namespace: mlscan-sandbox
+subjects:
+- kind: ServiceAccount
+  name: mlscan-testing
+  namespace: mlscan-testing
+roleRef:
+  kind: Role
+  name: mlscan-testing-sandbox
+  apiGroup: rbac.authorization.k8s.io
