@@ -38,6 +38,7 @@
 - [`docs/05-architecture.md`](./docs/05-architecture.md) — детальная архитектура, API, модель данных.
 - [`docs/06-implementation-plan.md`](./docs/06-implementation-plan.md) — план реализации (первый шаг — PoC).
 - [`docs/07-implemented-architecture.md`](./docs/07-implemented-architecture.md) — **реализованная архитектура (as-built): компоненты и схема сетевого взаимодействия**.
+- [`docs/08-testing-guide.md`](./docs/08-testing-guide.md) — **что можно протестировать и куда подключаться**.
 
 ---
 
