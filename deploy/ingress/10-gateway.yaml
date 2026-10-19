@@ -1,0 +1,18 @@
+# Единая точка входа MLScan (Istio Ingress Gateway) вместо per-service NodePort.
+# Использует существующий istio-ingressgateway (NodePort 30217/30921 на узле).
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: mlscan-gateway
+  namespace: mlscan-ingress
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port: {number: 80, name: http, protocol: HTTP}
+    hosts:
+    - analytics.mlscan.local
+    - integrations.mlscan.local
+    - ops.mlscan.local
+    - api.mlscan.local

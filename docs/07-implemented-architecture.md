@@ -133,7 +133,9 @@ flowchart TB
     CI["CI/CD (mlscan-gate.sh)"]
     BR["Браузер / operator"]
   end
-
+  subgraph IGW["istio-system"]
+    GW["istio-ingressgateway :80 (NodePort 30217)"]
+  end
   subgraph INT["mlscan-integrations"]
     INTG["mlscan-integrations :8080"]
   end
@@ -143,14 +145,14 @@ flowchart TB
   subgraph TST["mlscan-testing"]
     TEST["mlscan-testing :8080 + :8090"]
   end
+  subgraph OPS["mlscan-ops"]
+    OPSD["mlscan-ops :8080"]
+  end
   subgraph SBX["mlscan-sandbox (PSA restricted)"]
     API["Kubernetes API"]
     JOB["sandbox Job / redteam Job (Kata microVM)"]
     SINK["sinkhole :8080 + tcp 4444/9001/1337"]
-    DEC["deception files / deception"]
-  end
-  subgraph OPS["mlscan-ops"]
-    OPSD["mlscan-ops :8080"]
+    DEC["deception files"]
   end
   subgraph MON["mlscan-monitoring"]
     FALCO["Falco (eBPF)"]
@@ -161,27 +163,30 @@ flowchart TB
   end
   NET["Интернет"]
 
-  CI -->|"POST /gate/scan :30809"| INTG
-  BR -->|"HTTP :30808"| ANAL
+  BR -->|"Host analytics.mlscan.local"| GW
+  CI -->|"Host integrations.mlscan.local"| GW
+  GW -->|"VirtualService"| ANAL
+  GW -->|"VirtualService"| INTG
+  GW -->|"VirtualService"| OPSD
+  GW -->|"VirtualService"| TEST
   INTG -->|"GET /api/scans :8080"| ANAL
-  INTG -->|"POST /scans :8080 (on-demand gate)"| TEST
+  INTG -->|"POST /scans :8080"| TEST
   ANAL -->|"GET /scans :8080"| TEST
-  TEST -->|"create Job, read pod logs (HTTPS 443)"| API
+  TEST -->|"create Job, read pod logs (API 443)"| API
   API -.->|"schedules"| JOB
   JOB -->|"GET artifact :8090 (ALLOW)"| TEST
   JOB -->|"egress ALLOW http/tcp"| SINK
   JOB -.->|"egress DENY (default-deny)"| NET
+  OPSD -->|"scans / sync / registry"| ANAL
+  INTG -.->|"egress DENY (allowlist)"| NET
   DEC -.->|"mounted read-only"| JOB
-  OPSD -->|"healthz / scans / sync / registry"| ANAL
-  OPSD -->|"POST /scans"| TEST
-  OPSD -->|"sync / registry / events"| INTG
   FALCO -.->|"host syscalls (runc); Kata guest invisible"| SBX
   KAN -->|"push image"| REG
   REG -.->|"image pull (kubelet)"| JOB
 ```
 
 **Направления и протоколы:**
-- Внешний доступ — NodePort `30808` (UI), `30809` (gate/API), `30810` (ops), `30811` (API тестирования).
+- Внешний доступ — **единая точка входа Istio Ingress Gateway** (HTTP NodePort `30217`), маршрутизация по хостам `analytics|integrations|ops|api.mlscan.local`; у сервисов MLScan NodePort нет (ClusterIP).
 - Внутренние вызовы — HTTP `:8080` по кластерному DNS (`<svc>.<ns>.svc.cluster.local`).
 - `TEST → Kubernetes API` — HTTPS `:443` (создание Job, чтение `pods/log`).
 - `Kata-Job → testing:8090` — скачивание СВОЕГО артефакта по токену (allow);
@@ -190,6 +195,7 @@ flowchart TB
   (там работает внутригостевая инструментация harness).
 - Образ песочницы собирается Kaniko в `mlscan-build` и публикуется в in-cluster registry;
   kubelet подтягивает его при создании Job.
+- **Egress платформы** — allowlist (deny-by-default + DNS + кластерные CIDR); внешний egress услуг запрещён.
 
 ---
 
@@ -209,14 +215,30 @@ flowchart TB
 
 ### 4.2 Внешняя экспозиция
 
-| Сервис | Тип | NodePort | Назначение |
-|--------|-----|----------|-----------|
-| `mlscan-analytics` | NodePort | 30808 | веб-UI + JSON API |
-| `mlscan-integrations` | NodePort | 30809 | gate/registry/SIEM/intel API |
-| `mlscan-ops` | NodePort | 30810 | метрики/качество/SLA |
-| `mlscan-testing` | ClusterIP | — | внутренний API (8080) + Artifact-сервер (8090) |
-| `mlscan-testing-api` | NodePort | 30811 | прямой API тестирования (загрузка больших файлов) |
-| `sinkhole` | ClusterIP | — | внутренний |
+Единая точка входа — **Istio Ingress Gateway** (внешние сервисы MLScan — ClusterIP):
+
+| Хост (Host header) | Gateway | Назначение |
+|--------------------|---------|-----------|
+| `analytics.mlscan.local` | `mlscan-ingress/mlscan-gateway` | веб-UI + JSON API |
+| `integrations.mlscan.local` | тот же | gate/registry/SIEM/intel |
+| `ops.mlscan.local` | тот же | метрики/качество/SLA |
+| `api.mlscan.local` | тот же | API тестирования |
+
+Шлюз: `istio-ingressgateway` (ns `istio-system`), HTTP NodePort **30217** (HTTPS 30921).
+Сервисы `mlscan-testing` (ClusterIP :8080+:8090) и `sinkhole` — внутренние.
+
+### 4.3 Egress-контроль (переход с «открытого» egress на allowlist)
+
+| Namespace | Политика egress | Разрешено |
+|-----------|-----------------|-----------|
+| `mlscan-testing` | `mlscan-egress` | DNS; кластерные CIDR (8080/8090/443); Kubernetes API (`192.168.20.116:16443`) |
+| `mlscan-analytics` | `mlscan-egress` | DNS; кластерные CIDR (8080/8090) |
+| `mlscan-integrations` | `mlscan-egress` | DNS; кластерные CIDR (8080) |
+| `mlscan-ops` | `mlscan-egress` | DNS; кластерные CIDR (8080) |
+| `mlscan-sandbox` | `default-deny-all` + allow | DNS; sinkhole; `testing:8090` (артефакт) |
+
+Внешний egress платформенных сервисов **запрещён** (проверено: `1.1.1.1:443 → DENY`).
+Toчечный доступ к внешним ресурсам — через FQDN-allowlist (Calico) или Egress Gateway (план).
 
 ---
 
@@ -372,6 +394,6 @@ evidence-chain — ok.
 
 - `../Concept.md` — концепция и целевая архитектура.
 - `01-threat-checklist.md`, `02-testing-strategy.md`, `03-isolation.md`, `04-risk-analysis-decision.md`, `05-architecture.md`, `06-implementation-plan.md`.
-- `../deploy/stage1…stage5/README.md`, `../deploy/sandbox-image/README.md` — операционные описания стадий и образа песочницы.
+- `../deploy/stage1…stage5/README.md`, `../deploy/sandbox-image/README.md`, `../deploy/ingress/README.md` — операционные описания стадий, образа песочницы и перехода на Ingress/Egress.
 - `08-testing-guide.md` — что протестировать и куда подключаться.
 - `../poc/README.md` — однофайловый PoC.

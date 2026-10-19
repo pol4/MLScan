@@ -1,0 +1,83 @@
+# Egress-контроль платформенных namespace: deny-by-default наружу, разрешены
+# только DNS и внутрикластерный трафик (service/pod CIDR). Заменяет неявный
+# «открытый egress» платформенных сервисов на явный allowlist.
+# Песочница (mlscan-sandbox) имеет собственную, более строгую политику.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mlscan-egress
+  namespace: mlscan-testing
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+      podSelector: {matchLabels: {k8s-app: kube-dns}}
+    ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+  - to:
+    - ipBlock: {cidr: 10.152.0.0/16}     # ClusterIP-сервисы (в т.ч. Kubernetes API)
+    - ipBlock: {cidr: 10.1.0.0/16}       # pod CIDR
+    ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: 8080}, {protocol: TCP, port: 8090}]
+  # Kubernetes API на microk8s обслуживается хостом (post-DNAT = узел:16443)
+  - to:
+    - ipBlock: {cidr: 192.168.20.116/32}
+    ports: [{protocol: TCP, port: 16443}, {protocol: TCP, port: 443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mlscan-egress
+  namespace: mlscan-analytics
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+      podSelector: {matchLabels: {k8s-app: kube-dns}}
+    ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+  - to:
+    - ipBlock: {cidr: 10.152.0.0/16}
+    - ipBlock: {cidr: 10.1.0.0/16}
+    ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 8090}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mlscan-egress
+  namespace: mlscan-integrations
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+      podSelector: {matchLabels: {k8s-app: kube-dns}}
+    ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+  - to:
+    - ipBlock: {cidr: 10.152.0.0/16}
+    - ipBlock: {cidr: 10.1.0.0/16}
+    ports: [{protocol: TCP, port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mlscan-egress
+  namespace: mlscan-ops
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+      podSelector: {matchLabels: {k8s-app: kube-dns}}
+    ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+  - to:
+    - ipBlock: {cidr: 10.152.0.0/16}
+    - ipBlock: {cidr: 10.1.0.0/16}
+    ports: [{protocol: TCP, port: 8080}]

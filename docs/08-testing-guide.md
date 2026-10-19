@@ -10,20 +10,37 @@
 | Что | Где |
 |-----|-----|
 | Кластер | `rtx-cluster` = **192.168.20.116** (MicroK8s) |
-| kubectl | контекст `microk8s` (уже настроен на рабочей станции) |
+| kubectl | контекст `microk8s` |
 | SSH на узел | `ssh col@rtx-cluster` |
-| **Analytics (UI + API)** | **http://192.168.20.116:30808** (NodePort) |
-| **Integrations (gate/registry/SIEM)** | **http://192.168.20.116:30809** |
-| **Ops (metrics/quality)** | **http://192.168.20.116:30810** |
-| Testing Service | ClusterIP: `mlscan-testing.mlscan-testing.svc:8080` (доступ — port-forward или через gate) |
+| **Ingress-шлюз** | `http://192.168.20.116:30217` (HTTP `istio-ingressgateway`) |
+| Analytics (UI+API) | хост `analytics.mlscan.local` |
+| Integrations | хост `integrations.mlscan.local` |
+| Ops | хост `ops.mlscan.local` |
+| Testing API | хост `api.mlscan.local` |
 
 Namespaces: `mlscan-sandbox`, `mlscan-monitoring`, `mlscan-testing`, `mlscan-analytics`,
-`mlscan-integrations`, `mlscan-ops`.
+`mlscan-integrations`, `mlscan-ops`, `mlscan-ingress`.
 
-> ⚠️ На рабочей станции задан HTTP-прокси (`http_proxy=http://localhost:1515`). Для прямых
-> обращений к NodePort используйте `curl --noproxy '*'`.
+> **Доступ — через Ingress (Istio)**; per-service NodePort отключены (см. `deploy/ingress/`).
+> Вариант 1 (без правок DNS) — шлюз + заголовок Host:
+> ```bash
+> GW=192.168.20.116:30217
+> curl -sS --noproxy '*' -H 'Host: analytics.mlscan.local' http://$GW/healthz
+> ```
+> Вариант 2 — добавьте hosts-записи (или DNS) и ходите по имени:
+> ```
+> 192.168.20.116 analytics.mlscan.local integrations.mlscan.local ops.mlscan.local api.mlscan.local
+> ```
+> ```bash
+> curl -sS --noproxy '*' http://analytics.mlscan.local:30217/healthz
+> ```
+> В примерах ниже адрес `192.168.20.116:308xx` соответствует хосту MLScan: выполняйте через
+> `$GW` с нужным `Host:` (analytics / integrations / ops / api).
 
-Альтернатива NodePort — port-forward:
+> ⚠️ На рабочей станции задан HTTP-прокси (`http_proxy=http://localhost:1515`) — используйте
+> `curl --noproxy '*'`.
+
+Альтернатива — port-forward (к ClusterIP-сервисам напрямую):
 ```bash
 kubectl -n mlscan-analytics  port-forward svc/mlscan-analytics  18080:8080
 kubectl -n mlscan-integrations port-forward svc/mlscan-integrations 18081:8080
@@ -31,9 +48,9 @@ kubectl -n mlscan-ops        port-forward svc/mlscan-ops        18082:8080
 kubectl -n mlscan-testing    port-forward svc/mlscan-testing    18083:8080
 ```
 
-Проверка живости стека:
+Проверка живости стека (через шлюз):
 ```bash
-curl -sS --noproxy '*' http://192.168.20.116:30810/health/stack
+curl -sS --noproxy '*' -H 'Host: ops.mlscan.local' http://192.168.20.116:30217/health/stack
 ```
 
 ---

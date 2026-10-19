@@ -1,0 +1,52 @@
+# VirtualServices: маршрутизация по хостам на ClusterIP-сервисы MLScan.
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mlscan-analytics
+  namespace: mlscan-analytics
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  hosts: ["analytics.mlscan.local"]
+  gateways: ["mlscan-ingress/mlscan-gateway"]
+  http:
+  - route:
+    - destination: {host: mlscan-analytics.mlscan-analytics.svc.cluster.local, port: {number: 8080}}
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mlscan-integrations
+  namespace: mlscan-integrations
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  hosts: ["integrations.mlscan.local"]
+  gateways: ["mlscan-ingress/mlscan-gateway"]
+  http:
+  - route:
+    - destination: {host: mlscan-integrations.mlscan-integrations.svc.cluster.local, port: {number: 8080}}
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mlscan-ops
+  namespace: mlscan-ops
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  hosts: ["ops.mlscan.local"]
+  gateways: ["mlscan-ingress/mlscan-gateway"]
+  http:
+  - route:
+    - destination: {host: mlscan-ops.mlscan-ops.svc.cluster.local, port: {number: 8080}}
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mlscan-testing-api
+  namespace: mlscan-testing
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  hosts: ["api.mlscan.local"]
+  gateways: ["mlscan-ingress/mlscan-gateway"]
+  http:
+  - route:
+    - destination: {host: mlscan-testing.mlscan-testing.svc.cluster.local, port: {number: 8080}}

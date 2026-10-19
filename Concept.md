@@ -42,6 +42,8 @@
 - **Этап 3** — аналитический движок + **веб-UI**: загрузка файлов, прогресс проверки, статистика
   с хэшами, фильтры/сортировка, скоринг, Policy Engine, append-only Evidence Store (hash-chain), отчёты JSON/MD/SARIF.
 - **Этап 4** — интеграции: Model Registry (по SHA-256), CI/CD gate, SIEM (NDJSON/CEF), threat-intel.
+- **Переход на Ingress/Egress:** единая точка входа Istio Gateway + VirtualServices по хостам;
+  egress платформы — allowlist (deny-by-default); per-service NodePort отключены (`deploy/ingress/`).
 - **Этап 5** — эксплуатация: метрики Prometheus, качество (TPR/FPR), непрерывный retest, red-team, PDB, аттестация.
 
 Образ песочницы `mlscan-sandbox` (Python 3.12 + PyTorch CPU + numpy/joblib/dill/cloudpickle) собирается

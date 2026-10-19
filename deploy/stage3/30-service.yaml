@@ -69,7 +69,7 @@ metadata:
   namespace: mlscan-analytics
   labels: {app: mlscan-analytics}
 spec:
-  type: NodePort
+  type: ClusterIP
   selector: {app: mlscan-analytics}
   ports:
-  - {name: http, port: 8080, targetPort: 8080, nodePort: 30808}
+  - {name: http, port: 8080, targetPort: 8080}

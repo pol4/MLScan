@@ -85,16 +85,3 @@ spec:
   ports:
   - {name: http, port: 8080, targetPort: 8080}
   - {name: artifacts, port: 8090, targetPort: 8090}
----
-# Прямой доступ к API тестирования (в т.ч. загрузка больших файлов с рабочей станции).
-apiVersion: v1
-kind: Service
-metadata:
-  name: mlscan-testing-api
-  namespace: mlscan-testing
-  labels: {app: mlscan-testing}
-spec:
-  type: NodePort
-  selector: {app: mlscan-testing}
-  ports:
-  - {name: http, port: 8080, targetPort: 8080, nodePort: 30811}

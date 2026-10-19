@@ -336,6 +336,8 @@ flowchart LR
 - **Kubernetes** для control plane; для исполнения — отдельный пул узлов (node taints/labels),
   желательно bare-metal или VM с микро-ВМ рантаймом (Kata/Firecracker).
 - Network policies: исполняющие узлы **не имеют** доступа к control plane и интернету.
+- **Ingress:** единая точка входа (Istio Gateway → VirtualServices по хостам), а не per-service
+  NodePort; **egress:** allowlist (deny-by-default). Реализация — `deploy/ingress/`.
 - Очередь (RabbitMQ/Kafka/NATS) для заданий; autoscaling воркеров.
 - GPU-пул отдельно, с MIG/vGPU для изоляции.
 

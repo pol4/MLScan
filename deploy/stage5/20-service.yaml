@@ -70,7 +70,7 @@ metadata:
   namespace: mlscan-ops
   labels: {app: mlscan-ops}
 spec:
-  type: NodePort
+  type: ClusterIP
   selector: {app: mlscan-ops}
   ports:
-  - {name: http, port: 8080, targetPort: 8080, nodePort: 30810}
+  - {name: http, port: 8080, targetPort: 8080}
