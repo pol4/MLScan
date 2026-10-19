@@ -4,17 +4,20 @@
 containerd, Calico, RuntimeClass `kata`) системы MLScan: компонентный состав, схема
 сетевого взаимодействия, потоки данных, границы доверия и ограничения.
 
-Источник: `deploy/stage1…stage5/`. Концепция — `../Concept.md`, проектная архитектура —
-`05-architecture.md`, план — `06-implementation-plan.md`.
+Источник: `deploy/stage1…stage5/` и `deploy/sandbox-image/`. Концепция — `../Concept.md`,
+проектная архитектура — `05-architecture.md`, план — `06-implementation-plan.md`,
+тест-гайд — `08-testing-guide.md`.
 
 ---
 
 ## 1. Обзор
 
 MLScan — система автоматического анализа опасности ML-моделей в формате pickle. Реализована
-как набор микросервисов в **шести namespace**, каждый из которых соответствует компоненте
-или слою архитектуры. Все сервисы — на стандартной библиотеке Python (без внешних
-зависимостей), образ `python:3.12-slim` (Python 3.12.14).
+как набор микросервисов в **семи namespace** (`mlscan-sandbox`, `mlscan-monitoring`,
+`mlscan-testing`, `mlscan-analytics`, `mlscan-integrations`, `mlscan-ops` и сборки образа
+`mlscan-build`). Все сервисы — на стандартной библиотеке Python (без внешних зависимостей),
+образ `python:3.12-slim` (Python 3.12.14); песочница использует отдельный образ
+`mlscan-sandbox` с torch/numpy.
 
 Ключевые принципы as-built:
 - артефакт **никогда не исполняется** в доверенной зоне — только в микро-ВМ Kata с сетевым
@@ -44,7 +47,7 @@ MLScan — система автоматического анализа опас
 | `pickletools` / `zipfile` / `sys.addaudithook` | Python 3.12 stdlib | статический разбор (L1) и наблюдаемость (L2/L3) |
 | Helm | v3.15.4 | установка Falco |
 | OpenSSL | 3.0.13 | утилита узла (доступна) |
-| Реестр образов (addon `registry`) | `registry:2.8.3` (NodePort 32000) | приватный реестр (доступен; в текущей сборке не задействован) |
+| Реестр образов (addon `registry`) | `registry:2.8.3` (NodePort 32000) | приватный реестр; **хранит образ песочницы** `mlscan-sandbox:latest` |
 | Istio | addon включён | присутствует; sidecar-инъекция не включена (не используется) |
 
 Все сервисы MLScan — собственный код на Python stdlib поверх образа `python:3.12-slim`;
@@ -62,10 +65,12 @@ MLScan — система автоматического анализа опас
 | sandbox Job (по запросу) | `runtimeClassName: kata` (Kata 3.32.0), образ `mlscan-sandbox` | запуск harness из PoC над артефактом (torch/numpy) |
 | `mlscan-redteam` (Job) | kata | escape-тест изоляции (Этап 5) |
 | ConfigMap `mlscan-harness`, `mlscan-samples`, `mlscan-deception*`, `mlscan-sinkhole`, `mlscan-redteam` | — | код harness, демо-данные, honeypot-файлы, sinkhole-сервер, redteam-скрипт |
-| NetworkPolicy `default-deny-all`, `allow-dns-egress`, `sandbox-to-sinkhole`, `sinkhole-ingress` | — | сетевая изоляция (Calico) |
+| NetworkPolicy `default-deny-all`, `allow-dns-egress`, `sandbox-to-sinkhole`, `sinkhole-ingress`, `sandbox-to-testing-artifacts` | — | сетевая изоляция (Calico) |
 | PSA `restricted` (namespace label) | — | запрет привилегированных подов |
 
-Артефакт доставляется в Job через **per-scan ConfigMap** (`mlscan-art-<id>`, binaryData).
+**Транспорт артефакта:** файл лежит на PVC сервиса тестирования (`/artifacts`); sandbox-Job
+скачивает его с Artifact-сервера сервиса тестирования (порт **8090**) по одноразовому токену.
+Per-scan ConfigMap-транспорт больше не используется.
 
 ### 2.2 `mlscan-monitoring` — eBPF-мониторинг
 
@@ -78,7 +83,7 @@ MLScan — система автоматического анализа опас
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
 | `mlscan-testing` (Deployment + ClusterIP Service :8080 + :8090) | stdlib HTTP | потоковый приём артефактов любого размера (PVC `/artifacts`), L1 (статика), запуск Job, Artifact-сервер (8090, отдача в песочницу по токену), сбор L2/L3, нормализация, вердикт, `/stats` |
-| ServiceAccount `mlscan-testing` + Role/RoleBinding в `mlscan-sandbox` | RBAC | create/delete Jobs+ConfigMaps, get pods/logs в песочнице |
+| ServiceAccount `mlscan-testing` + Role/RoleBinding в `mlscan-sandbox` | RBAC | create/delete Jobs, get pods/logs в песочнице |
 | PVC `mlscan-testing-data` | hostpath 1Gi | записи сканов (`/data/scans/*.json`) |
 | PVC `mlscan-artifacts` | hostpath 20Gi | загруженные модели (`/artifacts/<scan_id>/<name>`) |
 | ConfigMap `mlscan-poc-lib`, `mlscan-testing-code` | — | общий анализ (PoC) + код сервиса |
@@ -108,6 +113,16 @@ MLScan — система автоматического анализа опас
 | PDB `*-pdb` | — | PodDisruptionBudget для testing/analytics/integrations |
 | ConfigMap `mlscan-ops-code`, `mlscan-golden`, `mlscan-golden-samples` | — | код, golden-метки и образцы |
 
+### 2.8 `mlscan-build` — сборка образа песочницы
+
+| Объект | Тип | Назначение |
+|--------|-----|-----------|
+| `mlscan-sandbox-build` (Job, Kaniko) | executor v1.23.2 | сборка образа `mlscan-sandbox` и публикация в in-cluster registry |
+| ConfigMap `mlscan-sandbox-build` | — | `Dockerfile` контекста сборки |
+
+Образ: `python:3.12-slim` + **torch 2.14.1+cpu** + numpy/joblib/dill/cloudpickle. Сборка без
+Docker на хосте (Kaniko); результат — `localhost:32000/mlscan-sandbox:latest` (для kubelet).
+
 ---
 
 ## 3. Схема сетевого взаимодействия
@@ -126,7 +141,7 @@ flowchart TB
     ANAL["mlscan-analytics :8080"]
   end
   subgraph TST["mlscan-testing"]
-    TEST["mlscan-testing :8080"]
+    TEST["mlscan-testing :8080 + :8090"]
   end
   subgraph SBX["mlscan-sandbox (PSA restricted)"]
     API["Kubernetes API"]
@@ -140,6 +155,10 @@ flowchart TB
   subgraph MON["mlscan-monitoring"]
     FALCO["Falco (eBPF)"]
   end
+  subgraph BLD["mlscan-build"]
+    KAN["Kaniko Job"]
+    REG["registry :32000"]
+  end
   NET["Интернет"]
 
   CI -->|"POST /gate/scan :30809"| INTG
@@ -149,6 +168,7 @@ flowchart TB
   ANAL -->|"GET /scans :8080"| TEST
   TEST -->|"create Job, read pod logs (HTTPS 443)"| API
   API -.->|"schedules"| JOB
+  JOB -->|"GET artifact :8090 (ALLOW)"| TEST
   JOB -->|"egress ALLOW http/tcp"| SINK
   JOB -.->|"egress DENY (default-deny)"| NET
   DEC -.->|"mounted read-only"| JOB
@@ -156,15 +176,20 @@ flowchart TB
   OPSD -->|"POST /scans"| TEST
   OPSD -->|"sync / registry / events"| INTG
   FALCO -.->|"host syscalls (runc); Kata guest invisible"| SBX
+  KAN -->|"push image"| REG
+  REG -.->|"image pull (kubelet)"| JOB
 ```
 
 **Направления и протоколы:**
-- Внешний доступ — только NodePort `30808` (UI), `30809` (gate/API), `30810` (ops).
+- Внешний доступ — NodePort `30808` (UI), `30809` (gate/API), `30810` (ops), `30811` (API тестирования).
 - Внутренние вызовы — HTTP `:8080` по кластерному DNS (`<svc>.<ns>.svc.cluster.local`).
 - `TEST → Kubernetes API` — HTTPS `:443` (создание Job, чтение `pods/log`).
-- `Kata-Job → sinkhole` — единственный разрешённый egress; наружу — запрет (NetworkPolicy).
+- `Kata-Job → testing:8090` — скачивание СВОЕГО артефакта по токену (allow);
+- `Kata-Job → sinkhole` — разрешённый канал; наружу — запрет (NetworkPolicy default-deny).
 - `Falco` наблюдает хостовые syscalls; syscalls **внутри Kata-микро-ВМ ему не видны**
   (там работает внутригостевая инструментация harness).
+- Образ песочницы собирается Kaniko в `mlscan-build` и публикуется в in-cluster registry;
+  kubelet подтягивает его при создании Job.
 
 ---
 
@@ -210,12 +235,12 @@ sequenceDiagram
   CI->>INT: POST /gate/scan (artifact)
   INT->>TS: POST /scans (artifact)
   TS->>TS: L1 static analysis
-  TS->>K8S: create ConfigMap + Job
+  TS->>K8S: create Job
   K8S->>SB: schedule (kata, restricted)
   SB->>TS: GET /a/<scan_id>/<token>/<name> (artifact, :8090)
   SB->>SB: load under audit-hooks (L2/L3)
   SB-->>TS: pod logs (MLSCAN_RESULT_JSON)
-  TS->>K8S: delete Job + ConfigMap
+  TS->>K8S: delete Job
   TS-->>INT: normalized findings + verdict
   INT->>INT: registry + threat-intel + gate decision
   INT-->>CI: decision allow | block | review
@@ -264,16 +289,16 @@ deception, sinkhole). Аттестация целостности evidence — `
   нормализованные `findings`, `score`, `policy`, `verdict`), поэтому файлы сканов могут
   достигать десятков КБ.
 
-**Фактическое состояние (пример):** `evidence.jsonl` ≈ 83 КБ (~21 запись), `/data/scans/` ≈ 400 КБ,
-`registry.json` — 8 записей, `events.jsonl` — 5 строк.
+**Фактическое состояние (пример):** `evidence.jsonl` ≈ 228 КБ (~102 записи), `/data/scans/` — 101 файл,
+`/artifacts` ≈ 618 МБ (загруженные модели), `registry.json` — 17 записей, `events.jsonl` — 5 строк.
 
 **Свойства и ограничения:**
 - **один писатель**: сервисы развёрнуты `replicas=1` с RWO-PVC; запись сериализуется
   `threading.Lock` в пределах процесса; конкурентная запись из нескольких реплик не поддерживается;
 - покрытие/архивация/ретенция не реализованы; объём ограничен размером PVC;
 - нет произвольных запросов (только предопределённые API-выборки/фильтры в коде);
-- сырые артефакты в хранилище не сохраняются (в песочницу попадают транзитным ConfigMap
-  `mlscan-art-<id>`, который удаляется после прогона);
+- загруженные артефакты сохраняются на PVC `mlscan-artifacts` (`/artifacts/<scan_id>/<name>`);
+  per-scan ConfigMap-транспорт не используется; очистка старых артефактов — по ретенции (план);
 - **точки роста** (см. `05-architecture.md` §7): внешняя **PostgreSQL** (в кластере доступен
   addon CloudNativePG), `sqlite/duckdb` для запросов, объектное хранилище (S3/MinIO) для
   сырых evidence/трасс, ретенция и компактификация.
@@ -301,7 +326,7 @@ RBAC: единственная cross-namespace связка — SA `mlscan-testi
 
 | Сервис | DNS (внутри кластера) | Порт |
 |--------|----------------------|------|
-| testing | `mlscan-testing.mlscan-testing.svc.cluster.local` | 8080 |
+| testing | `mlscan-testing.mlscan-testing.svc.cluster.local` | 8080 (API), 8090 (artifact) |
 | analytics | `mlscan-analytics.mlscan-analytics.svc.cluster.local` | 8080 |
 | integrations | `mlscan-integrations.mlscan-integrations.svc.cluster.local` | 8080 |
 | ops | `mlscan-ops.mlscan-ops.svc.cluster.local` | 8080 |
@@ -335,6 +360,11 @@ evidence-chain — ok.
 - **eBPF в Kata:** host-eBPF не видит syscalls гостя — нужен внутригостевой сенсор (harness
   уже выполняет эту роль).
 - Внешние SIEM/тикеты — через `/export/cef` и `/events` (интеграция на стороне потребителя).
+- **Динамика:** torch/numpy-модели и pickle в стиле Python 2 (`__builtin__`) теперь исполняются
+  в песочнице (образ `mlscan-sandbox` + совместимость harness).
+- **Артефакты:** хранятся на PVC `mlscan-artifacts` (20Gi) без авто-ретенции — рост диска;
+  в плане — ретенция/очистка.
+- **GPU** — по-прежнему недоступен (см. выше).
 
 ---
 
@@ -342,5 +372,6 @@ evidence-chain — ok.
 
 - `../Concept.md` — концепция и целевая архитектура.
 - `01-threat-checklist.md`, `02-testing-strategy.md`, `03-isolation.md`, `04-risk-analysis-decision.md`, `05-architecture.md`, `06-implementation-plan.md`.
-- `../deploy/stage1…stage5/README.md` — операционные описания стадий.
+- `../deploy/stage1…stage5/README.md`, `../deploy/sandbox-image/README.md` — операционные описания стадий и образа песочницы.
+- `08-testing-guide.md` — что протестировать и куда подключаться.
 - `../poc/README.md` — однофайловый PoC.

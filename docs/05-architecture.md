@@ -168,6 +168,10 @@ flowchart LR
   тензоры, вредоносные строки, «отравленные» выходные файлы) перед передачей в analytics.
 - Управление таймаутами, ретраями, квотами.
 - Дедупликация и корреляция результатов по прогонам.
+- **Потоковый приём артефактов любого размера** (стриминг на хранилище, без буферизации в память).
+- **Хранение артефактов** на PVC и **отдача их в песочницу** по одноразовому токенизированному URL
+  (Artifact-сервер на отдельном порту).
+- **Прогресс** проверки (`state/stage/progress`) и **статистика** (объём, число уникальных хэшей).
 
 ### 4.3 Виды тестов (probe-библиотека)
 - **Load probes:** попытки загрузки с разными опциями, фиксация поведения, canary.
@@ -200,6 +204,8 @@ sequenceDiagram
 - Сервис **не разбирает** содержимое модели у себя — только проксирует в песочницу.
 - Валидация входов/выходов, лимиты размера, запрет исполнения сериализованных объектов.
 - Собственный least-privilege, без секретов, доступных payload.
+- Артефакт передаётся в песочницу **не монтированием**, а скачиванием с Artifact-сервера сервиса
+  по токену; в NetworkPolicy это единственное узкое исключение (`sandbox → testing:8090`).
 
 ---
 
@@ -231,9 +237,13 @@ sequenceDiagram
 ### 5.4 API (пример)
 ```
 POST /scans                        # запуск сканирования
-GET  /scans/{id}                   # статус
+POST /upload?name=&fmt=            # потоковая загрузка модели (в т.ч. больших файлов)
+GET  /scans/{id}                   # статус (state/stage/progress, sha256, size)
 GET  /scans/{id}/findings          # находки
 GET  /scans/{id}/report?format=   # отчёт
+GET  /api/overview                 # список сканов + прогресс + вердикт
+GET  /api/progress/{id}            # живой прогресс скана
+GET  /api/stats                    # статистика (вердикты, объём, число хэшей)
 GET  /artifacts/{hash}             # карточка артефакта и вердикт
 POST /artifacts/{hash}/review      # ручное решение + обоснование
 GET/PUT /policies                  # управление политиками
@@ -278,8 +288,10 @@ sequenceDiagram
 
 ## 7. Модель данных (ключевые сущности)
 
-- **Artifact** — `hash`, `size`, `format`, `source`, `lineage`, `signature`, `verdict`.
-- **Scan** — `scan_id`, `artifact_hash`, `profile`, `levels`, `status`, `coverage`, `toolchain_hash`.
+- **Artifact** — `hash` (sha256), `size`, `format`, `source`, `lineage`, `signature`, `verdict`;
+  при загрузке: `state` (`queued/running/done/error`), `stage`, `progress`, `artifact_token`.
+- **Scan** — `scan_id`, `artifact_hash`, `profile`, `levels`, `status`, `coverage`, `toolchain_hash`,
+  `timings` (`static_s`, `sandbox_s`).
 - **Finding** — см. Normalized Finding (`04-risk-analysis-decision.md` §2).
 - **Evidence** — тип, содержимое/ссылка, хеш, связь с finding.
 - **Trace** — нормализованные системные события (`syscall/network/fs/process/resource`).
@@ -290,6 +302,10 @@ sequenceDiagram
 
 Хранение: реляционная БД для сущностей + объектное хранилище (S3/MinIO) для сырых
 evidence/trace; иммутабельность через append-only + контрольные суммы.
+
+> **Реализовано (as-built):** БД не используется — файловое хранилище на PVC (JSON/JSONL),
+> Evidence Store — append-only с hash-цепочкой; артефакты — на PVC `/artifacts`. Детали:
+> `07-implemented-architecture.md` §6.
 
 ---
 
@@ -349,7 +365,7 @@ flowchart LR
 | Backend/Control | Python (FastAPI) или Go, PostgreSQL, MinIO/S3, RabbitMQ/Kafka |
 | Analytics | Python (pandas/duckdb), правила OPA/Rego, ML для аномалий (опц.) |
 | UI | React/Vue + типовой дизайн-система, WebSocket для live-статуса |
-| Валидация/инференс | PyTorch/TF/ONNX Runtime/SafeTensors по необходимости |
+| Валидация/инференс | образ песочницы `mlscan-sandbox` (Python 3.12 + PyTorch CPU + numpy/joblib/dill/cloudpickle); сборка — Kaniko |
 
 ---
 

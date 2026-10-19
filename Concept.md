@@ -32,6 +32,24 @@
 
 ---
 
+## Статус реализации (as-built)
+
+Реализовано и развёрнуто в кластере **rtx-cluster** (MicroK8s, 7 namespace):
+- **Этап 0** — PoC (однофайловый анализатор: статика/динамика/поведение).
+- **Этап 1** — укреплённая песочница: микро-ВМ **Kata**, deception, sinkhole, NetworkPolicy, eBPF (Falco).
+- **Этап 2** — сервис тестирования: **потоковая загрузка моделей любого размера**, Artifact-сервер,
+  запуск sandbox-Job, нормализация, вердикт, прогресс и статистика.
+- **Этап 3** — аналитический движок + **веб-UI**: загрузка файлов, прогресс проверки, статистика
+  с хэшами, фильтры/сортировка, скоринг, Policy Engine, append-only Evidence Store (hash-chain), отчёты JSON/MD/SARIF.
+- **Этап 4** — интеграции: Model Registry (по SHA-256), CI/CD gate, SIEM (NDJSON/CEF), threat-intel.
+- **Этап 5** — эксплуатация: метрики Prometheus, качество (TPR/FPR), непрерывный retest, red-team, PDB, аттестация.
+
+Образ песочницы `mlscan-sandbox` (Python 3.12 + PyTorch CPU + numpy/joblib/dill/cloudpickle) собирается
+**Kaniko** в in-cluster registry. Динамика доводит payload до исполнения (в т.ч. torch-модели и pickle
+в стиле Python 2). Детали и схемы — `docs/07-implemented-architecture.md`, тест-гайд — `docs/08-testing-guide.md`.
+
+---
+
 # Часть I. Чеклист потенциальных опасностей
 
 Полный перечень рисков модели в формате pickle. Шкала серьёзности: **C** (критическая),

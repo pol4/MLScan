@@ -281,9 +281,13 @@ benchmark-модели с `predict` нет. Примеры отравлений 
 - `evil0` → `Malicious` (L1 A-01/A-02 + L3 F-30); `evil2` → `Malicious` (F-32, F-20);
   `evil6` → `Malicious` (F-31, F-32); `benign` и модель с `predict` → `Safe`.
 
+**Доработка (загрузка/прогресс/статистика):** реализованы потоковая загрузка моделей любого
+размера (PVC `/artifacts` + Artifact-сервер :8090, токенизированная отдача в песочницу),
+прогресс (`state/stage/progress`, тайминги), `GET /stats`; образ песочницы `mlscan-sandbox`
+(torch CPU) собирается Kaniko.
+
 Осталось (Этап 2+): очередь заданий с ретраями/квотами, полноценная probe-библиотека
-(functional/robustness/backdoor/privacy/adversarial), PVC/стриминг для крупных артефактов,
-экранирование выходов модели. Текущий транспорт артефакта — ConfigMap (≤ ~900 КиБ).
+(functional/robustness/backdoor/privacy/adversarial), экранирование выходов модели.
 
 ## 4. Этап 3 — Аналитический движок + UI ✅ (реализован)
 
@@ -303,8 +307,12 @@ benchmark-модели с `predict` нет. Примеры отравлений 
 Проверки (evidence): `evil6` → `Malicious`, score 10.0, policy `block-rce→block`, отчёты
 `.md`/`.sarif` валидны; `benign`/`toy` → `Safe`; evidence chain `ok`.
 
-Осталось: OPA/Rego вместо JSON-правил, очередь/retest, Knowledge Base (IoC/baseline),
-Model Registry, PDF/HTML-отчёты, auth для UI, человек-в-контуре (feedback в детекторы).
+**Доработка UI:** загрузка файлов моделей (в т.ч. больших) через веб-форму (потоковый прокси
+в сервис тестирования), прогресс проверки (автообновление), статистика по вердиктам/объёму/хэшам,
+фильтр по имени и результату, сортировка по дате и объёму, карточка артефакта с разделом «Динамический этап».
+
+Осталось: OPA/Rego вместо JSON-правил, Knowledge Base (IoC/baseline), PDF/HTML-отчёты,
+auth для UI, человек-в-контуре (feedback в детекторы).
 
 ## 5. Этап 4 — Интеграции ✅ (реализован)
 
