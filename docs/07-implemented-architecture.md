@@ -234,6 +234,44 @@ sequenceDiagram
 Конфигурация — ConfigMap'ы (код сервисов, `policy.json`, `intel.json`, `golden.json`, harness,
 deception, sinkhole). Аттестация целостности evidence — `deploy/stage5/60-attest.sh` (HMAC-SHA256).
 
+### 6.1 Как устроено хранилище аналитических данных
+
+**Отдельной СУБД нет.** Аналитическая информация хранится **файлами на PVC**
+(`microk8s-hostpath`), загружается в память при старте и отдаётся по HTTP API. Ни SQL, ни
+индексов на диске, ни движка запросов не используется.
+
+| Хранилище | Файл(ы) | Формат / семантика |
+|-----------|---------|--------------------|
+| Сервис тестирования (`mlscan-testing`) | `/data/scans/<scan_id>.json` | один JSON на скан; функции `save_scan`/`load_scan`/`list_scans` |
+| Аналитический движок (`mlscan-analytics`) — **основное хранилище аналитики** | `/data/evidence.jsonl` | **append-only JSONL**; строка = `{"prev","hash","record"}`, где `hash = sha256(prev + json(record))` → **tamper-evident hash-цепочка** |
+| Интеграции (`mlscan-integrations`) | `/data/registry.json`, `/data/events.jsonl` | реестр `sha256 → entry` (dict) + append-only события gate/SIEM |
+| Ops (`mlscan-ops`) | — | stateless; читает остальные по API |
+
+**Механика аналитического движка:**
+- при старте `_load_store()` проигрывает `evidence.jsonl` и строит **in-memory индекс**
+  `scan_id → record`;
+- запись — `_append()` под `threading.Lock`: считает `hash` от `prev + record`, дописывает
+  строку и обновляет `last_hash` (append-only, без изменения прошлых записей);
+- чтение — только через API: `/api/scans`, `/api/scans/<id>`, `/reports/<id>.json|.md|.sarif`;
+- контроль целостности — `GET /api/evidence/verify` (пересчёт всей цепочки);
+- запись `record` включает исходные данные скана (`static`, `sandbox` с трассой событий,
+  нормализованные `findings`, `score`, `policy`, `verdict`), поэтому файлы сканов могут
+  достигать десятков КБ.
+
+**Фактическое состояние (пример):** `evidence.jsonl` ≈ 83 КБ (~21 запись), `/data/scans/` ≈ 400 КБ,
+`registry.json` — 8 записей, `events.jsonl` — 5 строк.
+
+**Свойства и ограничения:**
+- **один писатель**: сервисы развёрнуты `replicas=1` с RWO-PVC; запись сериализуется
+  `threading.Lock` в пределах процесса; конкурентная запись из нескольких реплик не поддерживается;
+- покрытие/архивация/ретенция не реализованы; объём ограничен размером PVC;
+- нет произвольных запросов (только предопределённые API-выборки/фильтры в коде);
+- сырые артефакты в хранилище не сохраняются (в песочницу попадают транзитным ConfigMap
+  `mlscan-art-<id>`, который удаляется после прогона);
+- **точки роста** (см. `05-architecture.md` §7): внешняя **PostgreSQL** (в кластере доступен
+  addon CloudNativePG), `sqlite/duckdb` для запросов, объектное хранилище (S3/MinIO) для
+  сырых evidence/трасс, ретенция и компактификация.
+
 RBAC: единственная cross-namespace связка — SA `mlscan-testing` (ns `mlscan-testing`) с Role
 в `mlscan-sandbox` (Jobs/ConfigMaps create·delete·get, pods/logs get). Остальные сервисы
 работают без доступа к Kubernetes API.
