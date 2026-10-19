@@ -345,7 +345,7 @@ _JS = """<script>
 function fmtBytes(b){b=+b||0;const u=['B','KiB','MiB','GiB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++;}return b.toFixed(b<10&&i>0?1:0)+' '+u[i];}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 async function refresh(){
-  const ov=await (await fetch('/api/overview')).json();
+  const ov=(await (await fetch('/api/overview')).json()).scans||[];
   const st=await (await fetch('/api/stats')).json();
   document.getElementById('cards').innerHTML =
     ['Malicious','Dangerous','Needs review','Safe','Inconclusive'].map(v=>
