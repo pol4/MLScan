@@ -21,7 +21,14 @@ kubectl apply -f "$ROOT/deploy/stage2/30-service.yaml"
 kubectl -n mlscan-testing delete svc mlscan-testing-api --ignore-not-found >/dev/null 2>&1 || true
 
 echo "[5/6] Egress-политики (deny-by-default + DNS + внутрикластерный allowlist)"
-kubectl apply -f "$HERE/30-egress-networkpolicies.yaml"
+API_IP=$(kubectl -n default get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
+if [ -n "${API_IP:-}" ]; then
+  echo "  API-endpoint: ${API_IP} (подставляется в политику)"
+  sed "s#198\.51\.100\.10/32#${API_IP}/32#" "$HERE/30-egress-networkpolicies.yaml" | kubectl apply -f -
+else
+  echo "  WARN: не удалось определить API-endpoint; применяю как есть (проверьте политику)"
+  kubectl apply -f "$HERE/30-egress-networkpolicies.yaml"
+fi
 
 echo "[6/6] Проверка живости сервисов"
 for ns in mlscan-testing mlscan-analytics mlscan-integrations mlscan-ops; do

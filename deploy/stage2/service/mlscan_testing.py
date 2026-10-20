@@ -47,6 +47,15 @@ HARNESS_CM = os.environ.get("HARNESS_CM", "mlscan-harness")
 JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT", "600"))
 ARTIFACT_PORT = int(os.environ.get("ARTIFACT_PORT", "8090"))
 ARTIFACT_BASE = os.environ.get("ARTIFACT_BASE", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8090")
+DATA_TMP = os.environ.get("DATA_TMP", "/var/tmp")
+S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
+S3_ENABLED = bool(S3_ENDPOINT)
+_s3 = None
+if S3_ENABLED:
+    sys.path.insert(0, "/opt/s3")
+    from s3client import S3  # noqa: E402
+    _s3 = S3(S3_ENDPOINT, os.environ["S3_ACCESS_KEY"], os.environ["S3_SECRET_KEY"],
+             region=os.environ.get("S3_REGION", "garage"), bucket=os.environ["S3_BUCKET"], timeout=3600)
 MAX_UPLOAD = int(os.environ.get("MAX_UPLOAD", str(20 * 1024**3)))
 JOB_MEMORY = os.environ.get("JOB_MEMORY", "2Gi")
 JOB_EPHEMERAL = os.environ.get("JOB_EPHEMERAL", "8Gi")
@@ -285,6 +294,11 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
         update(scan_id, state="running", stage="static", progress=10)
         static = mlscan_poc.static_stage(Path(path))
         timings["static_s"] = round(time.time() - t, 2)
+        if S3_ENABLED:                      # локальная копия нужна была только для L1
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
         rec = load_scan(scan_id) or {}
         artifact_url = f"{ARTIFACT_BASE}/a/{scan_id}/{rec.get('artifact_token','')}/{urllib.parse.quote(name)}"
@@ -322,7 +336,28 @@ class ArtifactHandler(BaseHTTPRequestHandler):
         if not rec or rec.get("artifact_token") != token:
             self.send_error(403)
             return
-        path = os.path.join(ARTIFACTS_DIR, scan_id, os.path.basename(name))
+        if rec.get("s3_key") and _s3 is not None:
+            try:
+                st, hd, resp = _s3.get_stream(rec["s3_key"])
+            except Exception:  # noqa: BLE001
+                self.send_error(502)
+                return
+            if st != 200:
+                self.send_error(st)
+                return
+            self.send_response(200)
+            cl = hd.get("Content-Length")
+            if cl:
+                self.send_header("Content-Length", cl)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.end_headers()
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+            return
+        path = rec.get("local_path") or os.path.join(ARTIFACTS_DIR, scan_id, os.path.basename(name))
         if not os.path.isfile(path):
             self.send_error(404)
             return
@@ -378,12 +413,11 @@ class Handler(BaseHTTPRequestHandler):
         if n > MAX_UPLOAD:
             return self._json(413, {"error": f"artifact too large ({n} > {MAX_UPLOAD})"})
         scan_id = uuid.uuid4().hex
-        d = os.path.join(ARTIFACTS_DIR, scan_id)
-        os.makedirs(d, exist_ok=True)
-        path = os.path.join(d, name)
+        os.makedirs(DATA_TMP, exist_ok=True)
+        tmp = os.path.join(DATA_TMP, "up-" + scan_id)
         h = hashlib.sha256()
         got = 0
-        with open(path, "wb") as fh:
+        with open(tmp, "wb") as fh:
             while got < n:
                 chunk = self.rfile.read(min(1 << 20, n - got))
                 if not chunk:
@@ -391,15 +425,43 @@ class Handler(BaseHTTPRequestHandler):
                 fh.write(chunk)
                 h.update(chunk)
                 got += len(chunk)
+        sha = h.hexdigest()
         token = uuid.uuid4().hex
         rec = {"scan_id": scan_id, "name": name, "format": fmt, "size": got,
-               "sha256": h.hexdigest(), "artifact_token": token,
+               "sha256": sha, "artifact_token": token,
                "state": "queued", "stage": "queued", "progress": 0,
                "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        local = tmp
+        if S3_ENABLED and _s3 is not None:
+            key = f"{sha}/{name}"
+            try:
+                if not _s3.exists(key):
+                    with open(tmp, "rb") as fh:
+                        st, _, _ = _s3.put_stream(key, fh, got, sha, "application/octet-stream")
+                    if st not in (200, 201):
+                        raise RuntimeError(f"s3 put status {st}")
+                rec["s3_key"] = key
+                rec["dedup"] = _s3.exists(key)
+            except Exception as exc:  # noqa: BLE001
+                rec["s3_error"] = f"{type(exc).__name__}: {exc}"
+                try:
+                    d = os.path.join(ARTIFACTS_DIR, scan_id)
+                    os.makedirs(d, exist_ok=True)
+                    local = os.path.join(d, name)
+                    os.replace(tmp, local)
+                    rec["local_path"] = local
+                except OSError:
+                    rec["local_error"] = "локальный фолбэк недоступен (RO FS)"
+        else:
+            d = os.path.join(ARTIFACTS_DIR, scan_id)
+            os.makedirs(d, exist_ok=True)
+            local = os.path.join(d, name)
+            os.replace(tmp, local)
+            rec["local_path"] = local
         save_scan(rec)
-        threading.Thread(target=process_scan, args=(scan_id, name, fmt, path), daemon=True).start()
+        threading.Thread(target=process_scan, args=(scan_id, name, fmt, local), daemon=True).start()
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": got,
-                                "sha256": h.hexdigest()})
+                                "sha256": sha, "s3_key": rec.get("s3_key")})
 
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
@@ -411,7 +473,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+    os.makedirs(DATA_TMP, exist_ok=True)
+    if not S3_ENABLED:
+        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     threading.Thread(target=lambda: ThreadingHTTPServer(("0.0.0.0", ARTIFACT_PORT),
                                                         ArtifactHandler).serve_forever(),
                      daemon=True).start()

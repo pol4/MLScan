@@ -49,7 +49,7 @@ spec:
           httpGet: {path: /healthz, port: 8080}
           initialDelaySeconds: 3
         resources:
-          requests: {cpu: "200m", memory: "256Mi"}
+          requests: {cpu: "200m", memory: "256Mi", ephemeral-storage: "1Gi"}
           limits: {cpu: "4", memory: "1Gi", ephemeral-storage: "150Gi"}
         volumeMounts:
         - {name: s3client, mountPath: /opt/s3, readOnly: true}

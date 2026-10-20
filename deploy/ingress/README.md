@@ -23,7 +23,8 @@ HTTP-порт **istio-ingressgateway** (NodePort `30217`, HTTPS `30921`) — о�
 - **VirtualServices** в namespace каждого сервиса → ClusterIP-сервисы (`<svc>.<ns>.svc...:8080`).
 - **Egress NetworkPolicy** (`mlscan-egress`) в `mlscan-testing/analytics/integrations/ops`:
   запрет наружу; разрешены DNS и кластерные CIDR (`10.152.0.0/16`, `10.1.0.0/16`);
-  для `mlscan-testing` дополнительно разрешён Kubernetes API (`<API_ENDPOINT>`; замените на адрес вашего API).
+  для `mlscan-testing` дополнительно разрешён Kubernetes API и порт S3 (3900). Адрес API-endpoint
+  подставляется автоматически при применении (`apply.sh` заменяет плейсхолдер `198.51.100.10`).
 - Песочница `mlscan-sandbox` сохраняет собственную строгую политику (default-deny + sinkhole
   + artifact-сервер :8090).
 

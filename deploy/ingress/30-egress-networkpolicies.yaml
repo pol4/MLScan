@@ -19,8 +19,9 @@ spec:
   - to:
     - ipBlock: {cidr: 10.152.0.0/16}     # ClusterIP-сервисы (в т.ч. Kubernetes API)
     - ipBlock: {cidr: 10.1.0.0/16}       # pod CIDR
-    ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: 8080}, {protocol: TCP, port: 8090}]
-  # Kubernetes API: адрес/порт зависят от инсталляции (замените на IP:port API-endpoint)
+    ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: 8080}, {protocol: TCP, port: 8090}, {protocol: TCP, port: 3900}]
+  # Kubernetes API: адрес/порт зависят от инсталляции; IP подставляется при применении
+  # (deploy/ingress/apply.sh находит endpoint API и заменяет 198.51.100.10)
   - to:
     - ipBlock: {cidr: 198.51.100.10/32}
     ports: [{protocol: TCP, port: 16443}, {protocol: TCP, port: 443}]
