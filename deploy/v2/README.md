@@ -44,6 +44,31 @@ bash deploy/v2/ingest/apply.sh
   статистика: `uploads=2, bytes=2 ГиБ, dedup=1, objects=1`.
 - API: `GET /stats`, `GET /objects/<sha256>/<name>` (потоковая выдача), `GET /healthz`.
 
+## I2 — PostgreSQL (реализовано частично)
+
+Namespace `mlscan-data`:
+
+| Объект | Назначение |
+|--------|-----------|
+| `postgres` (StatefulSet + PVC + Service) | единый экземпляр PostgreSQL (без оператора, чтобы не трогать кластерные addon'ы) |
+| `mlscan-pg-init` (ConfigMap) | схема БД |
+| `mlscan-pg` (Secret) | пароль (генерируется `apply.sh`) |
+
+**Схема:** `artifacts`, `artifact_fingerprints`, `scans`, `findings`, `evidence` (hash-chain),
+`policies`, `decisions`, `users`, `api_keys`, `uploads`, `connections`, `audit_log`.
+Таблицы `evidence` и `audit_log` — **append-only** (триггеры запрещают UPDATE/DELETE).
+
+**Развёртывание и проверка:**
+
+```bash
+bash deploy/v2/db/apply.sh
+```
+
+Проверено: 12 таблиц; вставка/чтение работают; `UPDATE evidence`/`audit_log` → `ERROR: append-only table`.
+
+**Статус:** схема и экземпляр развёрнуты. **Интеграция сервисов с БД** (запись `scans`/`findings`/
+`evidence`/`uploads`/`connections`, dual-write с JSON-экспортом) — следующий шаг (I2b).
+
 ### Ограничения I1 (и что дальше)
 
 - Пропускная способность приёма ограничена одним потоком (≈ десятки МБ/с на узел);

@@ -230,7 +230,7 @@ sequenceDiagram
    `mlscan-artifacts`, content-addressed, Ingest Gateway (потоковая загрузка, дедуп); **сервис тестирования
    переведён на S3** (Artifact-сервер `:8090` отдаёт из S3). Отказ от PVC `/artifacts`.
    Далее: parallel multipart / presigned direct-to-S3.
-2. **I2. PostgreSQL (CloudNativePG)** — схема (artifacts/fingerprints/scans/findings/evidence/
+2. **I2. PostgreSQL** (реализовано без оператора, StatefulSet в `mlscan-data`; схема из 12 таблиц с append-only `evidence`/`audit_log`; интеграция сервисов — I2b) — схема (artifacts/fingerprints/scans/findings/evidence/
    uploads/connections/audit); миграция JSON/JSONL → БД (dual-write); JSON-экспорт остаётся.
 3. **I3. AuthN/Z + audit** — Keycloak OIDC + Istio; RBAC; correlation-id; журнал.
 4. **I4. Кэш и производительность** — `mlscan-cache` DaemonSet + PVC; mmap-профили sandbox;

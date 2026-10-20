@@ -59,7 +59,7 @@ SHA-256, размер, тайминги, риск-скор, policy-решени�
 | [`deploy/stage5/`](./deploy/stage5) | **Этап 5:** эксплуатация (метрики/качество, retest, red-team, PDB, аттестация) |
 | [`deploy/sandbox-image/`](./deploy/sandbox-image) | Образ песочницы `mlscan-sandbox` (torch CPU) — сборка через Kaniko |
 | [`deploy/ingress/`](./deploy/ingress) | Ingress (Istio Gateway + VirtualServices) и egress-allowlist вместо NodePort |
-| [`deploy/v2/`](./deploy/v2) | **Реализация v2 (Волна 0):** S3-хранилище (Garage) и Ingest Gateway (I1) |
+| [`deploy/v2/`](./deploy/v2) | **Реализация v2 (Волна 0):** S3 (Garage) + Ingest (I1/I1b), PostgreSQL (I2) |
 
 ### Документация
 
