@@ -604,6 +604,9 @@ sequenceDiagram
 - `docs/05-architecture.md` — детальная архитектура, API, модель данных, развёртывание.
 - `docs/06-implementation-plan.md` — план реализации; первый шаг — минимальный PoC.
 - `docs/07-implemented-architecture.md` — реализованная архитектура (as-built): компоненты и схема сетевого взаимодействия.
+- `docs/08-testing-guide.md` — что можно протестировать и куда подключаться.
+- `docs/09-formats-and-backdoors-analysis.md` — анализ других форматов ML/AI и видов закладок (расширение за пределы pickle).
+- `START.md` — стартовая статья о проекте.
 - `poc/mlscan_poc.py` — реализация PoC (один файл, Docker-песочница, Markdown-отчёт).
 
 **Развёрнутая реализация (кластер rtx-cluster):**

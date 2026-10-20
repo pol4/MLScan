@@ -398,4 +398,5 @@ evidence-chain — ok.
 - `01-threat-checklist.md`, `02-testing-strategy.md`, `03-isolation.md`, `04-risk-analysis-decision.md`, `05-architecture.md`, `06-implementation-plan.md`.
 - `../deploy/stage1…stage5/README.md`, `../deploy/sandbox-image/README.md`, `../deploy/ingress/README.md` — операционные описания стадий, образа песочницы и перехода на Ingress/Egress.
 - `08-testing-guide.md` — что протестировать и куда подключаться.
+- `09-formats-and-backdoors-analysis.md` — анализ других форматов ML/AI и видов закладок.
 - `../poc/README.md` — однофайловый PoC.
