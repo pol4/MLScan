@@ -79,8 +79,23 @@ bash deploy/v2/db/apply.sh
 Проверено: скан `evil0.pkl` → `artifacts/uploads/scans/findings` = 3/3/3/3;
 `scans.verdict=Malicious`, находки `F-30/A-01/A-02`.
 
-**Осталось (I2c):** перенести **аналитический движок** на БД (`evidence` hash-chain в БД,
-`artifact_fingerprints`, `connections`, `audit_log`), затем **I3** AuthN/Z + audit.
+### I2c — аналитический движок на БД (реализовано)
+
+При наличии `PGHOST` аналитика зеркалит в PostgreSQL (dual-write, JSONL сохраняется):
+`artifacts`, `artifact_fingerprints` (`sha256`), `scans` (upsert), `findings`, `evidence`
+(**hash-chain**, `payload` — колонка `TEXT`, чтобы хэш сходился побайтово).
+
+- При старте цепочка **засеивается из БД** (`SELECT hash ... ORDER BY id DESC LIMIT 1`),
+  а не из JSONL → цепочка консистентна.
+- `GET /api/evidence/verify` в DB-режиме проверяет цепочку **по БД** (`source: db`).
+- Deployment аналитики — стратегия **Recreate**, а фоновый поллинг по умолчанию отключён
+  (`POLL_INTERVAL=3600`); синхронизация — явным `POST /sync` (устраняет гонки записи цепочки).
+
+Проверено: скан `evil6.pkl` → `POST /sync` → `verify` = `{"ok": true, "entries": 1, "source": "db"}`;
+в БД: `artifacts=10, fingerprints=8, scans=21, findings=135`. Ранее найденные и исправленные
+тонкости: `jsonb` нормализует JSON (портил хэш) → `payload TEXT`; гонки при rolling update → `Recreate`.
+
+**I2 завершён.** Далее — **I3** AuthN/Z (OIDC + Istio) и audit-журнал, **I4** наблюдаемость/бэкап.
 
 ### Ограничения I1 (и что дальше)
 

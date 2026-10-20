@@ -47,7 +47,7 @@ data:
     );
     CREATE TABLE IF NOT EXISTS evidence (
       id BIGSERIAL PRIMARY KEY, scan_id TEXT,
-      prev_hash TEXT NOT NULL, hash TEXT NOT NULL, payload JSONB NOT NULL,
+      prev_hash TEXT NOT NULL, hash TEXT NOT NULL, payload TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS policies (

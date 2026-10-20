@@ -10,8 +10,16 @@ echo "[2/5] PVC (evidence store)"
 kubectl apply -f "$HERE/10-pvc.yaml"
 echo "[3/5] policy (Policy Engine)"
 kubectl apply -f "$HERE/20-policy.yaml"
-echo "[4/5] ConfigMap (код движка)"
+echo "[4/5] ConfigMap (код движка) + S3/PG клиенты и реквизиты"
 python3 "$HERE/40-gen-configmaps.py" | kubectl apply -f -
+kubectl -n "$NS" create configmap mlscan-pgclient \
+  --from-file=pgclient.py="$HERE/../v2/db/pgclient.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+if kubectl -n mlscan-data get secret mlscan-pg >/dev/null 2>&1; then
+  kubectl -n mlscan-data get secret mlscan-pg -o json \
+    | python3 -c "import sys,json;d=json.load(sys.stdin);d['metadata']={'name':'mlscan-pg','namespace':'mlscan-analytics'};[d.pop(k,None) for k in ('uid','resourceVersion','creationTimestamp','managedFields')];print(json.dumps(d))" \
+    | kubectl apply -f - >/dev/null
+  echo "  PG-реквизиты скопированы в $NS (dual-write в БД включён)"
+fi
 echo "[5/5] Deployment + Service (NodePort 30808)"
 kubectl apply -f "$HERE/30-service.yaml"
 kubectl -n "$NS" rollout restart deploy/mlscan-analytics

@@ -27,6 +27,7 @@ import hashlib
 import http.client
 import json
 import os
+import sys
 import threading
 import time
 import urllib.parse
@@ -42,6 +43,41 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "15"))
 
 SEV_W = {"critical": 10.0, "high": 7.5, "medium": 5.0, "low": 2.5, "info": 0.5}
 SEV_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+# --- PostgreSQL (dual-write: evidence-цепочка, artifacts/fingerprints/scans/findings) ---
+PG_HOST = os.environ.get("PGHOST", "")
+DB_ENABLED = bool(PG_HOST)
+_Pg = None
+if DB_ENABLED:
+    sys.path.insert(0, "/opt/pg")
+    from pgclient import Pg as _Pg  # noqa: E402
+
+
+def _db_conn():
+    return _Pg(PG_HOST, int(os.environ.get("PGPORT", "5432")),
+               os.environ.get("PGUSER", "mlscan"), os.environ.get("PGPASSWORD", ""),
+               os.environ.get("PGDATABASE", "mlscan"), timeout=15)
+
+
+def _lit(v) -> str:
+    if v is None:
+        return "NULL"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def db_exec(sql: str) -> None:
+    if not DB_ENABLED or _Pg is None:
+        return
+    try:
+        c = _db_conn()
+        c.connect()
+        c.query(sql)
+        c.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[db] {type(exc).__name__}: {exc} | SQL: {sql[:140]}", file=sys.stderr)
+
 
 _u = urllib.parse.urlparse(TESTING_URL)
 TEST_HOST = _u.hostname
@@ -154,10 +190,20 @@ def _load_store() -> None:
                 e = json.loads(line)
             except Exception:  # noqa: BLE001
                 continue
-            _last_hash = e.get("hash", _last_hash)
+            if not DB_ENABLED:
+                _last_hash = e.get("hash", _last_hash)
             rec = e.get("record", {})
             if rec.get("scan_id"):
                 _index[rec["scan_id"]] = rec
+    if DB_ENABLED and _Pg is not None:
+        try:
+            c = _db_conn()
+            c.connect()
+            _cols, rows = c.query("SELECT hash FROM evidence ORDER BY id DESC LIMIT 1")
+            c.close()
+            _last_hash = rows[0][0] if rows else "GENESIS"
+        except Exception as exc:  # noqa: BLE001
+            print(f"[db] chain seed: {exc}", file=sys.stderr)
 
 
 def _append(record: dict) -> dict:
@@ -170,10 +216,62 @@ def _append(record: dict) -> dict:
             fh.write(json.dumps({"prev": prev, "hash": h, "record": record}, ensure_ascii=False) + "\n")
         _last_hash = h
         _index[record["scan_id"]] = record
+        _db_append(record, prev, h, payload)
         return {"prev": prev, "hash": h}
 
 
+def _db_append(record: dict, prev: str, h: str, payload: str) -> None:
+    """Зеркалирование записи в PostgreSQL (артефакт, отпечатки, скан, находки, evidence)."""
+    if not DB_ENABLED or _Pg is None:
+        return
+    sid = record.get("scan_id")
+    sha = record.get("sha256")
+    try:
+        c = _db_conn()
+        c.connect()
+        if sha:
+            c.query("INSERT INTO artifacts(sha256,size,format,filename,s3_key) VALUES "
+                    f"({_lit(sha)},{int(record.get('size') or 0)},{_lit(record.get('format'))},"
+                    f"{_lit(record.get('name'))},{_lit(record.get('s3_key'))}) ON CONFLICT (sha256) DO NOTHING")
+            c.query("INSERT INTO artifact_fingerprints(artifact_id,kind,value) "
+                    f"SELECT id,'sha256',{_lit(sha)} FROM artifacts WHERE sha256={_lit(sha)} "
+                    "ON CONFLICT DO NOTHING")
+        c.query("INSERT INTO scans(scan_id,status,stage,progress,verdict,reason,timings,finished_at) VALUES "
+                f"({_lit(sid)},'done','done',100,{_lit(record.get('verdict'))},"
+                f"{_lit(record.get('service_reason'))},{_lit(json.dumps(record.get('timings') or {}, ensure_ascii=False))},now()) "
+                "ON CONFLICT (scan_id) DO UPDATE SET verdict=EXCLUDED.verdict, reason=EXCLUDED.reason, "
+                "timings=EXCLUDED.timings, finished_at=now()")
+        for f in record.get("findings", []) or []:
+            ev = f.get("evidence")
+            ev_sql = "NULL" if ev is None else _lit(json.dumps(ev, ensure_ascii=False))
+            c.query("INSERT INTO findings(scan_id,level,check_id,category,severity,confidence,title,evidence) VALUES "
+                    f"({_lit(sid)},{_lit(f.get('level'))},{_lit(f.get('check_id'))},{_lit(f.get('category'))},"
+                    f"{_lit(f.get('severity'))},{f.get('confidence') if f.get('confidence') is not None else 'NULL'},"
+                    f"{_lit(f.get('title'))},{ev_sql})")
+        c.query("INSERT INTO evidence(scan_id,prev_hash,hash,payload) VALUES "
+                f"({_lit(sid)},{_lit(prev)},{_lit(h)},{_lit(payload)})")
+        c.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[db] {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
 def verify_chain() -> dict:
+    if DB_ENABLED and _Pg is not None:
+        try:
+            c = _db_conn()
+            c.connect()
+            _cols, rows = c.query("SELECT prev_hash,hash,payload FROM evidence ORDER BY id")
+            c.close()
+            prev = "GENESIS"
+            n = 0
+            for p, h, payload in rows:
+                calc = hashlib.sha256((prev + payload).encode("utf-8")).hexdigest()
+                if p != prev or h != calc:
+                    return {"ok": False, "entries": n, "broken_at": n + 1, "source": "db"}
+                prev, n = h, n + 1
+            return {"ok": True, "entries": n, "last_hash": prev, "source": "db"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
     if not os.path.isfile(EVIDENCE):
         return {"ok": True, "entries": 0}
     prev, n = "GENESIS", 0
@@ -199,7 +297,8 @@ def analyze(scan: dict) -> dict:
     decision = apply_policy(load_policy(), findings, sc["max_severity"])
     return {
         "scan_id": scan.get("scan_id"), "name": scan.get("name"), "format": scan.get("format"),
-        "sha256": scan.get("sha256"), "size": scan.get("size"), "timings": scan.get("timings"),
+        "sha256": scan.get("sha256"), "size": scan.get("size"), "s3_key": scan.get("s3_key"),
+        "timings": scan.get("timings"),
         "created": scan.get("created"), "service_verdict": scan.get("verdict"),
         "service_reason": scan.get("reason"), "score": sc, "policy": decision,
         "verdict": decision.get("verdict") or scan.get("verdict"),
