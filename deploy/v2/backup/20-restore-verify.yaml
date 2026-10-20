@@ -1,0 +1,45 @@
+# Проверка восстановления: развернуть последний дамп в отдельную БД и посчитать таблицы.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pg-restore-verify
+  namespace: mlscan-data
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "v2-i4"}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 900
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: restore
+        image: postgres:16-alpine
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: PGPASSWORD
+          valueFrom: {secretKeyRef: {name: mlscan-pg, key: POSTGRES_PASSWORD}}
+        - {name: PGHOST, value: postgres.mlscan-data.svc.cluster.local}
+        - {name: PGUSER, value: mlscan}
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -e
+          dump=$(ls -1t /backup/mlscan-*.sql.gz | head -1)
+          echo "dump: $dump"
+          gzip -t "$dump" && echo "gzip: ok"
+          psql -h "$PGHOST" -U "$PGUSER" -d postgres -c "DROP DATABASE IF EXISTS mlscan_restore;" >/dev/null
+          psql -h "$PGHOST" -U "$PGUSER" -d postgres -c "CREATE DATABASE mlscan_restore;" >/dev/null
+          gunzip -c "$dump" | psql -h "$PGHOST" -U "$PGUSER" -d mlscan_restore >/dev/null
+          n=$(psql -h "$PGHOST" -U "$PGUSER" -d mlscan_restore -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")
+          e=$(psql -h "$PGHOST" -U "$PGUSER" -d mlscan_restore -tAc "SELECT count(*) FROM evidence;")
+          echo "restored tables: $n; evidence rows: $e"
+          psql -h "$PGHOST" -U "$PGUSER" -d postgres -c "DROP DATABASE mlscan_restore;" >/dev/null
+          echo "RESTORE VERIFY OK"
+        resources:
+          requests: {cpu: "100m", memory: "128Mi"}
+          limits: {cpu: "1", memory: "512Mi"}
+        volumeMounts:
+        - {name: backup, mountPath: /backup, readOnly: true}
+      volumes:
+      - name: backup
+        persistentVolumeClaim: {claimName: mlscan-backups}

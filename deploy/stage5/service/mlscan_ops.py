@@ -31,6 +31,16 @@ except Exception:  # noqa: BLE001
     authz = None  # type: ignore
 
 INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "")
+PGHOST = os.environ.get("PGHOST", "")
+GARAGE_ADMIN_URL = os.environ.get("GARAGE_ADMIN_URL", "")
+GARAGE_ADMIN_TOKEN = os.environ.get("GARAGE_ADMIN_TOKEN", "")
+_Pg = None
+if PGHOST:
+    try:
+        sys.path.insert(0, "/opt/pg")
+        from pgclient import Pg as _Pg  # noqa: E402
+    except Exception:  # noqa: BLE001
+        _Pg = None
 
 
 def _auth_headers() -> dict:
@@ -174,6 +184,90 @@ def sla() -> dict:
     return out
 
 
+def _pg():
+    if not (PGHOST and _Pg):
+        return None
+    try:
+        c = _Pg(PGHOST, int(os.environ.get("PGPORT", "5432")),
+                os.environ.get("PGUSER", "mlscan"), os.environ.get("PGPASSWORD", ""),
+                os.environ.get("PGDATABASE", "mlscan"), timeout=10)
+        c.connect()
+        return c
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def storage_metrics() -> list[str]:
+    """Метрики PostgreSQL и Garage (Prometheus-совместимые строки)."""
+    out: list[str] = []
+    c = _pg()
+    if c is None:
+        out.append("mlscan_pg_up 0")
+    else:
+        try:
+            _cols, rows = c.query("SELECT pg_database_size(current_database())")
+            out.append(f"mlscan_pg_size_bytes {rows[0][0]}")
+            for t in ("artifacts", "artifact_fingerprints", "scans", "findings",
+                      "evidence", "uploads", "connections", "audit_log"):
+                _c, r = c.query(f"SELECT count(*) FROM {t}")
+                out.append(f'mlscan_pg_rows{{table="{t}"}} {r[0][0]}')
+            _c, r = c.query("SELECT count(*) FROM evidence")
+            out.append(f"mlscan_evidence_entries {r[0][0]}")
+            out.append("mlscan_pg_up 1")
+        except Exception:  # noqa: BLE001
+            out.append("mlscan_pg_up 0")
+        finally:
+            c.close()
+    if GARAGE_ADMIN_URL:
+        try:
+            req = urllib.request.Request(GARAGE_ADMIN_URL.rstrip("/") + "/metrics",
+                                         headers={"Authorization": f"Bearer {GARAGE_ADMIN_TOKEN}"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                body = r.read().decode("utf-8", "replace")
+            for line in body.splitlines():
+                if line.startswith("garage_"):
+                    out.append(line)
+            out.append("mlscan_s3_up 1")
+        except Exception:  # noqa: BLE001
+            out.append("mlscan_s3_up 0")
+    return out
+
+
+def alerts() -> list[dict]:
+    """Простые проверки состояния хранилищ (без внешнего alertmanager)."""
+    res: list[dict] = []
+    c = _pg()
+    if c is None:
+        res.append({"id": "pg_down", "severity": "critical", "summary": "PostgreSQL недоступен"})
+    else:
+        try:
+            _cols, rows = c.query("SELECT pg_database_size(current_database())")
+            if int(rows[0][0]) > int(os.environ.get("PG_SIZE_ALERT_BYTES", str(2 * 1024**3))):
+                res.append({"id": "pg_size_high", "severity": "warning",
+                            "summary": f"Размер БД {rows[0][0]} превышает порог"})
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            c.close()
+    if GARAGE_ADMIN_URL:
+        try:
+            req = urllib.request.Request(GARAGE_ADMIN_URL.rstrip("/") + "/metrics",
+                                         headers={"Authorization": f"Bearer {GARAGE_ADMIN_TOKEN}"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                r.read()
+        except Exception:  # noqa: BLE001
+            res.append({"id": "s3_down", "severity": "critical", "summary": "S3 (Garage) недоступен"})
+    try:
+        ev = get_json(ANALYTICS_URL + "/api/evidence/verify")
+        if not ev.get("ok"):
+            res.append({"id": "evidence_broken", "severity": "critical",
+                        "summary": f"Нарушена целостность evidence: {ev}"})
+    except Exception:  # noqa: BLE001
+        res.append({"id": "evidence_unavailable", "severity": "warning",
+                    "summary": "Не удалось проверить evidence"})
+    return res
+
+
 def metrics_text() -> str:
     L = []
     health = stack_health()
@@ -218,6 +312,7 @@ def metrics_text() -> str:
     L.append(f'mlscan_retest_runs_total {_state["retest_runs"]}')
     if _state["retest_last_ts"]:
         L.append(f'mlscan_retest_last_success_timestamp_seconds {_state["retest_last_ts"]}')
+    L.extend(storage_metrics())
     return "\n".join(L) + "\n"
 
 
@@ -286,6 +381,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, quality())
         if p == "/sla":
             return self._json(200, sla())
+        if p == "/alerts":
+            a = alerts()
+            return self._json(200, {"alerts": a, "count": len(a)})
         return self._json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802

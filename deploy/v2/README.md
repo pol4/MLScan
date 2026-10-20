@@ -132,8 +132,22 @@ bash deploy/v2/db/apply.sh
 ci → **403**, admin → **200**; `GET /login` 200, `POST /login` **302**+cookie, `/api/overview`
 с cookie → 200; журнал: `connections`/`audit_log` с `request_id` (события `upload/sync/auth_denied`).
 
-**Осталось:** OIDC (Keycloak) + Istio JWT вместо API-ключей (опционально) и более тонкий RBAC.
-Далее — **I4** наблюдаемость/бэкап.
+## I4 — наблюдаемость хранилищ и бэкап (реализовано)
+
+- **Метрики** в `mlscan-ops /metrics` дополнены хранилищами: `mlscan_pg_up`, `mlscan_pg_size_bytes`,
+  `mlscan_pg_rows{table=...}` (artifacts/fingerprints/scans/findings/evidence/uploads/connections/audit_log),
+  `mlscan_evidence_entries`, `mlscan_s3_up` и метрики Garage (`garage_*`, включая `garage_local_disk_*`).
+- **Проверки/алерты** `GET /alerts`: `pg_down`, `pg_size_high` (порог), `s3_down`, `evidence_broken`
+  (проверка hash-chain через аналитику).
+- **Бэкап БД**: CronJob `mlscan-pg-backup` (ежедневно) делает `pg_dump | gzip` в PVC
+  `mlscan-backups`, хранит последние 7 дампов. Проверка восстановления:
+  `deploy/v2/backup/20-restore-verify.yaml` разворачивает последний дамп в `mlscan_restore`.
+
+Проверено: `/metrics` отдаёт `mlscan_pg_up 1`, `mlscan_s3_up 1`, `garage_*`; `/alerts` = `[]`
+(здорово); бэкап создан (`196K`), `gzip -t ok`, восстановлено **12 таблиц**, `evidence=2`,
+`RESTORE VERIFY OK`.
+
+**Волна 0 (I1–I4) завершена.** Далее — волны форматов 1–3 из `docs/10-plan-new-formats.md`.
 
 ### Ограничения I1 (и что дальше)
 

@@ -8,8 +8,17 @@ echo "[1/6] namespace"
 kubectl apply -f "$HERE/00-namespace.yaml"
 echo "[2/6] ConfigMap'ы (ops-код, golden, samples, redteam)"
 python3 "$HERE/40-gen-configmaps.py" | kubectl apply -f -
+kubectl -n "$NS" create configmap mlscan-pgclient \
+  --from-file=pgclient.py="$HERE/../v2/db/pgclient.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap mlscan-authz \
   --from-file=authz.py="$HERE/../v2/auth/authz.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+for src in mlscan-pg garage-secrets; do
+  if kubectl -n mlscan-data get secret "$src" >/dev/null 2>&1; then
+    kubectl -n mlscan-data get secret "$src" -o json \
+      | python3 -c "import sys,json;d=json.load(sys.stdin);d['metadata']={'name':'$src','namespace':'mlscan-ops'};[d.pop(k,None) for k in ('uid','resourceVersion','creationTimestamp','managedFields')];print(json.dumps(d))" \
+      | kubectl apply -f - >/dev/null
+  fi
+done
 if ! kubectl -n "$NS" get secret mlscan-keys >/dev/null 2>&1; then
   bash "$HERE/../v2/auth/keys.sh" >/dev/null 2>&1 || true
 fi
