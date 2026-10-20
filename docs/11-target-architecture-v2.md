@@ -226,8 +226,9 @@ sequenceDiagram
 
 Соответствует **Волне 0** плана ([`10-plan-new-formats.md`](./10-plan-new-formats.md) §2.5):
 
-1. **I1. Объектное хранилище (S3) на быстром диске** — бакет `mlscan-artifacts`, content-addressed, multipart;
-   Ingest Gateway с presigned URL; отказ от PVC `/artifacts`.
+1. **I1. Объектное хранилище (S3) на быстром диске** — ✅ реализовано (`deploy/v2`): Garage + бакет
+   `mlscan-artifacts`, content-addressed, Ingest Gateway (потоковая загрузка, дедуп). Отказ от PVC `/artifacts`.
+   Далее: parallel multipart / presigned direct-to-S3, интеграция S3 в сервис тестирования (I1b).
 2. **I2. PostgreSQL (CloudNativePG)** — схема (artifacts/fingerprints/scans/findings/evidence/
    uploads/connections/audit); миграция JSON/JSONL → БД (dual-write); JSON-экспорт остаётся.
 3. **I3. AuthN/Z + audit** — Keycloak OIDC + Istio; RBAC; correlation-id; журнал.

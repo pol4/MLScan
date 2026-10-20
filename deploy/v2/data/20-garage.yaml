@@ -1,0 +1,80 @@
+# Garage: объектное хранилище (S3) для моделей. Single-node, RF=1.
+# Данные — на локальном томе (StorageClass настраивается под инсталляцию).
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-headless
+  namespace: mlscan-data
+  labels: {app: garage, app.kubernetes.io/part-of: mlscan}
+spec:
+  clusterIP: None
+  selector: {app: garage}
+  ports:
+  - {name: rpc, port: 3901, targetPort: 3901}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage
+  namespace: mlscan-data
+  labels: {app: garage, app.kubernetes.io/part-of: mlscan}
+spec:
+  selector: {app: garage}
+  ports:
+  - {name: s3, port: 3900, targetPort: 3900}
+  - {name: admin, port: 3903, targetPort: 3903}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: garage
+  namespace: mlscan-data
+  labels: {app: garage, app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "v2-i1"}
+spec:
+  serviceName: garage-headless
+  replicas: 1
+  selector:
+    matchLabels: {app: garage}
+  template:
+    metadata:
+      labels: {app: garage}
+    spec:
+      containers:
+      - name: garage
+        image: dxflrs/garage:v1.0.1
+        imagePullPolicy: IfNotPresent
+        command: ["/garage", "server"]
+        env:
+        - name: GARAGE_CONFIG_FILE
+          value: /etc/garage/garage.toml
+        - name: GARAGE_RPC_SECRET
+          valueFrom: {secretKeyRef: {name: garage-secrets, key: RPC_SECRET}}
+        - name: GARAGE_ADMIN_TOKEN
+          valueFrom: {secretKeyRef: {name: garage-secrets, key: ADMIN_TOKEN}}
+        ports:
+        - {name: s3, containerPort: 3900}
+        - {name: rpc, containerPort: 3901}
+        - {name: web, containerPort: 3902}
+        - {name: admin, containerPort: 3903}
+        readinessProbe:
+          tcpSocket: {port: 3900}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests: {cpu: "100m", memory: "256Mi"}
+          limits: {cpu: "2", memory: "2Gi"}
+        volumeMounts:
+        - {name: config, mountPath: /etc/garage, readOnly: true}
+        - {name: data, mountPath: /var/lib/garage}
+      volumes:
+      - name: config
+        configMap: {name: garage-config}
+  volumeClaimTemplates:
+  - metadata: {name: data}
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      # StorageClass локального тома; при переносе замените на свой
+      storageClassName: microk8s-hostpath
+      resources:
+        requests:
+          storage: 800Gi

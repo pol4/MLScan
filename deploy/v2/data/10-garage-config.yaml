@@ -1,0 +1,31 @@
+# Конфигурация Garage (S3-совместимое объектное хранилище) для MLScan.
+# Секреты (rpc_secret, admin_token) НЕ в файле — подаются через env из Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: garage-config
+  namespace: mlscan-data
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "v2-i1"}
+data:
+  garage.toml: |
+    metadata_dir = "/var/lib/garage/meta"
+    data_dir = "/var/lib/garage/data"
+    db_engine = "lmdb"
+    replication_factor = 1
+
+    rpc_bind_addr = "[::]:3901"
+    rpc_public_addr = "127.0.0.1:3901"
+    bootstrap_peers = []
+
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "[::]:3900"
+    root_domain = ".s3.garage.localhost"
+
+    [s3_web]
+    bind_addr = "[::]:3902"
+    root_domain = ".web.garage.localhost"
+    index = "index.html"
+
+    [admin]
+    api_bind_addr = "[::]:3903"

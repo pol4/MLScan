@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlscan-data
+  labels:
+    app.kubernetes.io/part-of: mlscan
+    mlscan.io/stage: "v2-i1"
