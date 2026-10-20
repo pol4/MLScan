@@ -151,6 +151,104 @@ def _scan_gguf(blob: bytes, label: str) -> list[dict]:
     return out
 
 
+def _scan_safetensors(blob: bytes, label: str) -> list[dict]:
+    import struct
+    out: list[dict] = []
+    if len(blob) < 8:
+        return [_f("FMT-01", f"SafeTensors: файл слишком мал ({label})", "medium", 0.5, "len<8", cat="FMT")]
+    (hlen,) = struct.unpack("<Q", blob[:8])
+    if hlen <= 0 or hlen > len(blob) - 8:
+        return [_f("FMT-01", f"SafeTensors: некорректная длина заголовка ({label})",
+                   "high", 0.8, f"header_len={hlen}", cat="FMT")]
+    try:
+        header = json.loads(blob[8:8 + hlen].decode("utf-8", "replace"))
+    except Exception as exc:  # noqa: BLE001
+        return [_f("FMT-01", f"SafeTensors: нечитаемый заголовок ({label})", "high", 0.8, str(exc), cat="FMT")]
+    data_start = 8 + hlen
+    data_len = len(blob) - data_start
+    ranges = []
+    for name, info in header.items():
+        if name == "__metadata__":
+            continue
+        try:
+            beg, end = info.get("data_offsets", (0, 0))
+        except Exception:  # noqa: BLE001
+            continue
+        if beg < 0 or end > data_len or end < beg:
+            out.append(_f("FMT-02", f"SafeTensors: выход за границы тензора {name} ({label})",
+                          "high", 0.8, f"offsets={beg},{end} data_len={data_len}", cat="FMT"))
+        ranges.append((beg, end))
+    ranges.sort()
+    for i in range(1, len(ranges)):
+        if ranges[i][0] < ranges[i - 1][1]:
+            out.append(_f("FMT-02", f"SafeTensors: перекрытие тензоров ({label})", "high", 0.8,
+                          f"overlap {ranges[i - 1]} и {ranges[i]}", cat="FMT"))
+    if ranges:
+        used_end = max(r[1] for r in ranges)
+        if used_end < data_len:
+            out.append(_f("FMT-11", f"SafeTensors: trailing-данные после тензоров ({label})",
+                          "medium", 0.6, f"{data_len - used_end} лишних байт", cat="FMT"))
+    return out
+
+
+def _scan_zip_extra(path: Path) -> list[dict]:
+    out: list[dict] = []
+    try:
+        zf = zipfile.ZipFile(path)
+    except Exception:  # noqa: BLE001
+        return out
+    total_c = total_u = 0
+    for i in zf.infolist():
+        total_c += i.compress_size
+        total_u += i.file_size
+        n = i.filename
+        if n.startswith("/") or ".." in Path(n).parts:
+            out.append(_f("FMT-03", f"Zip: подозрительный путь ({n})", "high", 0.8,
+                          "path traversal/absolute", cat="FMT"))
+    if total_c > 0 and total_u / max(1, total_c) > 100 and total_u > 10 * 1024 * 1024:
+        out.append(_f("FMT-04", "Zip: высокая степень сжатия (bomb)", "high", 0.7,
+                      f"ratio={total_u / max(1, total_c):.0f}", cat="FMT"))
+    return out
+
+
+def _scan_tar(path: Path) -> list[dict]:
+    import tarfile
+    out: list[dict] = []
+    try:
+        tf = tarfile.open(path)
+    except Exception:  # noqa: BLE001
+        return [_f("FMT-01", "Повреждённый tar-архив", "low", 0.3, str(path.name), cat="FMT")]
+    total_u = 0
+    for m in tf.getmembers():
+        if m.name.startswith("/") or ".." in Path(m.name).parts:
+            out.append(_f("FMT-03", f"Tar: подозрительный путь ({m.name})", "high", 0.8,
+                          "path traversal/absolute", cat="FMT"))
+        if m.issym() or m.islnk():
+            out.append(_f("FMT-05", f"Tar: ссылка/жёсткая ссылка ({m.name})", "high", 0.7,
+                          "symlink/hardlink", cat="FMT"))
+        total_u += m.size
+    if total_u > 10 * 1024 * 1024 * 1024:
+        out.append(_f("FMT-04", "Tar: чрезмерный суммарный размер (bomb)", "medium", 0.5,
+                      f"size={total_u}", cat="FMT"))
+    return out
+
+
+def _scan_xml(blob: bytes, label: str) -> list[dict]:
+    if b"<!DOCTYPE" in blob or b"<!ENTITY" in blob:
+        return [_f("FMT-06", f"XML: DOCTYPE/ENTITY (XXE) в {label}", "high", 0.75,
+                   "doctype/entity", cat="FMT")]
+    return []
+
+
+def _scan_yaml(text: str, label: str) -> list[dict]:
+    bad = [t for t in ("!!python/object", "!!python/name", "!!python/apply", "!!python/module")
+           if t in text]
+    if bad:
+        return [_f("FMT-06", f"YAML: unsafe-тег ({', '.join(bad)}) в {label}", "high", 0.8,
+                   "unsafe yaml tags", cat="FMT")]
+    return []
+
+
 def detect(path: Path, head: bytes) -> str:
     ext = path.suffix.lower()
     if head.startswith(ZIP_MAGIC):
@@ -177,6 +275,12 @@ def detect(path: Path, head: bytes) -> str:
         return "onnx"
     if ext == ".gguf":
         return "gguf"
+    if ext == ".safetensors":
+        return "safetensors"
+    if ext in (".tar", ".tgz", ".gz"):
+        return "tar"
+    if ext in (".xml", ".pmml", ".ovpn"):
+        return "xml"
     if ext in (".json", ".yaml", ".yml"):
         return "config"
     if head[:2] in (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05"):
@@ -195,6 +299,7 @@ def static_scan(path: Path) -> dict:
     findings: list[dict] = []
     try:
         if fmt in ("torchserve-mar", "keras", "torch-package", "torch-zip", "zip"):
+            findings.extend(_scan_zip_extra(path))
             f2, real = _scan_zip(path)
             findings.extend(f2)
             fmt = real if real != "zip" else fmt
@@ -211,8 +316,17 @@ def static_scan(path: Path) -> dict:
             findings.extend(_scan_hdf5(path.read_bytes(), path.name))
         elif fmt == "gguf":
             findings.extend(_scan_gguf(path.read_bytes(), path.name))
+        elif fmt == "safetensors":
+            findings.extend(_scan_safetensors(path.read_bytes(), path.name))
+        elif fmt == "tar":
+            findings.extend(_scan_tar(path))
+        elif fmt == "xml":
+            findings.extend(_scan_xml(path.read_bytes(), path.name))
         elif fmt == "config":
-            findings.extend(_scan_json(_btext(path.read_bytes()), path.name))
+            blob = path.read_bytes()
+            findings.extend(_scan_json(_btext(blob), path.name))
+            if path.suffix.lower() in (".yaml", ".yml"):
+                findings.extend(_scan_yaml(_btext(blob), path.name))
     except Exception as exc:  # noqa: BLE001
         findings.append(_f("FMT-01", f"Ошибка разбора {fmt}", "low", 0.3, str(exc), cat="FMT"))
     # проверка несоответствия расширения реальному формату

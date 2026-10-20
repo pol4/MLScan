@@ -42,3 +42,54 @@ w("evil.gguf", b"GGUF" + b"chat_template" + b"__class__" + b"__globals__")
 
 # 8) безобидный конфиг
 w("benign.json", json.dumps({"hidden_size": 8, "num_layers": 2}).encode())
+
+# --- Волна 2: SafeTensors / архивы / XXE / YAML ---
+import struct
+import tarfile
+import io
+
+# SafeTensors с trailing-данными (smuggling)
+hdr = json.dumps({"w": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]}}, separators=(",", ":"))
+hb = hdr.encode()
+w("evil_trailing.safetensors", struct.pack("<Q", len(hb)) + hb + b"\x00" * 8 + b"EVIL-TRAILING-DATA")
+
+# SafeTensors с перекрытием тензоров
+hdr2 = json.dumps({"a": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]},
+                   "b": {"dtype": "F32", "shape": [2], "data_offsets": [4, 12]}}, separators=(",", ":"))
+hb2 = hdr2.encode()
+w("evil_overlap.safetensors", struct.pack("<Q", len(hb2)) + hb2 + b"\x00" * 12)
+
+# Корректный SafeTensors
+hdr3 = json.dumps({"w": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]}}, separators=(",", ":"))
+hb3 = hdr3.encode()
+w("benign.safetensors", struct.pack("<Q", len(hb3)) + hb3 + b"\x00" * 8)
+
+# Zip-bomb (сжатие большого объёма нулей)
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("zeros.bin", b"\x00" * (20 * 1024 * 1024))
+w("evil_bomb.zip", buf.getvalue())
+
+# Tar path traversal
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w") as t:
+    data = b"pwn"
+    ti = tarfile.TarInfo("../evil.txt")
+    ti.size = len(data)
+    t.addfile(ti, io.BytesIO(data))
+w("evil_traversal.tar", buf.getvalue())
+
+# Tar symlink
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w") as t:
+    ti = tarfile.TarInfo("link")
+    ti.type = tarfile.SYMTYPE
+    ti.linkname = "/etc/passwd"
+    t.addfile(ti)
+w("evil_symlink.tar", buf.getvalue())
+
+# XML XXE
+w("evil.xml", b'<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>')
+
+# Unsafe YAML
+w("evil.yaml", b"!!python/object/apply:os.system ['id']\n")

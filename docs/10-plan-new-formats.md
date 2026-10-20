@@ -164,6 +164,8 @@ flowchart LR
 
 **Статус:** I1 — ✅ выполнено (`deploy/v2`: Garage S3, Ingest Gateway, content-addressed, дедуп; проверено 1 ГиБ). I1b — ✅ сервис тестирования переведён на S3 (`:8090` отдаёт из S3; проверено evil0 и 512 МиБ). I2 — ✅ развёрнут PostgreSQL (12 таблиц, append-only); ✅ stdlib-клиент (SCRAM); ✅ сервис тестирования и ✅ аналитический движок пишут в БД (artifacts/fingerprints/scans/findings/evidence hash-chain). I3 — ✅ реализовано: API-ключи на всех входах (analytics/testing/integrations/ingest/ops), RBAC по ролям, вход в UI по cookie, correlation-id, журнал connections/audit_log (hash-chain), сервис-сервис по внутреннему ключу. OIDC/Istio JWT — опционально. **Волна 1 (статические детекторы)** — ✅ реализовано: адаптеры форматов (`deploy/v2/formats`), чек-иды `EXEC-01…07`, `INJ-01/02`, `FMT-*`; политика `block-code-artifact`/`block-template-injection`; демо-образцы `poc/scan/formats`. Sandbox-профили для динамического подтверждения — далее (Волна 1b).
 
+**Волна 2 (статика)** — ✅ реализовано: SafeTensors-структура (`FMT-02/11`), архивы (`FMT-03/04/05`), XXE/unsafe-YAML (`FMT-06`), политика `block-native-risk`, демо-образцы; проверено (traversal/symlink/XXE → Malicious, overlap/bomb/trailing → Needs review, benign → Safe).
+
 **Волна 0 завершена:** I1 (S3), I1b (testing→S3), I2/I2b/I2c (PostgreSQL + сервисы + hash-chain), I3a/I3b (AuthN/Z + RBAC + audit), I4 (метрики хранилищ, алерты, бэкап+restore). Далее — волны форматов 1–3.
 
 Целевая схема и детали (загрузка/передача/анализ/жизненный цикл больших файлов) — в

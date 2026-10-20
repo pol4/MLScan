@@ -40,6 +40,12 @@ data:
           "reason": "Исполняемый код или ссылки на код в артефакте (model-as-code / Lambda / custom ops)"
         },
         {
+          "id": "block-native-risk",
+          "when": {"check_id_in": ["FMT-03", "FMT-05", "FMT-06"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Нативный риск: path traversal/symlink/XXE/unsafe-YAML"
+        },
+        {
           "id": "block-template-injection",
           "when": {"check_id_in": ["INJ-01"], "min_confidence": 0.6},
           "action": "block", "verdict": "Malicious",

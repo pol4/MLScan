@@ -182,6 +182,34 @@ ci → **403**, admin → **200**; `GET /login` 200, `POST /login` **302**+cooki
 **Далее (Волна 1b):** sandbox-профили для фактического исполнения model-as-code/Keras/ONNX
 (подтверждение динамикой) и специализированные probe-наборы.
 
+---
+
+## Волна 2 — нативные парсеры, данные, целостность (реализовано: статика)
+
+Детектор `deploy/v2/formats/detector.py` дополнен структурными проверками:
+
+| Чек-ид | Проверка | Severity |
+|--------|----------|----------|
+| `FMT-02` | SafeTensors: выход за границы/перекрытие тензоров | high |
+| `FMT-11` | SafeTensors: trailing-данные (smuggling) | medium |
+| `FMT-03` | zip/tar: path traversal / абсолютные пути | high |
+| `FMT-04` | zip/tar: bomb (чрезмерное сжатие/размер) | high/medium |
+| `FMT-05` | tar: symlink/hardlink | high |
+| `FMT-06` | XML DOCTYPE/ENTITY (XXE); YAML unsafe-теги (`!!python/*`) | high |
+| `FMT-01` | повреждённый контейнер/заголовок | low/high |
+
+**Политика:** добавлено `block-native-risk` (`FMT-03/05/06` → block, `Malicious`);
+`FMT-02/04/11` → `quarantine` (Needs review).
+
+**Демо-образцы:** `evil_trailing.safetensors`, `evil_overlap.safetensors`, `benign.safetensors`,
+`evil_bomb.zip`, `evil_traversal.tar`, `evil_symlink.tar`, `evil.xml`, `evil.yaml`
+(генератор `poc/scan/gen_formats.py`).
+
+Проверено: traversal/symlink/XXE/YAML → **Malicious/block**; overlap → Dangerous/Needs review;
+bomb → Dangerous/Needs review; trailing → Needs review; **benign.safetensors → Safe**.
+
+**Далее:** Волна 3 — весовые закладки, токенизаторы, prompt-injection/agent; Волна 1b — sandbox-профили.
+
 ### Ограничения I1 (и что дальше)
 
 - Пропускная способность приёма ограничена одним потоком (≈ десятки МБ/с на узел);
