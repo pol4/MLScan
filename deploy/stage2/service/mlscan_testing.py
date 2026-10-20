@@ -357,9 +357,15 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
 
         rec = load_scan(scan_id) or {}
         artifact_url = f"{ARTIFACT_BASE}/a/{scan_id}/{rec.get('artifact_token','')}/{urllib.parse.quote(name)}"
-        update(scan_id, stage="submitted", progress=25)
+        sandbox_fmt = fmt
+        af = (static or {}).get("adapter_format")
+        if af in ("torchserve-mar", "model-as-code", "python"):
+            sandbox_fmt = "model-as-code"
+        elif af in ("keras", "onnx", "hdf5", "gguf", "safetensors", "config", "tar", "xml", "card"):
+            sandbox_fmt = "raw"
+        update(scan_id, stage="submitted", progress=25, sandbox_fmt=sandbox_fmt)
         t = time.time()
-        dynamic = run_sandbox(scan_id, name, fmt, artifact_url)
+        dynamic = run_sandbox(scan_id, name, sandbox_fmt, artifact_url)
         timings["sandbox_s"] = round(time.time() - t, 2)
 
         update(scan_id, stage="collecting", progress=90)

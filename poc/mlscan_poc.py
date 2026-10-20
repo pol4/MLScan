@@ -478,7 +478,35 @@ def npy_payload(data):
     return data[off:]
 
 
+def _run_model_code(path, errors):
+    """Исполняет entry-код model-as-code (handler.py/model.py) в песочнице."""
+    import zipfile
+    code = None
+    if zipfile.is_zipfile(path):
+        try:
+            zf = zipfile.ZipFile(path)
+            cands = [n for n in zf.namelist() if n.lower().endswith(".py")]
+            cands.sort(key=lambda n: (0 if "handler" in n.lower() else 1 if "model" in n.lower() else 2))
+            if cands:
+                code = zf.read(cands[0]).decode("utf-8", "replace")
+        except Exception as e:
+            errors.append("model-as-code zip: %s" % e)
+    else:
+        try:
+            code = open(path, "rb").read().decode("utf-8", "replace")
+        except Exception as e:
+            errors.append("model-as-code read: %s" % e)
+    if code is None:
+        errors.append("model-as-code: entry-код не найден")
+        return None
+    g = {"__name__": "__main__", "__file__": path}
+    exec(compile(code, "<artifact>", "exec"), g)  # намеренно: проверяем поведение payload
+    return {"executed": "model-as-code"}
+
+
 def load_target(path, fmt, errors):
+    if fmt in ("model-as-code", "mar", "python"):
+        return _run_model_code(path, errors)
     data = open(path, "rb").read()
     is_zip = data[:4] == b"PK\x03\x04"
 
