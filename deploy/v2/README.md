@@ -252,6 +252,25 @@ Harness песочницы умеет **исполнять entry-код** model-
 
 ---
 
+## Целостность (INT-*) и стеганография (STEG-*) — реализовано
+
+| Чек-ид | Проверка | Severity |
+|--------|----------|----------|
+| `INT-03` | внешние URL в конфиге/метаданных (supply chain) | medium |
+| `INT-04` | install-файлы в архиве (`requirements.txt`/`setup.py`/…) | high |
+| `STEG-01` | данные после EOCD zip (trailing/скрытый канал) | medium |
+| `STEG-02` | высокоэнтропийная строка в метаданных (base64/hex blob) | medium |
+| `STEG-03` | полиглот-контейнер: изображение с pickle/zip внутри | high/medium |
+
+**Политика:** `block-install-hooks` (`INT-04`) и `block-steg-polyglot` (`STEG-03`) → Malicious;
+`INT-03`/`STEG-01`/`STEG-02` → quarantine (Needs review).
+
+**Демо-образцы:** `evil_url_config.json`, `evil_reqs.zip`, `evil_steg.zip`, `evil_blob.json`,
+`evil_polyglot.png`, `benign_image.png`.
+
+Проверено: `evil_reqs.zip` → Malicious (install-hooks + code), `evil_polyglot.png` → Malicious
+(polyglot), `evil_url_config/evil_steg/evil_blob` → Needs review, `benign_image.png` → Safe.
+
 ## Метрики качества по форматам (A8, реализовано)
 
 Golden-набор расширен на **все форматы** (`poc/scan/*.pkl` + `poc/scan/formats/*`):

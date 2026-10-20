@@ -168,6 +168,8 @@ flowchart LR
 
 **Волна 1b (динамика)** — ✅ model-as-code исполняется в песочнице (harness), подтверждение динамикой (`evil_mar.mar` → `subprocess=1` → Malicious). Фреймворк-специфичная динамика (Keras/TF/ONNX) — ограничение (нужны образы).
 
+**Wave 2.5/3.4 (INT-*/STEG-*)** — ✅ целостность (`INT-03` внешние URL, `INT-04` install-файлы) и стеганография (`STEG-01` trailing после EOCD, `STEG-02` энтропийные blob, `STEG-03` полиглот-изображения); политика `block-install-hooks`/`block-steg-polyglot`; демо-образцы; проверено.
+
 **A8 (метрики качества по форматам)** — ✅ golden-набор расширен на все форматы (32 образца); `/quality` = TPR 1.0 / FPR 0.0; `/retest` пересканирует весь набор.
 
 **Волна 3 (статика/эвристики)** — ✅ реализовано: `BD-01` (веса: NaN/Inf/экстремумы), `BD-02` (токенизаторы), `INJ-03/04/05` (карточки/tools/XSS), `AGT-01` (MCP); политика `block-agent`/`block-prompt-injection`/`block-tokenizer-backdoor`; демо-образцы; проверено.

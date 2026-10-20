@@ -224,12 +224,33 @@ def _scan_safetensors(blob: bytes, label: str) -> list[dict]:
     return out
 
 
+INSTALL_FILES = ("requirements.txt", "setup.py", "pyproject.toml", "conda.yaml",
+                 "environment.yml", "Makefile")
+
+
 def _scan_zip_extra(path: Path) -> list[dict]:
     out: list[dict] = []
     try:
         zf = zipfile.ZipFile(path)
     except Exception:  # noqa: BLE001
         return out
+    names_low = [n.lower() for n in zf.namelist()]
+    hits = [n for n in names_low if Path(n).name in INSTALL_FILES]
+    if hits:
+        out.append(_f("INT-04", f"Архив содержит install-файлы ({', '.join(hits[:4])})",
+                      "high", 0.75, "install hooks могут выполнять код при установке", cat="INT"))
+    # trailing-данные после EOCD (скрытый канал / полиглот)
+    try:
+        blob = path.read_bytes()
+        pos = blob.rfind(b"PK\x05\x06")
+        if pos != -1 and pos + 22 <= len(blob):
+            (clen,) = __import__("struct").unpack_from("<H", blob, pos + 20)
+            end = pos + 22 + clen
+            if len(blob) > end:
+                out.append(_f("STEG-01", f"Zip: данные после EOCD ({len(blob) - end} байт)",
+                              "medium", 0.6, "trailing after zip end", cat="STEG"))
+    except Exception:  # noqa: BLE001
+        pass
     total_c = total_u = 0
     for i in zf.infolist():
         total_c += i.compress_size
@@ -341,6 +362,39 @@ def _scan_tools(data: dict, label: str) -> list[dict]:
     return out
 
 
+def _scan_steg_json(data: dict, text: str, label: str) -> list[dict]:
+    out: list[dict] = []
+    if "http://" in text or "https://" in text:
+        out.append(_f("INT-03", f"Внешние URL в конфиге/метаданных ({label})", "medium", 0.6,
+                      "внешний источник может подтягивать код/данные", cat="INT"))
+    import re as _re
+    for v in _re.findall(r'"([^"]{200,})"', text):
+        charset = set(v)
+        if (charset <= set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n")) or \
+           (charset <= set("0123456789abcdefABCDEF")):
+            out.append(_f("STEG-02", f"Высокоэнтропийная строка в метаданных ({label})",
+                          "medium", 0.55, f"len={len(v)}", cat="STEG"))
+            break
+    return out
+
+
+IMG_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
+
+def _scan_image_polyglot(blob: bytes, label: str) -> list[dict]:
+    out: list[dict] = []
+    if any(m in blob for m in (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05")) and \
+       blob[:4] == b"PK\x03\x04":
+        pass
+    if any(m in blob for m in (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05")):
+        out.append(_f("STEG-03", f"Изображение содержит pickle-поток ({label})",
+                      "high", 0.7, "polyglot image+pickle", cat="STEG"))
+    if blob[:4] == b"PK\x03\x04":
+        out.append(_f("STEG-03", f"Изображение является zip-контейнером ({label})",
+                      "medium", 0.6, "polyglot image+zip", cat="STEG"))
+    return out
+
+
 def detect(path: Path, head: bytes) -> str:
     ext = path.suffix.lower()
     if head.startswith(ZIP_MAGIC):
@@ -377,6 +431,8 @@ def detect(path: Path, head: bytes) -> str:
         return "config"
     if ext in (".md", ".txt", ".rst"):
         return "card"
+    if ext in IMG_EXT:
+        return "image"
     if head[:2] in (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05"):
         return "pickle"
     return "unknown"
@@ -428,11 +484,14 @@ def static_scan(path: Path) -> dict:
                 except Exception:  # noqa: BLE001
                     data = None
                 if isinstance(data, dict):
+                    findings.extend(_scan_steg_json(data, text, path.name))
                     if any(k in data for k in ("added_tokens", "normalizer", "pre_tokenizer", "model")):
                         findings.extend(_scan_tokenizer(data, path.name))
                     findings.extend(_scan_tools(data, path.name))
         elif fmt == "card":
             findings.extend(_scan_card(_btext(path.read_bytes()), path.name))
+        elif fmt == "image":
+            findings.extend(_scan_image_polyglot(path.read_bytes(), path.name))
     except Exception as exc:  # noqa: BLE001
         findings.append(_f("FMT-01", f"Ошибка разбора {fmt}", "low", 0.3, str(exc), cat="FMT"))
     # проверка несоответствия расширения реальному формату

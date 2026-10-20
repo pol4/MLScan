@@ -70,6 +70,18 @@ data:
           "reason": "Переопределение спец-токенов / ReDoS в токенизаторе"
         },
         {
+          "id": "block-install-hooks",
+          "when": {"check_id_in": ["INT-04"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Install-файлы в архиве (выполнение кода при установке)"
+        },
+        {
+          "id": "block-steg-polyglot",
+          "when": {"check_id_in": ["STEG-03"], "min_confidence": 0.6},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Полиглот-контейнер со скрытым кодом"
+        },
+        {
           "id": "allow-clean",
           "when": {"max_severity_at_most": "info"},
           "action": "allow", "verdict": "Safe",
