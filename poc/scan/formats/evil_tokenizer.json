@@ -1,0 +1,1 @@
+{"added_tokens": [{"id": 0, "content": "<|endoftext|>", "special": true, "normalized": true}], "normalizer": {"type": "Replace", "pattern": {"Regex": "(a+)+$"}}, "model": {"type": "BPE"}}

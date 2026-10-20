@@ -166,6 +166,8 @@ flowchart LR
 
 **Волна 2 (статика)** — ✅ реализовано: SafeTensors-структура (`FMT-02/11`), архивы (`FMT-03/04/05`), XXE/unsafe-YAML (`FMT-06`), политика `block-native-risk`, демо-образцы; проверено (traversal/symlink/XXE → Malicious, overlap/bomb/trailing → Needs review, benign → Safe).
 
+**Волна 3 (статика/эвристики)** — ✅ реализовано: `BD-01` (веса: NaN/Inf/экстремумы), `BD-02` (токенизаторы), `INJ-03/04/05` (карточки/tools/XSS), `AGT-01` (MCP); политика `block-agent`/`block-prompt-injection`/`block-tokenizer-backdoor`; демо-образцы; проверено.
+
 **Волна 0 завершена:** I1 (S3), I1b (testing→S3), I2/I2b/I2c (PostgreSQL + сервисы + hash-chain), I3a/I3b (AuthN/Z + RBAC + audit), I4 (метрики хранилищ, алерты, бэкап+restore). Далее — волны форматов 1–3.
 
 Целевая схема и детали (загрузка/передача/анализ/жизненный цикл больших файлов) — в

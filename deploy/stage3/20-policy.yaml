@@ -52,6 +52,24 @@ data:
           "reason": "Опасные конструкции в Jinja chat_template (SSTI)"
         },
         {
+          "id": "block-agent",
+          "when": {"check_id_in": ["AGT-01"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Agent/MCP-манифест с запуском команд"
+        },
+        {
+          "id": "block-prompt-injection",
+          "when": {"check_id_in": ["INJ-03", "INJ-04", "INJ-05"], "min_confidence": 0.55},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Prompt-injection/XSS в карточках и tool-схемах"
+        },
+        {
+          "id": "block-tokenizer-backdoor",
+          "when": {"check_id_in": ["BD-02"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Переопределение спец-токенов / ReDoS в токенизаторе"
+        },
+        {
           "id": "allow-clean",
           "when": {"max_severity_at_most": "info"},
           "action": "allow", "verdict": "Safe",

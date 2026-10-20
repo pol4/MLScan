@@ -210,6 +210,31 @@ bomb → Dangerous/Needs review; trailing → Needs review; **benign.safetensors
 
 **Далее:** Волна 3 — весовые закладки, токенизаторы, prompt-injection/agent; Волна 1b — sandbox-профили.
 
+---
+
+## Волна 3 — закладки, токенизаторы, prompt-injection, agent (реализовано: статика/эвристики)
+
+| Чек-ид | Проверка | Severity |
+|--------|----------|----------|
+| `BD-01` | веса (SafeTensors): NaN/Inf, экстремальные значения | high/medium |
+| `BD-02` | токенизатор: переопределение спец-токенов, ReDoS-regex | high/medium |
+| `INJ-03` | model/dataset card: инструкции, скрытые комментарии, ссылки | high/medium/low |
+| `INJ-04` | tool/OpenAPI-схемы с подозрительными описаниями | high |
+| `INJ-05` | HTML/JS в документах (XSS при рендере) | medium |
+| `AGT-01` | MCP/agent-манифест с запуском команд | critical |
+
+**Политика:** `block-agent`, `block-prompt-injection`, `block-tokenizer-backdoor` → block/Malicious;
+`BD-01` → quarantine (Needs review).
+
+**Демо-образцы:** `evil_tokenizer.json`, `evil_model_card.md`, `evil_tools.json`, `evil_mcp.json`,
+`evil_nan.safetensors` (+ benign-версии).
+
+Проверено: tokenizer/card/tools/MCP → **Malicious/block**; `evil_nan.safetensors` → Needs review;
+`benign_tokenizer.json`/`benign_card.md` → **Safe**.
+
+**Ограничения:** `BD-01` — эвристика по статистике весов (не полноценный поиск триггерных
+закладок); для поведенческой детекции нужны probe-наборы (отдельный шаг).
+
 ### Ограничения I1 (и что дальше)
 
 - Пропускная способность приёма ограничена одним потоком (≈ десятки МБ/с на узел);

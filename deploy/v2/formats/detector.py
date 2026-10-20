@@ -188,6 +188,39 @@ def _scan_safetensors(blob: bytes, label: str) -> list[dict]:
         if used_end < data_len:
             out.append(_f("FMT-11", f"SafeTensors: trailing-данные после тензоров ({label})",
                           "medium", 0.6, f"{data_len - used_end} лишних байт", cat="FMT"))
+    # эвристика по весам (BD-01): NaN/Inf и экстремальные значения
+    import math
+    for name, info in header.items():
+        if name == "__metadata__":
+            continue
+        dtype = str(info.get("dtype", ""))
+        if dtype not in ("F32", "F64", "F16"):
+            continue
+        try:
+            beg, end = info["data_offsets"]
+        except Exception:  # noqa: BLE001
+            continue
+        raw = blob[data_start + beg:data_start + end]
+        fmtc = {"F32": "f", "F64": "d", "F16": "e"}[dtype]
+        sz = {"F32": 4, "F64": 8, "F16": 2}[dtype]
+        n = len(raw) // sz
+        vals = []
+        try:
+            for i in range(min(n, 200000)):
+                vals.append(struct.unpack_from("<" + fmtc, raw, i * sz)[0])
+        except Exception:  # noqa: BLE001
+            continue
+        if not vals:
+            continue
+        nan = sum(1 for v in vals if math.isnan(v))
+        inf = sum(1 for v in vals if math.isinf(v))
+        absmax = max(abs(v) for v in vals if not math.isnan(v) and not math.isinf(v)) if (nan + inf < len(vals)) else 0.0
+        if nan or inf:
+            out.append(_f("BD-01", f"Веса: NaN/Inf в тензоре {name} ({label})", "high", 0.7,
+                          f"nan={nan} inf={inf}", cat="BD"))
+        elif absmax > 1e6:
+            out.append(_f("BD-01", f"Веса: экстремальные значения в тензоре {name} ({label})",
+                          "medium", 0.5, f"absmax={absmax:.1f}", cat="BD"))
     return out
 
 
@@ -249,6 +282,65 @@ def _scan_yaml(text: str, label: str) -> list[dict]:
     return []
 
 
+def _scan_tokenizer(data: dict, label: str) -> list[dict]:
+    out: list[dict] = []
+    specials = {"<|endoftext|>", "<s>", "</s>", "<pad>", "<unk>", "[CLS]", "[SEP]"}
+    added = data.get("added_tokens") or []
+    override = [t for t in added if isinstance(t, dict) and t.get("special")
+                and str(t.get("content")) in specials and t.get("normalized")]
+    if override:
+        out.append(_f("BD-02", f"Токенизатор: переопределение спец-токенов ({label})", "high", 0.75,
+                      str([t.get("content") for t in override][:5]), cat="BD"))
+    blob = json.dumps(data, ensure_ascii=False)
+    if '"Regex"' in blob or "regex" in blob:
+        import re as _re
+        for m in _re.findall(r'"Regex"\s*:\s*"([^"]+)"', blob):
+            if _re.search(r"(\([^)]*[+*][^)]*\)[+*])|(\[[^\]]*\][+*]){2,}", m):
+                out.append(_f("BD-02", f"Токенизатор: потенциальный ReDoS-regex ({label})", "medium", 0.6,
+                              m[:120], cat="BD"))
+                break
+    return out
+
+
+CARD_INJECTION = ("ignore previous", "ignore all previous", "system prompt", "you must",
+                  "do not tell", "exfiltrate", "send the", "reveal", "jailbreak", "tool call")
+CARD_NET = ("http://", "https://", "curl ", "wget ")
+
+
+def _scan_card(text: str, label: str) -> list[dict]:
+    out: list[dict] = []
+    low = text.lower()
+    hits = [p for p in CARD_INJECTION if p in low]
+    if hits:
+        out.append(_f("INJ-03", f"Prompt-injection в карточке/документе ({label})", "high", 0.65,
+                      "phrases: " + ", ".join(hits[:5]), cat="INJ"))
+    if "<!--" in text and any(p in text.lower() for p in ("ignore", "system", "execute")):
+        out.append(_f("INJ-03", f"Скрытые HTML-комментарии с инструкциями ({label})", "medium", 0.55,
+                      "hidden comment", cat="INJ"))
+    if "<script" in low or "javascript:" in low:
+        out.append(_f("INJ-05", f"HTML/JS в документе ({label}) — XSS при рендере", "medium", 0.6,
+                      "script/javascript", cat="INJ"))
+    if any(p in low for p in CARD_NET):
+        out.append(_f("INJ-03", f"Сетевые ссылки в карточке ({label})", "low", 0.4,
+                      "url/curl/wget", cat="INJ"))
+    return out
+
+
+def _scan_tools(data: dict, label: str) -> list[dict]:
+    out: list[dict] = []
+    blob = json.dumps(data, ensure_ascii=False).lower()
+    if "mcpservers" in blob or ('"command"' in blob and '"args"' in blob):
+        out.append(_f("AGT-01", f"MCP/agent-манифест с запуском команд ({label})", "critical", 0.8,
+                      "mcpServers/command", cat="AGT"))
+    if '"tools"' in blob:
+        bad = [p for p in ("ignore", "execute", "read file", "/etc/", "send ", "exfiltrate")
+               if p in blob]
+        if bad:
+            out.append(_f("INJ-04", f"Tool-схема с подозрительными описаниями ({label})", "high", 0.6,
+                          "terms: " + ", ".join(bad), cat="INJ"))
+    return out
+
+
 def detect(path: Path, head: bytes) -> str:
     ext = path.suffix.lower()
     if head.startswith(ZIP_MAGIC):
@@ -283,6 +375,8 @@ def detect(path: Path, head: bytes) -> str:
         return "xml"
     if ext in (".json", ".yaml", ".yml"):
         return "config"
+    if ext in (".md", ".txt", ".rst"):
+        return "card"
     if head[:2] in (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05"):
         return "pickle"
     return "unknown"
@@ -324,9 +418,21 @@ def static_scan(path: Path) -> dict:
             findings.extend(_scan_xml(path.read_bytes(), path.name))
         elif fmt == "config":
             blob = path.read_bytes()
-            findings.extend(_scan_json(_btext(blob), path.name))
+            text = _btext(blob)
+            findings.extend(_scan_json(text, path.name))
             if path.suffix.lower() in (".yaml", ".yml"):
-                findings.extend(_scan_yaml(_btext(blob), path.name))
+                findings.extend(_scan_yaml(text, path.name))
+            if path.suffix.lower() == ".json":
+                try:
+                    data = json.loads(text)
+                except Exception:  # noqa: BLE001
+                    data = None
+                if isinstance(data, dict):
+                    if any(k in data for k in ("added_tokens", "normalizer", "pre_tokenizer", "model")):
+                        findings.extend(_scan_tokenizer(data, path.name))
+                    findings.extend(_scan_tools(data, path.name))
+        elif fmt == "card":
+            findings.extend(_scan_card(_btext(path.read_bytes()), path.name))
     except Exception as exc:  # noqa: BLE001
         findings.append(_f("FMT-01", f"Ошибка разбора {fmt}", "low", 0.3, str(exc), cat="FMT"))
     # проверка несоответствия расширения реальному формату
