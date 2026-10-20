@@ -571,9 +571,8 @@ class Handler(BaseHTTPRequestHandler):
             db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key) VALUES "
                     f"({_lit(sha)},{int(got)},{_lit(fmt)},{_lit(name)},{_lit(rec.get('s3_key'))}) "
                     "ON CONFLICT (sha256) DO NOTHING")
-            rid = getattr(self, "_rid", scan_id)
             db_exec("INSERT INTO uploads(artifact_id,request_id,bytes,status,finished_at) "
-                    f"SELECT id,{_lit(rid)},{int(got)},'received',now() FROM artifacts WHERE sha256={_lit(sha)}")
+                    f"SELECT id,{_lit(scan_id)},{int(got)},'received',now() FROM artifacts WHERE sha256={_lit(sha)}")
         if authz is not None:
             try:
                 authz.audit(getattr(self, "_subject", "anonymous"), "upload", "artifact", sha,

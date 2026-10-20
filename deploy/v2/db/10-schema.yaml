@@ -50,6 +50,13 @@ data:
       prev_hash TEXT NOT NULL, hash TEXT NOT NULL, payload TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS artifact_deletions (
+      id BIGSERIAL PRIMARY KEY,
+      sha256 TEXT NOT NULL,
+      s3_key TEXT,
+      reason TEXT,
+      deleted_at TIMESTAMPTZ DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS policies (
       id BIGSERIAL PRIMARY KEY, version INT NOT NULL, body JSONB NOT NULL,
       active BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now()

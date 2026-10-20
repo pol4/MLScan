@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lifecycle-dryrun
+  namespace: mlscan-data
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "v2-lifecycle"}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 900
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: lifecycle
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command: ["python", "/opt/lc/lifecycle.py"]
+        args: ["--ttl-days", "0", "--dry-run"]
+        env:
+        - {name: PGHOST, value: postgres.mlscan-data.svc.cluster.local}
+        - {name: PGPORT, value: "5432"}
+        - {name: PGUSER, value: mlscan}
+        - {name: PGDATABASE, value: mlscan}
+        - name: PGPASSWORD
+          valueFrom: {secretKeyRef: {name: mlscan-pg, key: POSTGRES_PASSWORD}}
+        - name: S3_ENDPOINT
+          valueFrom: {secretKeyRef: {name: mlscan-s3, key: ENDPOINT}}
+        - name: S3_REGION
+          valueFrom: {secretKeyRef: {name: mlscan-s3, key: REGION}}
+        - name: S3_BUCKET
+          valueFrom: {secretKeyRef: {name: mlscan-s3, key: BUCKET}}
+        - name: S3_ACCESS_KEY
+          valueFrom: {secretKeyRef: {name: mlscan-s3, key: ACCESS_KEY}}
+        - name: S3_SECRET_KEY
+          valueFrom: {secretKeyRef: {name: mlscan-s3, key: SECRET_KEY}}
+        resources:
+          requests: {cpu: "100m", memory: "128Mi"}
+          limits: {cpu: "1", memory: "256Mi"}
+        volumeMounts:
+        - {name: lc, mountPath: /opt/lc, readOnly: true}
+        - {name: pg, mountPath: /opt/pg, readOnly: true}
+        - {name: s3, mountPath: /opt/s3, readOnly: true}
+      volumes:
+      - {name: lc, configMap: {name: mlscan-lifecycle}}
+      - {name: pg, configMap: {name: mlscan-pgclient}}
+      - {name: s3, configMap: {name: mlscan-s3client}}
