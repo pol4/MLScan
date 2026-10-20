@@ -147,7 +147,40 @@ ci → **403**, admin → **200**; `GET /login` 200, `POST /login` **302**+cooki
 (здорово); бэкап создан (`196K`), `gzip -t ok`, восстановлено **12 таблиц**, `evidence=2`,
 `RESTORE VERIFY OK`.
 
-**Волна 0 (I1–I4) завершена.** Далее — волны форматов 1–3 из `docs/10-plan-new-formats.md`.
+**Волна 0 (I1–I4) завершена.**
+
+---
+
+## Волна 1 — адаптеры форматов и детекторы исполнения кода (реализовано: статика)
+
+Слой адаптеров `deploy/v2/formats/detector.py` (stdlib), подключён к сервису тестирования
+(`/opt/formats`, `format_adapter.static_scan`). Определяет формат и выполняет статические проверки:
+
+| Чек-ид | Что детектируется | Severity |
+|--------|-------------------|----------|
+| `EXEC-01` | TorchServe `.mar` с handler-кодом; model-as-code артефакт | critical/high |
+| `EXEC-02` | Python-код внутри артефакта/архива | high |
+| `EXEC-03` | `torch.package`/TorchScript (`code/`, `constants.pkl`) | high |
+| `EXEC-04` | `auto_map` / `trust_remote_code` (ссылка на удалённый код) | critical |
+| `EXEC-05` | Keras `Lambda`/`custom_objects` (в т.ч. `.keras`, HDF5) | critical/high |
+| `EXEC-06` | ONNX `external_data` / custom/contrib ops | high |
+| `EXEC-07` | HDF5 external links | high |
+| `INJ-01/02` | Jinja `chat_template` с опасными конструкциями (SSTI) | high/medium |
+| `FMT-01/02/09` | повреждённый контейнер, несоответствие расширения, ONNX location | low/medium |
+
+**Политика** дополнена правилами `block-code-artifact` и `block-template-injection`
+(`deploy/stage3/20-policy.yaml`) → такие артефакты блокируются (`Malicious`).
+
+**Демонстрационные образцы:** `poc/scan/formats/` (генератор `poc/scan/gen_formats.py`):
+`.mar`, `auto_map.json`, `.keras`, `.onnx`, `.h5`, `tokenizer_config.json` (SSTI), `.gguf`, benign.
+
+Проверено (через сервис тестирования + синк аналитики):
+`evil_mar.mar`, `evil_auto_map.json`, `evil.keras`, `evil.onnx`, `evil.h5`,
+`evil_tokenizer_config.json`, `evil.gguf` → сервис `Dangerous` (статика), политика →
+**Malicious / block** (`block-code-artifact` / `block-template-injection`); `benign.json` → `Safe`.
+
+**Далее (Волна 1b):** sandbox-профили для фактического исполнения model-as-code/Keras/ONNX
+(подтверждение динамикой) и специализированные probe-наборы.
 
 ### Ограничения I1 (и что дальше)
 

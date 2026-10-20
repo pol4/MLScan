@@ -86,6 +86,7 @@ spec:
         - {name: data, mountPath: /data}
         - {name: s3client, mountPath: /opt/s3, readOnly: true}
         - {name: pgclient, mountPath: /opt/pg, readOnly: true}
+        - {name: formats, mountPath: /opt/formats, readOnly: true}
         - {name: authz, mountPath: /opt/auth, readOnly: true}
         - {name: modeltmp, mountPath: /var/tmp}
         - {name: tmp, mountPath: /tmp}
@@ -95,6 +96,7 @@ spec:
       - {name: data, persistentVolumeClaim: {claimName: mlscan-testing-data}}
       - {name: s3client, configMap: {name: mlscan-s3client}}
       - {name: pgclient, configMap: {name: mlscan-pgclient}}
+      - {name: formats, configMap: {name: mlscan-formats}}
       - {name: authz, configMap: {name: mlscan-authz}}
       - {name: modeltmp, emptyDir: {sizeLimit: 120Gi}}
       - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}

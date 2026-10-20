@@ -92,6 +92,12 @@ JOB_EPHEMERAL = os.environ.get("JOB_EPHEMERAL", "8Gi")
 TMP_SIZE = os.environ.get("TMP_SIZE", "6Gi")
 SANDBOX_IMAGE = os.environ.get("SANDBOX_IMAGE", "python:3.12-slim")
 
+sys.path.insert(0, "/opt/formats")
+try:
+    import detector as format_adapter  # noqa: E402
+except Exception:  # noqa: BLE001
+    format_adapter = None  # type: ignore
+
 sys.path.insert(0, "/opt/auth")
 try:
     import authz  # noqa: E402
@@ -329,6 +335,19 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
         t = time.time()
         update(scan_id, state="running", stage="static", progress=10)
         static = mlscan_poc.static_stage(Path(path))
+        if format_adapter is not None:
+            try:
+                fa = format_adapter.static_scan(Path(path))
+                if fa.get("findings"):
+                    static.setdefault("findings", []).extend(fa["findings"])
+                if fa.get("format"):
+                    static["adapter_format"] = fa["format"]
+                    if fa["format"] != "pickle":
+                        static["format"] = fa["format"]
+            except Exception as exc:  # noqa: BLE001
+                static.setdefault("findings", []).append(
+                    {"check_id": "FMT-00", "category": "FMT", "title": "Ошибка адаптера формата",
+                     "severity": "low", "confidence": 0.3, "evidence": str(exc)})
         timings["static_s"] = round(time.time() - t, 2)
         if S3_ENABLED:                      # локальная копия нужна была только для L1
             try:
@@ -497,7 +516,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(413, {"error": f"artifact too large ({n} > {MAX_UPLOAD})"})
         scan_id = uuid.uuid4().hex
         os.makedirs(DATA_TMP, exist_ok=True)
-        tmp = os.path.join(DATA_TMP, "up-" + scan_id)
+        tmp = os.path.join(DATA_TMP, "up-" + scan_id + "-" + name)
         h = hashlib.sha256()
         got = 0
         with open(tmp, "wb") as fh:

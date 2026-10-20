@@ -34,6 +34,18 @@ data:
           "reason": "Модификация состояния процесса (builtins/import-хуки)"
         },
         {
+          "id": "block-code-artifact",
+          "when": {"check_id_in": ["EXEC-01", "EXEC-02", "EXEC-03", "EXEC-04", "EXEC-05", "EXEC-06", "EXEC-07"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Исполняемый код или ссылки на код в артефакте (model-as-code / Lambda / custom ops)"
+        },
+        {
+          "id": "block-template-injection",
+          "when": {"check_id_in": ["INJ-01"], "min_confidence": 0.6},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Опасные конструкции в Jinja chat_template (SSTI)"
+        },
+        {
           "id": "allow-clean",
           "when": {"max_severity_at_most": "info"},
           "action": "allow", "verdict": "Safe",
