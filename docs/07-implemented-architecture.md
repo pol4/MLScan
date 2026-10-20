@@ -399,4 +399,5 @@ evidence-chain — ok.
 - `../deploy/stage1…stage5/README.md`, `../deploy/sandbox-image/README.md`, `../deploy/ingress/README.md` — операционные описания стадий, образа песочницы и перехода на Ingress/Egress.
 - `08-testing-guide.md` — что протестировать и куда подключаться.
 - `09-formats-and-backdoors-analysis.md` — анализ других форматов ML/AI и видов закладок.
+- `10-plan-new-formats.md` — план доработок под новые форматы.
 - `../poc/README.md` — однофайловый PoC.
