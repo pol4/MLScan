@@ -24,6 +24,15 @@ if kubectl -n mlscan-data get secret mlscan-s3 >/dev/null 2>&1; then
 else
   echo "  WARN: secret mlscan-s3 не найден в mlscan-data — сервис стартует в локальном режиме (/artifacts)"
 fi
+# PG-клиент и реквизиты (I2)
+kubectl -n "$NS" create configmap mlscan-pgclient \
+  --from-file=pgclient.py="$HERE/../v2/db/pgclient.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+if kubectl -n mlscan-data get secret mlscan-pg >/dev/null 2>&1; then
+  kubectl -n mlscan-data get secret mlscan-pg -o json \
+    | python3 -c "import sys,json;d=json.load(sys.stdin);d['metadata']={'name':'mlscan-pg','namespace':'mlscan-testing'};[d.pop(k,None) for k in ('uid','resourceVersion','creationTimestamp','managedFields')];print(json.dumps(d))" \
+    | kubectl apply -f - >/dev/null
+  echo "  PG-реквизиты скопированы в $NS (dual-write в БД включён)"
+fi
 echo "[5/6] Deployment + Service (API 8080, artifacts 8090, NodePort 30811)"
 kubectl apply -f "$HERE/30-service.yaml"
 echo "[6/6] NetworkPolicy (sandbox -> testing:8090 для артефакта)"

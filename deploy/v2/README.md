@@ -66,8 +66,21 @@ bash deploy/v2/db/apply.sh
 
 Проверено: 12 таблиц; вставка/чтение работают; `UPDATE evidence`/`audit_log` → `ERROR: append-only table`.
 
-**Статус:** схема и экземпляр развёрнуты. **Интеграция сервисов с БД** (запись `scans`/`findings`/
-`evidence`/`uploads`/`connections`, dual-write с JSON-экспортом) — следующий шаг (I2b).
+### I2b — интеграция сервисов с БД (частично)
+
+- Реализован **минимальный stdlib-клиент PostgreSQL** (`deploy/v2/db/pgclient.py`): SCRAM-SHA-256 +
+  simple query (без внешних зависимостей). Проверено: аутентификация, `SELECT`, вставка,
+  append-only (`UPDATE evidence → ERROR`).
+- **Сервис тестирования** пишет в БД (dual-write, JSON остаётся): `artifacts` (ON CONFLICT по
+  `sha256`), `uploads`, `scans` (upsert по `scan_id`), `findings`. Реквизиты — Secret `mlscan-pg`
+  (реплицируется в ns сервиса), клиент монтируется как ConfigMap.
+- В egress-политики платформенных namespace добавлен порт **5432** (PostgreSQL) и **3900** (S3).
+
+Проверено: скан `evil0.pkl` → `artifacts/uploads/scans/findings` = 3/3/3/3;
+`scans.verdict=Malicious`, находки `F-30/A-01/A-02`.
+
+**Осталось (I2c):** перенести **аналитический движок** на БД (`evidence` hash-chain в БД,
+`artifact_fingerprints`, `connections`, `audit_log`), затем **I3** AuthN/Z + audit.
 
 ### Ограничения I1 (и что дальше)
 

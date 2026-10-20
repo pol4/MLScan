@@ -56,6 +56,36 @@ if S3_ENABLED:
     from s3client import S3  # noqa: E402
     _s3 = S3(S3_ENDPOINT, os.environ["S3_ACCESS_KEY"], os.environ["S3_SECRET_KEY"],
              region=os.environ.get("S3_REGION", "garage"), bucket=os.environ["S3_BUCKET"], timeout=3600)
+
+# --- PostgreSQL (dual-write; не критично для работы сервиса) ---
+PG_HOST = os.environ.get("PGHOST", "")
+DB_ENABLED = bool(PG_HOST)
+_Pg = None
+if DB_ENABLED:
+    sys.path.insert(0, "/opt/pg")
+    from pgclient import Pg as _Pg  # noqa: E402
+
+
+def _lit(v) -> str:
+    if v is None:
+        return "NULL"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def db_exec(sql: str) -> None:
+    if not DB_ENABLED or _Pg is None:
+        return
+    try:
+        c = _Pg(PG_HOST, int(os.environ.get("PGPORT", "5432")),
+                os.environ.get("PGUSER", "mlscan"), os.environ.get("PGPASSWORD", ""),
+                os.environ.get("PGDATABASE", "mlscan"), timeout=15)
+        c.connect()
+        c.query(sql)
+        c.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[db] {type(exc).__name__}: {exc} | SQL: {sql[:160]}", file=sys.stderr)
 MAX_UPLOAD = int(os.environ.get("MAX_UPLOAD", str(20 * 1024**3)))
 JOB_MEMORY = os.environ.get("JOB_MEMORY", "2Gi")
 JOB_EPHEMERAL = os.environ.get("JOB_EPHEMERAL", "8Gi")
@@ -312,6 +342,20 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
         verdict, reason = mlscan_poc.decide(static, dynamic)
         update(scan_id, state="done", stage="done", progress=100, verdict=verdict, reason=reason,
                findings=findings, static=static, sandbox=dynamic, timings=timings)
+        if DB_ENABLED:
+            import json as _json
+            db_exec("INSERT INTO scans(scan_id,status,stage,progress,verdict,reason,timings,finished_at) VALUES "
+                    f"({_lit(scan_id)},'done','done',100,{_lit(verdict)},{_lit(reason)},"
+                    f"{_lit(_json.dumps(timings, ensure_ascii=False))},now()) "
+                    "ON CONFLICT (scan_id) DO UPDATE SET status=EXCLUDED.status, verdict=EXCLUDED.verdict, "
+                    "reason=EXCLUDED.reason, timings=EXCLUDED.timings, finished_at=now()")
+            for f in findings:
+                ev = f.get("evidence")
+                ev_sql = "NULL" if ev is None else _lit(_json.dumps(ev, ensure_ascii=False))
+                db_exec("INSERT INTO findings(scan_id,level,check_id,category,severity,confidence,title,evidence) VALUES "
+                        f"({_lit(scan_id)},{_lit(f.get('level'))},{_lit(f.get('check_id'))},{_lit(f.get('category'))},"
+                        f"{_lit(f.get('severity'))},{f.get('confidence') if f.get('confidence') is not None else 'NULL'},"
+                        f"{_lit(f.get('title'))},{ev_sql})")
     except Exception as exc:  # noqa: BLE001
         update(scan_id, state="error", stage="error", progress=100, verdict="Inconclusive",
                reason=f"ошибка сервиса тестирования: {type(exc).__name__}: {exc}", timings=timings)
@@ -459,6 +503,12 @@ class Handler(BaseHTTPRequestHandler):
             os.replace(tmp, local)
             rec["local_path"] = local
         save_scan(rec)
+        if DB_ENABLED:
+            db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key) VALUES "
+                    f"({_lit(sha)},{int(got)},{_lit(fmt)},{_lit(name)},{_lit(rec.get('s3_key'))}) "
+                    "ON CONFLICT (sha256) DO NOTHING")
+            db_exec("INSERT INTO uploads(artifact_id,request_id,bytes,status,finished_at) "
+                    f"SELECT id,{_lit(scan_id)},{int(got)},'received',now() FROM artifacts WHERE sha256={_lit(sha)}")
         threading.Thread(target=process_scan, args=(scan_id, name, fmt, local), daemon=True).start()
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": got,
                                 "sha256": sha, "s3_key": rec.get("s3_key")})
