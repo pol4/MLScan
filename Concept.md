@@ -607,6 +607,7 @@ sequenceDiagram
 - `docs/08-testing-guide.md` — что можно протестировать и куда подключаться.
 - `docs/09-formats-and-backdoors-analysis.md` — анализ других форматов ML/AI и видов закладок (расширение за пределы pickle).
 - `docs/10-plan-new-formats.md` — план доработок под новые форматы.
+- `docs/11-target-architecture-v2.md` — целевая архитектура v2 (большие модели, S3/PostgreSQL, аутентификация/аудит, скорость).
 - `START.md` — стартовая статья о проекте.
 - `poc/mlscan_poc.py` — реализация PoC (один файл, Docker-песочница, Markdown-отчёт).
 

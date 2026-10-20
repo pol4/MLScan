@@ -400,4 +400,5 @@ evidence-chain — ok.
 - `08-testing-guide.md` — что протестировать и куда подключаться.
 - `09-formats-and-backdoors-analysis.md` — анализ других форматов ML/AI и видов закладок.
 - `10-plan-new-formats.md` — план доработок под новые форматы.
+- `11-target-architecture-v2.md` — целевая архитектура v2 (большие модели, S3/БД, скорость).
 - `../poc/README.md` — однофайловый PoC.
