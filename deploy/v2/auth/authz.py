@@ -41,6 +41,14 @@ def request_id(headers) -> str:
     return rid.strip() if rid else new_request_id()
 
 
+def validate_key(key: str):
+    """Проверка «сырого» ключа (для формы логина/UI)."""
+    if not key:
+        return None
+    ent = KEYS.get(key)
+    return {"subject": ent.get("subject", "unknown"), "roles": ent.get("roles", [])} if ent else None
+
+
 def authenticate(headers):
     """Вернёт dict(subject, roles) при успехе, иначе None."""
     if not AUTH_ENABLED:

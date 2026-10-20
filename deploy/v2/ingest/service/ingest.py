@@ -27,6 +27,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, "/opt/s3")
 from s3client import S3  # noqa: E402
 
+sys.path.insert(0, "/opt/auth")
+try:
+    import authz  # noqa: E402
+except Exception:  # noqa: BLE001
+    authz = None  # type: ignore
+
 S3_ENDPOINT = os.environ["S3_ENDPOINT"]
 S3_REGION = os.environ.get("S3_REGION", "garage")
 S3_BUCKET = os.environ["S3_BUCKET"]
@@ -47,18 +53,56 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _require(self, allowed=None):
+        if authz is None:
+            return {"subject": "anonymous", "roles": ["admin"]}
+        self._rid = authz.request_id(self.headers)
+        ent = authz.authenticate(self.headers)
+        if ent is None:
+            self._subject = "anonymous"
+            try:
+                authz.audit("anonymous", "auth_denied", "http", self.path, self._rid,
+                            self.client_address[0], {"method": self.command})
+            except Exception:  # noqa: BLE001
+                pass
+            self._json(401, {"error": "unauthorized", "request_id": self._rid})
+            return None
+        if allowed and not (set(ent["roles"]) & set(allowed)):
+            self._subject = ent["subject"]
+            self._json(403, {"error": "forbidden", "request_id": self._rid})
+            return None
+        self._subject = ent["subject"]
+        self._roles = ent.get("roles", [])
+        return ent
+
     def _json(self, code: int, obj) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode()
+        rid = getattr(self, "_rid", None)
+        if rid is None and authz is not None:
+            rid = authz.new_request_id()
+            self._rid = rid
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if rid:
+            self.send_header("X-Request-ID", rid)
         self.end_headers()
         self.wfile.write(body)
+        if authz is not None and not getattr(self, "_logged", False):
+            self._logged = True
+            try:
+                authz.log_connection(getattr(self, "_subject", "anonymous"), rid,
+                                     self.client_address[0], self.headers.get("User-Agent", ""),
+                                     self.path, self.command, code)
+            except Exception:  # noqa: BLE001
+                pass
 
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         if u.path == "/healthz":
             return self._json(200, {"status": "ok", "bucket": S3_BUCKET})
+        if self._require(["admin", "ci-reader", "service"]) is None:
+            return
         if u.path == "/stats":
             with _lock:
                 return self._json(200, dict(_stats, uploads_listed=len(_uploads)))
@@ -93,6 +137,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         if u.path not in ("/uploads", "/scans/upload", "/upload"):
             return self._json(404, {"error": "not found"})
+        if self._require(["admin", "service"]) is None:
+            return
         q = urllib.parse.parse_qs(u.query)
         name = os.path.basename(q.get("name", ["sample.bin"])[0]) or "sample.bin"
         fmt = q.get("fmt", ["pickle"])[0]
@@ -135,6 +181,13 @@ class Handler(BaseHTTPRequestHandler):
                "name": name, "format": fmt, "dedup": dedup, "seconds": dur,
                "mbps": round((got / 1048576) / dur, 1) if dur else None,
                "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        if authz is not None:
+            try:
+                authz.audit(getattr(self, "_subject", "anonymous"), "upload", "artifact", sha,
+                            getattr(self, "_rid", upid), self.client_address[0],
+                            {"name": name, "size": got, "key": key, "dedup": dedup})
+            except Exception:  # noqa: BLE001
+                pass
         with _lock:
             _uploads[upid] = rec
             _stats["uploads"] += 1

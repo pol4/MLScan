@@ -35,6 +35,16 @@ spec:
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
+        - name: MLSCAN_KEYS
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_KEYS}}
+        - name: INTERNAL_KEY
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: INTERNAL_KEY}}
+        - {name: PGHOST, value: postgres.mlscan-data.svc.cluster.local}
+        - {name: PGPORT, value: "5432"}
+        - {name: PGUSER, value: mlscan}
+        - {name: PGDATABASE, value: mlscan}
+        - name: PGPASSWORD
+          valueFrom: {secretKeyRef: {name: mlscan-pg, key: POSTGRES_PASSWORD}}
         ports:
         - {name: http, containerPort: 8080}
         securityContext:
@@ -51,11 +61,15 @@ spec:
         volumeMounts:
         - {name: svc-code, mountPath: /opt/svc, readOnly: true}
         - {name: intel, mountPath: /etc/mlscan, readOnly: true}
+        - {name: pgclient, mountPath: /opt/pg, readOnly: true}
+        - {name: authz, mountPath: /opt/auth, readOnly: true}
         - {name: data, mountPath: /data}
         - {name: tmp, mountPath: /tmp}
       volumes:
       - {name: svc-code, configMap: {name: mlscan-integrations-code}}
       - {name: intel, configMap: {name: mlscan-intel}}
+      - {name: pgclient, configMap: {name: mlscan-pgclient}}
+      - {name: authz, configMap: {name: mlscan-authz}}
       - {name: data, persistentVolumeClaim: {claimName: mlscan-integrations-data}}
       - {name: tmp, emptyDir: {sizeLimit: 128Mi, medium: Memory}}
 ---

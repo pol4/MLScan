@@ -8,6 +8,11 @@ echo "[1/6] namespace"
 kubectl apply -f "$HERE/00-namespace.yaml"
 echo "[2/6] ConfigMap'ы (ops-код, golden, samples, redteam)"
 python3 "$HERE/40-gen-configmaps.py" | kubectl apply -f -
+kubectl -n "$NS" create configmap mlscan-authz \
+  --from-file=authz.py="$HERE/../v2/auth/authz.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+if ! kubectl -n "$NS" get secret mlscan-keys >/dev/null 2>&1; then
+  bash "$HERE/../v2/auth/keys.sh" >/dev/null 2>&1 || true
+fi
 echo "[3/6] Deployment + Service (NodePort 30810)"
 kubectl apply -f "$HERE/20-service.yaml"
 kubectl -n "$NS" rollout status deploy/mlscan-ops --timeout=240s

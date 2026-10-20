@@ -14,11 +14,25 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, "/opt/auth")
+try:
+    import authz  # noqa: E402
+except Exception:  # noqa: BLE001
+    authz = None  # type: ignore
+
+INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "")
+
+
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {INTERNAL_KEY}"} if INTERNAL_KEY else {}
+
 
 ANALYTICS_URL = os.environ.get(
     "ANALYTICS_URL", "http://mlscan-analytics.mlscan-analytics.svc.cluster.local:8080")
@@ -40,12 +54,13 @@ _intel: dict = {"known_bad_sha256": [], "watch_checks": []}
 # HTTP
 # ----------------------------------------------------------------------------
 def http_get_json(url: str, timeout: int = 20):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+    req = urllib.request.Request(url, headers=_auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
 def http_post_bytes(url: str, data: bytes, timeout: int = 60):
-    req = urllib.request.Request(url, data=data, method="POST")
+    req = urllib.request.Request(url, data=data, method="POST", headers=_auth_headers())
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
@@ -222,12 +237,53 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _require(self, allowed=None):
+        if authz is None:
+            return {"subject": "anonymous", "roles": ["admin"]}
+        self._rid = authz.request_id(self.headers)
+        ent = authz.authenticate(self.headers)
+        if ent is None:
+            self._subject = "anonymous"
+            try:
+                authz.audit("anonymous", "auth_denied", "http", self.path, self._rid,
+                            self.client_address[0], {"method": self.command})
+            except Exception:  # noqa: BLE001
+                pass
+            self._json(401, {"error": "unauthorized", "request_id": self._rid})
+            return None
+        if allowed and not (set(ent["roles"]) & set(allowed)):
+            self._subject = ent["subject"]
+            try:
+                authz.audit(ent["subject"], "authz_denied", "http", self.path, self._rid,
+                            self.client_address[0], {"method": self.command, "roles": ent["roles"]})
+            except Exception:  # noqa: BLE001
+                pass
+            self._json(403, {"error": "forbidden", "request_id": self._rid})
+            return None
+        self._subject = ent["subject"]
+        self._roles = ent.get("roles", [])
+        return ent
+
     def _send(self, code, body: bytes, ctype="application/json; charset=utf-8"):
+        rid = getattr(self, "_rid", None)
+        if rid is None and authz is not None:
+            rid = authz.new_request_id()
+            self._rid = rid
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if rid:
+            self.send_header("X-Request-ID", rid)
         self.end_headers()
         self.wfile.write(body)
+        if authz is not None and not getattr(self, "_logged", False):
+            self._logged = True
+            try:
+                authz.log_connection(getattr(self, "_subject", "anonymous"), rid,
+                                     self.client_address[0], self.headers.get("User-Agent", ""),
+                                     self.path, self.command, code)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _json(self, code, obj):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode())
@@ -238,6 +294,8 @@ class Handler(BaseHTTPRequestHandler):
         p = u.path
         if p == "/healthz":
             return self._json(200, {"status": "ok", "registry": len(_registry)})
+        if self._require(["admin", "ci-reader", "service"]) is None:
+            return
         if p == "/registry":
             return self._json(200, {"entries": list(_registry.values())})
         if p.startswith("/registry/"):
@@ -273,6 +331,11 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         p = u.path
         n = int(self.headers.get("Content-Length", "0") or "0")
+        if self._require(["admin", "ci-reader", "service"]) is None:
+            return
+        if p == "/intel" and "admin" not in getattr(self, "_roles", []):
+            return self._json(403, {"error": "forbidden: intel requires admin",
+                                    "request_id": getattr(self, "_rid", "")})
         if p == "/sync":
             return self._json(200, sync_from_analytics())
         if p == "/intel":

@@ -5,6 +5,16 @@ import http.client
 import os
 import time
 
+import json as _json
+_KEYS = {}
+try:
+    _KEYS = _json.loads(os.environ.get("MLSCAN_KEYS", "{}"))
+except Exception:
+    _KEYS = {}
+API_KEY = next((k for k, v in _KEYS.items() if "admin" in v.get("roles", [])), "")
+if not API_KEY:
+    API_KEY = next(iter(_KEYS), "")
+
 HOST = os.environ.get("INGEST_HOST", "mlscan-ingest.mlscan-data.svc.cluster.local")
 PORT = int(os.environ.get("INGEST_PORT", "8080"))
 SIZE_MB = int(os.environ.get("SIZE_MB", "1024"))
@@ -25,6 +35,8 @@ def upload(tag: str):
     c = http.client.HTTPConnection(HOST, PORT, timeout=3600)
     c.putrequest("POST", "/uploads?name=big.bin&fmt=raw")
     c.putheader("Content-Length", str(size))
+    if API_KEY:
+        c.putheader("Authorization", f"Bearer {API_KEY}")
     c.endheaders()
     with open(PATH, "rb") as fh:
         while True:

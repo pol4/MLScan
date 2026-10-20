@@ -232,8 +232,9 @@ sequenceDiagram
    Далее: parallel multipart / presigned direct-to-S3.
 2. **I2. PostgreSQL** (реализовано без оператора; схема из 12 таблиц с append-only `evidence`/`audit_log`; stdlib-клиент SCRAM; сервис тестирования и аналитика пишут в БД, evidence hash-chain в БД; verify по БД) — схема (artifacts/fingerprints/scans/findings/evidence/
    uploads/connections/audit); миграция JSON/JSONL → БД (dual-write); JSON-экспорт остаётся.
-3. **I3. AuthN/Z + audit** — реализовано (I3a): API-ключи на входе, correlation-id, журнал
-   `connections`/`audit_log` (hash-chain), сервис-сервис по внутреннему ключу; OIDC/Istio и RBAC — I3b.
+3. **I3. AuthN/Z + audit** — ✅ реализовано: API-ключи на всех входах + RBAC по ролям, вход в UI
+   по cookie, correlation-id, журнал `connections`/`audit_log` (hash-chain), сервис-сервис по
+   внутреннему ключу; OIDC/Istio JWT — опциональное расширение.
 4. **I4. Кэш и производительность** — `mlscan-cache` DaemonSet + PVC; mmap-профили sandbox;
    бенчмарки на модели ~100–500 ГБ; настройка лимитов.
 5. Далее — волны форматов (1–3) поверх новой инфраструктуры.

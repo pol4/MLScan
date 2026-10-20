@@ -33,7 +33,7 @@ PY
 KEYS="$(cat "$OUT")"
 SVC="$(python3 -c "import json;d=json.load(open('$OUT'));print([k for k,v in d.items() if v.get('roles')==['service']][0])")"
 
-for ns in mlscan-testing mlscan-analytics mlscan-integrations mlscan-data; do
+for ns in mlscan-testing mlscan-analytics mlscan-integrations mlscan-data mlscan-ops; do
   kubectl -n "$ns" create secret generic mlscan-keys \
     --from-literal=MLSCAN_KEYS="$KEYS" --from-literal=INTERNAL_KEY="$SVC" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1 || true

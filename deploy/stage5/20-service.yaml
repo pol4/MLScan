@@ -37,6 +37,10 @@ spec:
         - {name: SAMPLES_DIR, value: /samples}
         - {name: PORT, value: "8080"}
         - {name: RETEST_INTERVAL, value: "0"}
+        - name: MLSCAN_KEYS
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_KEYS}}
+        - name: INTERNAL_KEY
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: INTERNAL_KEY}}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
@@ -56,11 +60,13 @@ spec:
         - {name: svc-code, mountPath: /opt/svc, readOnly: true}
         - {name: golden, mountPath: /etc/mlscan, readOnly: true}
         - {name: samples, mountPath: /samples, readOnly: true}
+        - {name: authz, mountPath: /opt/auth, readOnly: true}
         - {name: tmp, mountPath: /tmp}
       volumes:
       - {name: svc-code, configMap: {name: mlscan-ops-code}}
       - {name: golden, configMap: {name: mlscan-golden}}
       - {name: samples, configMap: {name: mlscan-golden-samples}}
+      - {name: authz, configMap: {name: mlscan-authz}}
       - {name: tmp, emptyDir: {sizeLimit: 64Mi, medium: Memory}}
 ---
 apiVersion: v1

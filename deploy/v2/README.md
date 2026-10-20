@@ -116,8 +116,23 @@ bash deploy/v2/db/apply.sh
 `POST /sync` с внутренним ключом → `{"ok": true, ...}`; журнал: `connections=191`,
 `audit_log=114` (события `upload`, `sync`, `auth_denied`) с `request_id`.
 
-**Осталось (I3b):** закрыть авторизацией вход `mlscan-ingest` (загрузка) и `mlscan-integrations`
-(gate/SIEM), добавить RBAC по ролям на маршруты и, опционально, OIDC (Keycloak) + Istio JWT.
+### I3b — все входы защищены, RBAC, вход в UI (реализовано)
+
+- Авторизация включена на **всех внешних входах**: `mlscan-analytics` (UI/API), `mlscan-testing`,
+  `mlscan-integrations` (gate/SIEM), `mlscan-ingest` (загрузка), `mlscan-ops` (метрики).
+  `/healthz` — без авторизации.
+- **RBAC по ролям:** чтение — `admin|ci-reader|service`; загрузка (`ingest`, `testing`) — `admin|service`;
+  `POST /intel` (integrations) — только `admin`; при недостатке роли возвращается **403**.
+- **Вход в веб-UI:** `GET /login` (форма) → `POST /login` с ключом → cookie `mlscan_key`
+  (HttpOnly, SameSite=Lax) → UI работает; в шапке добавлена ссылка «вход».
+- **Сервис-сервис:** аналитика/интеграции/ops вызывают друг друга **внутренним ключом**
+  (`INTERNAL_KEY` из Secret); CronJob retest тоже использует его.
+
+Проверено: без ключа → **401**; с ключом → **200**; ci → `/gate` 200/403 (по решению), `POST /intel`
+ci → **403**, admin → **200**; `GET /login` 200, `POST /login` **302**+cookie, `/api/overview`
+с cookie → 200; журнал: `connections`/`audit_log` с `request_id` (события `upload/sync/auth_denied`).
+
+**Осталось:** OIDC (Keycloak) + Istio JWT вместо API-ключей (опционально) и более тонкий RBAC.
 Далее — **I4** наблюдаемость/бэкап.
 
 ### Ограничения I1 (и что дальше)

@@ -18,6 +18,8 @@ spec:
         command: ["python", "/opt/v/verify.py"]
         env:
         - {name: SIZE_MB, value: "1024"}
+        - name: MLSCAN_KEYS
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_KEYS}}
         resources:
           requests: {cpu: "1", memory: "256Mi"}
           limits: {cpu: "4", memory: "1Gi", ephemeral-storage: "20Gi"}

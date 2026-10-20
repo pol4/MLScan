@@ -29,13 +29,17 @@ spec:
           - name: retest
             image: python:3.12-slim
             imagePullPolicy: IfNotPresent
+            env:
+            - name: INTERNAL_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: INTERNAL_KEY}}
             command:
             - python
             - -c
             - |
-              import urllib.request, json, sys
+              import urllib.request, json, os
               url = "http://mlscan-ops.mlscan-ops.svc.cluster.local:8080/retest"
-              req = urllib.request.Request(url, data=b"", method="POST")
+              hdr = {"Authorization": "Bearer " + os.environ.get("INTERNAL_KEY", "")}
+              req = urllib.request.Request(url, data=b"", method="POST", headers=hdr)
               with urllib.request.urlopen(req, timeout=280) as r:
                   data = json.loads(r.read().decode())
               print(json.dumps(data, ensure_ascii=False))

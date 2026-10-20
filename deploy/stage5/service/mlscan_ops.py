@@ -18,10 +18,24 @@ from __future__ import annotations
 import glob
 import json
 import os
+import sys
 import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, "/opt/auth")
+try:
+    import authz  # noqa: E402
+except Exception:  # noqa: BLE001
+    authz = None  # type: ignore
+
+INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "")
+
+
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {INTERNAL_KEY}"} if INTERNAL_KEY else {}
+
 
 ANALYTICS_URL = os.environ.get("ANALYTICS_URL", "http://mlscan-analytics.mlscan-analytics.svc.cluster.local:8080")
 TESTING_URL = os.environ.get("TESTING_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
@@ -36,12 +50,13 @@ _lock = threading.Lock()
 
 
 def get_json(url, timeout=15):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+    req = urllib.request.Request(url, headers=_auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
 def post_bytes(url, data, timeout=90):
-    req = urllib.request.Request(url, data=data, method="POST")
+    req = urllib.request.Request(url, data=data, method="POST", headers=_auth_headers())
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
@@ -223,10 +238,33 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _require(self, allowed=None):
+        if authz is None:
+            return {"subject": "anonymous", "roles": ["admin"]}
+        self._rid = authz.request_id(self.headers)
+        ent = authz.authenticate(self.headers)
+        if ent is None:
+            self._subject = "anonymous"
+            self._json(401, {"error": "unauthorized", "request_id": self._rid})
+            return None
+        allowed = allowed or ["admin", "ci-reader", "service"]
+        if not (set(ent["roles"]) & set(allowed)):
+            self._subject = ent["subject"]
+            self._json(403, {"error": "forbidden", "request_id": self._rid})
+            return None
+        self._subject = ent["subject"]
+        return ent
+
     def _send(self, code, body: bytes, ctype="application/json; charset=utf-8"):
+        rid = getattr(self, "_rid", None)
+        if rid is None and authz is not None:
+            rid = authz.new_request_id()
+            self._rid = rid
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if rid:
+            self.send_header("X-Request-ID", rid)
         self.end_headers()
         self.wfile.write(body)
 
@@ -237,6 +275,8 @@ class Handler(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         if p == "/healthz":
             return self._json(200, {"status": "ok"})
+        if self._require() is None:
+            return
         if p == "/health/stack":
             h = stack_health()
             return self._json(200 if h["_overall"] else 503, h)
@@ -250,6 +290,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         p = self.path.split("?")[0]
+        if self._require() is None:
+            return
         if p == "/retest":
             return self._json(200, retest())
         return self._json(404, {"error": "not found"})

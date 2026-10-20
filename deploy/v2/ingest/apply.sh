@@ -9,6 +9,13 @@ kubectl -n "$NS" create configmap mlscan-s3client \
   --from-file=s3client.py="$HERE/../data/s3/s3client.py" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n "$NS" create configmap mlscan-ingest-code \
   --from-file=ingest.py="$HERE/service/ingest.py" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n "$NS" create configmap mlscan-pgclient \
+  --from-file=pgclient.py="$HERE/../db/pgclient.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$NS" create configmap mlscan-authz \
+  --from-file=authz.py="$HERE/../auth/authz.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+if ! kubectl -n "$NS" get secret mlscan-keys >/dev/null 2>&1; then
+  bash "$HERE/../auth/keys.sh" >/dev/null 2>&1 || true
+fi
 kubectl -n "$NS" create configmap mlscan-ingest-verify \
   --from-file=verify.py="$HERE/s3/verify.py" --dry-run=client -o yaml | kubectl apply -f -
 

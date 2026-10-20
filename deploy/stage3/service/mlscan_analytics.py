@@ -457,7 +457,7 @@ input[type=file]{color:#e6e6e6} button{background:#3d7dd8;color:#fff;border:0;bo
 def _page(title: str, body: str, script: str = "") -> bytes:
     return (f"<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
             f"<title>{title} — MLScan</title>{_STYLE}</head><body>"
-            f"<header><h1><a href='/'>MLScan — Analytics</a></h1>"
+            f"<header><h1><a href='/'>MLScan — Analytics</a></h1><a href='/login'>вход</a>"
             f"<a href='/api/overview'>JSON</a><a href='/api/evidence/verify'>evidence</a>"
             f"<a href='/policy'>policy</a></header><main>{body}</main>{script}</body></html>").encode()
 
@@ -518,6 +518,16 @@ document.getElementById('f').addEventListener('submit',e=>{
 });
 refresh();setInterval(refresh,3000);
 </script>"""
+
+
+def _login_page(error: str = "") -> bytes:
+    body = ("<h2>Вход в MLScan</h2>"
+            + (f"<p style='color:#ff6b6b'>{error}</p>" if error else "")
+            + "<form method='post' action='/login'>"
+            "<input name='key' type='password' placeholder='API-ключ' style='padding:8px;min-width:280px'> "
+            "<button type='submit'>Войти</button></form>"
+            "<p style='color:#9aa4b2'>Ключ выдаётся администратором (admin/ci).</p>")
+    return _page("Вход", body)
 
 
 def ui_index() -> bytes:
@@ -620,12 +630,22 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _cookie_key(self):
+        raw = self.headers.get("Cookie", "") or ""
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "mlscan_key":
+                return v
+        return ""
+
     def _require(self):
-        """Аутентификация на входе (API-ключ). Возвращает субъекта или None (401 отправлен)."""
+        """Аутентификация на входе: API-ключ из заголовка или cookie (после /login)."""
         if authz is None:
             return {"subject": "anonymous"}
         self._rid = authz.request_id(self.headers)
         ent = authz.authenticate(self.headers)
+        if ent is None and self._cookie_key():
+            ent = authz.validate_key(self._cookie_key())
         if ent is None:
             self._subject = "anonymous"
             try:
@@ -695,6 +715,8 @@ class Handler(BaseHTTPRequestHandler):
         p = u.path
         if p == "/healthz":
             return self._json(200, {"status": "ok", "scans": len(_index)})
+        if p == "/login":
+            return self._send(200, _login_page(), "text/html; charset=utf-8")
         if self._require() is None:
             return
         if p == "/api/scans":
@@ -735,6 +757,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        if u.path == "/login":
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(n).decode() if n else ""
+            form = urllib.parse.parse_qs(body)
+            key = (form.get("key", [""])[0] or "").strip()
+            ent = authz.validate_key(key) if authz else None
+            if not ent:
+                return self._send(401, _login_page("Неверный ключ"), "text/html; charset=utf-8")
+            self.send_response(302)
+            self.send_header("Set-Cookie", f"mlscan_key={key}; HttpOnly; Path=/; SameSite=Lax")
+            self.send_header("Location", "/")
+            self.end_headers()
+            return
         if self._require() is None:
             return
         if u.path == "/sync":
