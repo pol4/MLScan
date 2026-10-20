@@ -201,9 +201,12 @@ bash deploy/stage5/60-attest.sh         # аттестация evidence
 
 ## Статус
 
-PoC проверен на демонстрационных данных и benchmark-модели (ложных срабатываний нет);
-рендер диаграмм и компиляция артефактов валидны. Дальнейшие этапы — в
-[`docs/06-implementation-plan.md`](./docs/06-implementation-plan.md).
+Реализованы и развёрнуты: PoC, система для pickle (Этапы 0–5), целевая архитектура v2
+(Волна 0: S3/PostgreSQL/AuthN+audit/наблюдаемость+бэкап; волны форматов 1–3: адаптеры и
+детекторы `EXEC/INJ/FMT/BD/AGT`, динамика model-as-code; retention/TTL и карантин) и метрики
+качества по форматам (TPR=1.0, FPR=0.0). Описание — [`deploy/v2/README.md`](./deploy/v2/README.md),
+план — [`docs/10-plan-new-formats.md`](./docs/10-plan-new-formats.md),
+целевая архитектура — [`docs/11-target-architecture-v2.md`](./docs/11-target-architecture-v2.md).
 
 ---
 

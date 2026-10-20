@@ -168,6 +168,8 @@ flowchart LR
 
 **Волна 1b (динамика)** — ✅ model-as-code исполняется в песочнице (harness), подтверждение динамикой (`evil_mar.mar` → `subprocess=1` → Malicious). Фреймворк-специфичная динамика (Keras/TF/ONNX) — ограничение (нужны образы).
 
+**A8 (метрики качества по форматам)** — ✅ golden-набор расширен на все форматы (32 образца); `/quality` = TPR 1.0 / FPR 0.0; `/retest` пересканирует весь набор.
+
 **Волна 3 (статика/эвристики)** — ✅ реализовано: `BD-01` (веса: NaN/Inf/экстремумы), `BD-02` (токенизаторы), `INJ-03/04/05` (карточки/tools/XSS), `AGT-01` (MCP); политика `block-agent`/`block-prompt-injection`/`block-tokenizer-backdoor`; демо-образцы; проверено.
 
 **Волна 0 завершена:** I1 (S3), I1b (testing→S3), I2/I2b/I2c (PostgreSQL + сервисы + hash-chain), I3a/I3b (AuthN/Z + RBAC + audit), I4 (метрики хранилищ, алерты, бэкап+restore). Далее — волны форматов 1–3.

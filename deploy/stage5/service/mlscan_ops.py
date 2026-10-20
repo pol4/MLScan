@@ -128,7 +128,7 @@ def quality() -> dict:
 
 
 def retest() -> dict:
-    files = sorted(glob.glob(os.path.join(SAMPLES_DIR, "*.pkl")))
+    files = sorted(f for f in glob.glob(os.path.join(SAMPLES_DIR, "*")) if os.path.isfile(f))
     started = time.time()
     submitted = []
     for f in files:
@@ -136,7 +136,13 @@ def retest() -> dict:
         try:
             with open(f, "rb") as fh:
                 data = fh.read()
-            r = post_bytes(f"{TESTING_URL}/scans?name={name}&fmt=pickle", data)
+            ext = name.rsplit(".", 1)[-1].lower()
+            fmt = {"pt": "torch", "pth": "torch", "bin": "torch", "ckpt": "torch",
+                   "npy": "numpy", "npz": "numpy", "joblib": "joblib", "mar": "raw",
+                   "safetensors": "raw", "onnx": "raw", "gguf": "raw", "h5": "raw",
+                   "tar": "raw", "tgz": "raw", "zip": "raw", "xml": "raw", "yaml": "raw",
+                   "yml": "raw", "json": "raw", "md": "raw", "py": "raw"}.get(ext, "pickle")
+            r = post_bytes(f"{TESTING_URL}/scans?name={name}&fmt={fmt}", data)
             submitted.append((name, r.get("scan_id")))
         except Exception as exc:  # noqa: BLE001
             submitted.append((name, None))

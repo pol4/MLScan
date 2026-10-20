@@ -252,6 +252,17 @@ Harness песочницы умеет **исполнять entry-код** model-
 
 ---
 
+## Метрики качества по форматам (A8, реализовано)
+
+Golden-набор расширен на **все форматы** (`poc/scan/*.pkl` + `poc/scan/formats/*`):
+32 образца (26 malicious, 6 benign). `mlscan-ops /quality` считает TP/FP/TN/FN, TPR/FPR,
+precision/accuracy по последним вердиктам аналитики; `POST /retest` пересканирует весь набор
+(формат выбирается по расширению), затем синхронизирует analytics/integrations.
+
+Проверено: `submitted=32`, `/quality` → **TPR=1.0, FPR=0.0, precision=1.0, accuracy=1.0**
+(tp=22, tn=6, fp=0, fn=0; `skipped=4` — образцы в статусе «Needs review» корректно не
+засчитываются как FN/FP).
+
 ## Жизненный цикл артефактов: retention/TTL и карантин (реализовано)
 
 `deploy/v2/lifecycle/` — сервис и CronJob `mlscan-lifecycle` (ежедневно, 03:30):

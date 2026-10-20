@@ -25,11 +25,13 @@ def main() -> int:
     redteam = open(os.path.join(ROOT, "deploy", "stage5", "service", "redteam.py"),
                    encoding="utf-8").read()
     samples = sorted(glob.glob(os.path.join(ROOT, "poc", "scan", "*.pkl")))
+    samples += sorted(f for f in glob.glob(os.path.join(ROOT, "poc", "scan", "formats", "*"))
+                      if os.path.isfile(f))
 
     labels = {}
     for f in samples:
         n = os.path.basename(f)
-        labels[n] = "malicious" if n.startswith("evil") else "benign"
+        labels[n] = "malicious" if n.lower().startswith("evil") else "benign"
 
     out = ("apiVersion: v1\nkind: ConfigMap\nmetadata:\n"
            f"  name: mlscan-ops-code\n  namespace: {OPS_NS}\n"
