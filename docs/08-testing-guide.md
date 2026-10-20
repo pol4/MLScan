@@ -9,10 +9,10 @@
 
 | Что | Где |
 |-----|-----|
-| Кластер | `rtx-cluster` = **192.168.20.116** (MicroK8s) |
+| Кластер | `<CLUSTER>` = **<NODE_IP>** (MicroK8s) |
 | kubectl | контекст `microk8s` |
-| SSH на узел | `ssh col@rtx-cluster` |
-| **Ingress-шлюз** | `http://192.168.20.116:30217` (HTTP `istio-ingressgateway`) |
+| SSH на узел | `ssh <user>@<CLUSTER>` |
+| **Ingress-шлюз** | `http://<NODE_IP>:30217` (HTTP `istio-ingressgateway`) |
 | Analytics (UI+API) | хост `analytics.mlscan.local` |
 | Integrations | хост `integrations.mlscan.local` |
 | Ops | хост `ops.mlscan.local` |
@@ -24,17 +24,17 @@ Namespaces: `mlscan-sandbox`, `mlscan-monitoring`, `mlscan-testing`, `mlscan-ana
 > **Доступ — через Ingress (Istio)**; per-service NodePort отключены (см. `deploy/ingress/`).
 > Вариант 1 (без правок DNS) — шлюз + заголовок Host:
 > ```bash
-> GW=192.168.20.116:30217
+> GW=<NODE_IP>:30217
 > curl -sS --noproxy '*' -H 'Host: analytics.mlscan.local' http://$GW/healthz
 > ```
 > Вариант 2 — добавьте hosts-записи (или DNS) и ходите по имени:
 > ```
-> 192.168.20.116 analytics.mlscan.local integrations.mlscan.local ops.mlscan.local api.mlscan.local
+> <NODE_IP> analytics.mlscan.local integrations.mlscan.local ops.mlscan.local api.mlscan.local
 > ```
 > ```bash
 > curl -sS --noproxy '*' http://analytics.mlscan.local:30217/healthz
 > ```
-> В примерах ниже адрес `192.168.20.116:308xx` соответствует хосту MLScan: выполняйте через
+> В примерах ниже адрес `<NODE_IP>:308xx` соответствует хосту MLScan: выполняйте через
 > `$GW` с нужным `Host:` (analytics / integrations / ops / api).
 
 > ⚠️ На рабочей станции задан HTTP-прокси (`http_proxy=http://localhost:1515`) — используйте
@@ -50,7 +50,7 @@ kubectl -n mlscan-testing    port-forward svc/mlscan-testing    18083:8080
 
 Проверка живости стека (через шлюз):
 ```bash
-curl -sS --noproxy '*' -H 'Host: ops.mlscan.local' http://192.168.20.116:30217/health/stack
+curl -sS --noproxy '*' -H 'Host: ops.mlscan.local' http://<NODE_IP>:30217/health/stack
 ```
 
 ---
@@ -101,7 +101,7 @@ bash deploy/stage2/run-scan.sh poc/scan/benign.pkl pickle   # -> Safe
 
 Доступ — через Ingress-шлюз (см. §1). Хелпер:
 ```bash
-GW=192.168.20.116:30217
+GW=<NODE_IP>:30217
 gw(){ curl -sS --noproxy '*' -H "Host: $1" "http://$GW$2"; }   # gw <host> <path>
 ```
 - UI: откройте **http://analytics.mlscan.local:30217** (при hosts-записи) или `gw analytics.mlscan.local /`.
@@ -148,8 +148,8 @@ gw integrations.mlscan.local "/gate?sha256=de4e240c47bb26dc9eb77e0cae169c4798845
 
 # CI-хелпер: сканирует артефакт и возвращает код выхода (0 allow / 1 block / 2 review)
 #   аргументы: <file> <fmt> <gate-url> <host>
-bash deploy/stage4/mlscan-gate.sh poc/scan/evil6.pkl pickle http://192.168.20.116:30217 integrations.mlscan.local; echo "exit=$?"
-bash deploy/stage4/mlscan-gate.sh poc/scan/benign.pkl pickle http://192.168.20.116:30217 integrations.mlscan.local; echo "exit=$?"
+bash deploy/stage4/mlscan-gate.sh poc/scan/evil6.pkl pickle http://<NODE_IP>:30217 integrations.mlscan.local; echo "exit=$?"
+bash deploy/stage4/mlscan-gate.sh poc/scan/benign.pkl pickle http://<NODE_IP>:30217 integrations.mlscan.local; echo "exit=$?"
 
 # SIEM-экспорт
 gw integrations.mlscan.local /export/cef | tail
@@ -165,7 +165,7 @@ kubectl -n mlscan-ops get cronjob mlscan-retest                # непреры�
 
 ### Сквозной сценарий (end-to-end)
 ```bash
-bash deploy/stage4/mlscan-gate.sh poc/scan/evil0.pkl pickle http://192.168.20.116:30217 integrations.mlscan.local
+bash deploy/stage4/mlscan-gate.sh poc/scan/evil0.pkl pickle http://<NODE_IP>:30217 integrations.mlscan.local
 #  цепочка: gate -> testing (L1+L2/L3 в Kata) -> registry -> decision -> exit code
 ```
 

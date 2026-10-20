@@ -15,4 +15,4 @@ echo "[4/4] готово"
 echo
 echo "Gate (CI):    $HERE/mlscan-gate.sh <file.pkl> [fmt]"
 echo "Демо:         $HERE/run-demo.sh"
-echo "API:          http://rtx-cluster:30809  (/registry /gate /events /export/cef /intel)"
+echo "API:          http://<CLUSTER>:30809  (/registry /gate /events /export/cef /intel)"

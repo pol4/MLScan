@@ -39,4 +39,4 @@ echo "== /metrics (первые строки) =="
 curl -sS --noproxy "*" "$B/metrics" | grep "^mlscan_" | head -12
 
 echo
-echo "OPS API: http://rtx-cluster:30810"
+echo "OPS API: http://<CLUSTER>:30810"

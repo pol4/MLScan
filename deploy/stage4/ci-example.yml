@@ -9,5 +9,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: MLScan gate (scans artifact, blocks pipeline on Malicious)
         run: |
-          bash deploy/stage4/mlscan-gate.sh model.pkl pickle http://rtx-cluster:30809
+          bash deploy/stage4/mlscan-gate.sh model.pkl pickle http://<CLUSTER>:30809
       # exit code: 0=allow, 1=block (pipeline fails), 2=review

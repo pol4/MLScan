@@ -34,7 +34,7 @@
 
 ## Статус реализации (as-built)
 
-Реализовано и развёрнуто в кластере **rtx-cluster** (MicroK8s, 7 namespace):
+Реализовано и развёрнуто в кластере **<CLUSTER>** (MicroK8s, 7 namespace):
 - **Этап 0** — PoC (однофайловый анализатор: статика/динамика/поведение).
 - **Этап 1** — укреплённая песочница: микро-ВМ **Kata**, deception, sinkhole, NetworkPolicy, eBPF (Falco).
 - **Этап 2** — сервис тестирования: **потоковая загрузка моделей любого размера**, Artifact-сервер,
@@ -611,7 +611,7 @@ sequenceDiagram
 - `START.md` — стартовая статья о проекте.
 - `poc/mlscan_poc.py` — реализация PoC (один файл, Docker-песочница, Markdown-отчёт).
 
-**Развёрнутая реализация (кластер rtx-cluster):**
+**Развёрнутая реализация (кластер <CLUSTER>):**
 - `deploy/stage1/` — укреплённая песочница (Kata-микро-ВМ, deception, sinkhole, NetworkPolicy, Falco eBPF).
 - `deploy/stage2/` — сервис тестирования (HTTP API, запуск песочницы, нормализация, вердикт).
 - `deploy/stage3/` — аналитический движок + UI (скоринг, Policy Engine, evidence store, отчёты).

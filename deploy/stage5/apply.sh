@@ -20,7 +20,7 @@ kubectl -n mlscan-sandbox delete job mlscan-redteam --ignore-not-found >/dev/nul
 kubectl apply -f "$HERE/40-redteam-job.yaml"
 
 echo
-echo "Ops API:  http://rtx-cluster:30810  (/metrics /health/stack /quality /sla)"
-echo "Retest:   curl -XPOST http://rtx-cluster:30810/retest"
+echo "Ops API:  http://<CLUSTER>:30810  (/metrics /health/stack /quality /sla)"
+echo "Retest:   curl -XPOST http://<CLUSTER>:30810/retest"
 echo "Демо:     $HERE/run-demo.sh"
 echo "Аттестат: $HERE/60-attest.sh"

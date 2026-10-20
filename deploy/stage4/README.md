@@ -39,7 +39,7 @@ CI ──▶ POST /gate/scan (артефакт) ──▶ Testing Service (Эт�
 ## CI-хелпер
 
 ```bash
-bash deploy/stage4/mlscan-gate.sh model.pkl pickle http://rtx-cluster:30809
+bash deploy/stage4/mlscan-gate.sh model.pkl pickle http://<CLUSTER>:30809
 # exit 0 = allow, 1 = block (пайплайн падает), 2 = review
 ```
 

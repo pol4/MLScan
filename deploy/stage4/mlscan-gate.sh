@@ -4,7 +4,7 @@
 #   ./mlscan-gate.sh <file> [fmt] [gate-url] [host-header]
 #
 # Через Ingress (Istio) укажите URL шлюза и хост integrations:
-#   ./mlscan-gate.sh model.pkl pickle http://192.168.20.116:30217 integrations.mlscan.local
+#   ./mlscan-gate.sh model.pkl pickle http://<NODE_IP>:30217 integrations.mlscan.local
 # Напрямую (port-forward) хост не нужен:
 #   ./mlscan-gate.sh model.pkl pickle http://127.0.0.1:18082
 set -euo pipefail

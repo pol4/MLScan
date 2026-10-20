@@ -114,7 +114,7 @@ PoC выполняет:
 
 ## Развёртывание на кластере (по этапам плана)
 
-**Этап 1 — Укреплённая песочница** развёрнут в кластере `rtx-cluster` (MicroK8s) в отдельных
+**Этап 1 — Укреплённая песочница** развёрнут в кластере `<CLUSTER>` (MicroK8s) в отдельных
 namespace: `mlscan-sandbox` (sandbox + deception + sinkhole + NetworkPolicy) и
 `mlscan-monitoring` (Falco, eBPF). Манифесты — в [`deploy/stage1/`](./deploy/stage1).
 

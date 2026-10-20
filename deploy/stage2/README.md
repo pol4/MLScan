@@ -112,10 +112,10 @@ apply.sh / run-scan.sh   развёртывание и запуск провер
 ```bash
 # большой файл напрямую
 curl --noproxy '*' -X POST --data-binary @model.pt \
-  "http://192.168.20.116:30811/scans/upload?name=model.pt&fmt=torch"
+  "http://<NODE_IP>:30811/scans/upload?name=model.pt&fmt=torch"
 # прогресс и статистика
-curl --noproxy '*' "http://192.168.20.116:30811/scans/<id>"
-curl --noproxy '*' "http://192.168.20.116:30811/stats"
+curl --noproxy '*' "http://<NODE_IP>:30811/scans/<id>"
+curl --noproxy '*' "http://<NODE_IP>:30811/stats"
 ```
 
 Новые ресурсы: PVC `mlscan-artifacts` (20Gi), порт/сервис 8090, NodePort 30811,

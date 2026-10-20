@@ -22,4 +22,4 @@ for r in sorted(d["scans"], key=lambda x: x.get("analyzed_at",""), reverse=True)
 echo "== evidence chain =="
 curl -sS --noproxy "*" "http://127.0.0.1:${PORT}/api/evidence/verify"; echo
 echo
-echo "UI: http://rtx-cluster:30808  (или port-forward svc/mlscan-analytics 18081:8080)"
+echo "UI: http://<CLUSTER>:30808  (или port-forward svc/mlscan-analytics 18081:8080)"

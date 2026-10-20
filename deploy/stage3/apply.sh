@@ -18,5 +18,5 @@ kubectl -n "$NS" rollout restart deploy/mlscan-analytics
 kubectl -n "$NS" rollout status deploy/mlscan-analytics --timeout=240s
 
 echo
-echo "UI:      http://rtx-cluster:30808  (или kubectl -n $NS port-forward svc/mlscan-analytics 18081:8080)"
+echo "UI:      http://<CLUSTER>:30808  (или kubectl -n $NS port-forward svc/mlscan-analytics 18081:8080)"
 echo "Синк:    $HERE/run-demo.sh"

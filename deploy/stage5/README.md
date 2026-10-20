@@ -48,7 +48,7 @@ bash deploy/stage5/60-attest.sh         # аттестация evidence
 
 ## Ограничения и план масштабирования
 
-- **GPU:** узел `rtx-cluster` отдаёт `nvidia.com/gpu: 0` (device plugin не публикует GTX 1050),
+- **GPU:** GPU-ресурс в кластере не публикуется (device plugin отсутствует/не публикует устройство),
   поэтому GPU-изоляция (MIG/vGPU) не применялась. Шаблон GPU-пода включается после установки
   NVIDIA device plugin (`microk8s enable nvidia` + `nvidia-device-plugin`); затем достаточно
   `resources.limits."nvidia.com/gpu": 1` в sandbox-Job.

@@ -1,6 +1,6 @@
 # 07. Реализованная архитектура MLScan (as-built)
 
-Итоговое описание **фактически развёрнутой** в кластере `rtx-cluster` (MicroK8s v1.33,
+Итоговое описание **фактически развёрнутой** в кластере `<CLUSTER>` (MicroK8s v1.33,
 containerd, Calico, RuntimeClass `kata`) системы MLScan: компонентный состав, схема
 сетевого взаимодействия, потоки данных, границы доверия и ограничения.
 
@@ -30,26 +30,24 @@ MLScan — система автоматического анализа опас
 
 | Продукт | Версия | Роль в MLScan |
 |---------|--------|---------------|
-| MicroK8s / Kubernetes | **v1.33.13** (rev 9067) | кластер-платформа |
-| `kubectl` (клиент) | v1.28.13 | управление (операции, apply, exec) |
-| containerd | **1.7.29** | container runtime узла |
-| Kata Containers | **3.32.0** | микро-ВМ песочницы (RuntimeClass `kata`) |
-| Ubuntu | 24.04.4 LTS | ОС узла `rtx-cluster` |
-| Linux kernel (host) | 7.0.0-38-generic | ядро хоста |
-| Linux kernel (Kata guest) | 6.18.35 | ядро гостя микро-ВМ (изоляция) |
-| Calico | **v3.29.3** | CNI + NetworkPolicy |
-| CoreDNS | 1.12.1 | DNS кластера |
-| metrics-server | v0.7.2 | метрики ресурсов (готовность к HPA) |
-| hostpath-provisioner (`cdkbot`) | 1.5.0 | StorageClass `microk8s-hostpath` |
-| Falco | **0.45.0** (Helm-чарт `falco-9.2.0`), falcoctl 0.14.2 | eBPF runtime-мониторинг (driver `modern_ebpf`) |
+| Kubernetes (MicroK8s) | 1.33 | кластер-платформа |
+| `kubectl` | — | управление (apply, exec, port-forward) |
+| containerd | — | container runtime узла |
+| Kata Containers | — | микро-ВМ песочницы (RuntimeClass `kata`) |
+| ОС узла | Ubuntu LTS | операционная система |
+| Kata-микро-ВМ | своё ядро на под | изоляция песочницы |
+| Calico | — | CNI + NetworkPolicy |
+| CoreDNS | — | DNS кластера |
+| metrics-server | — | метрики ресурсов (готовность к HPA) |
+| hostpath-provisioner | — | StorageClass (локальный том) |
+| Falco | driver `modern_ebpf` | eBPF runtime-мониторинг |
 | Python | **3.12.14** (образ `python:3.12-slim`) | рантайм всех сервисов и in-sandbox harness — **только стандартная библиотека** |
 | PyTorch (CPU) | **2.14.1+cpu** (образ песочницы `mlscan-sandbox`, `deploy/sandbox-image/`) + numpy 2.5.4, joblib, dill, cloudpickle | динамическая загрузка torch-моделей в песочнице |
 | Kaniko | executor v1.23.2 | сборка образа песочницы в in-cluster registry |
 | `pickletools` / `zipfile` / `sys.addaudithook` | Python 3.12 stdlib | статический разбор (L1) и наблюдаемость (L2/L3) |
-| Helm | v3.15.4 | установка Falco |
-| OpenSSL | 3.0.13 | утилита узла (доступна) |
-| Реестр образов (addon `registry`) | `registry:2.8.3` (NodePort 32000) | приватный реестр; **хранит образ песочницы** `mlscan-sandbox:latest` |
-| Istio | addon включён | **используется для Ingress** (Gateway + VirtualServices); sidecar-инъекция (mTLS/mesh) не включена; есть egress-gateway |
+| Helm | — | установка Falco |
+| Реестр образов (OCI) | — | приватный реестр; **хранит образ песочницы** `mlscan-sandbox:latest` |
+| Istio | — | **используется для Ingress** (Gateway + VirtualServices); sidecar-инъекция (mTLS/mesh) не включена; есть egress-gateway |
 
 Все сервисы MLScan — собственный код на Python stdlib поверх образа `python:3.12-slim`;
 внешних сервисных зависимостей (БД, очередь, брокеры) нет — состояние в файлах на PVC.
@@ -232,7 +230,7 @@ flowchart TB
 
 | Namespace | Политика egress | Разрешено |
 |-----------|-----------------|-----------|
-| `mlscan-testing` | `mlscan-egress` | DNS; кластерные CIDR (8080/8090/443); Kubernetes API (`192.168.20.116:16443`) |
+| `mlscan-testing` | `mlscan-egress` | DNS; кластерные CIDR (8080/8090/443); Kubernetes API (`<API_ENDPOINT>`) |
 | `mlscan-analytics` | `mlscan-egress` | DNS; кластерные CIDR (8080/8090) |
 | `mlscan-integrations` | `mlscan-egress` | DNS; кластерные CIDR (8080) |
 | `mlscan-ops` | `mlscan-egress` | DNS; кластерные CIDR (8080) |
@@ -291,7 +289,7 @@ deception, sinkhole). Аттестация целостности evidence — `
 ### 6.1 Как устроено хранилище аналитических данных
 
 **Отдельной СУБД нет.** Аналитическая информация хранится **файлами на PVC**
-(`microk8s-hostpath`), загружается в память при старте и отдаётся по HTTP API. Ни SQL, ни
+(локальный том), загружается в память при старте и отдаётся по HTTP API. Ни SQL, ни
 индексов на диске, ни движка запросов не используется.
 
 | Хранилище | Файл(ы) | Формат / семантика |

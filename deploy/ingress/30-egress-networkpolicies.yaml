@@ -20,9 +20,9 @@ spec:
     - ipBlock: {cidr: 10.152.0.0/16}     # ClusterIP-сервисы (в т.ч. Kubernetes API)
     - ipBlock: {cidr: 10.1.0.0/16}       # pod CIDR
     ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: 8080}, {protocol: TCP, port: 8090}]
-  # Kubernetes API на microk8s обслуживается хостом (post-DNAT = узел:16443)
+  # Kubernetes API: адрес/порт зависят от инсталляции (замените на IP:port API-endpoint)
   - to:
-    - ipBlock: {cidr: 192.168.20.116/32}
+    - ipBlock: {cidr: 198.51.100.10/32}
     ports: [{protocol: TCP, port: 16443}, {protocol: TCP, port: 443}]
 ---
 apiVersion: networking.k8s.io/v1

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Проверка Ingress/Egress MLScan.
 set -euo pipefail
-NODE="${NODE:-192.168.20.116}"
+NODE="${NODE:?export NODE=<cluster node IP>}"
 GW="${GW:-$NODE:30217}"     # HTTP-порт istio-ingressgateway
 
 echo "== Ingress (по хостам через шлюз) =="

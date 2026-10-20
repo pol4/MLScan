@@ -37,5 +37,5 @@ cat <<'TXT'
   bash deploy/ingress/verify.sh
 
 Для браузера добавьте в /etc/hosts (или аналог):
-  192.168.20.116 analytics.mlscan.local integrations.mlscan.local ops.mlscan.local api.mlscan.local
+  <NODE_IP> analytics.mlscan.local integrations.mlscan.local ops.mlscan.local api.mlscan.local
 TXT

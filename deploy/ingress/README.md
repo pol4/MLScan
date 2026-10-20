@@ -23,7 +23,7 @@ HTTP-порт **istio-ingressgateway** (NodePort `30217`, HTTPS `30921`) — о�
 - **VirtualServices** в namespace каждого сервиса → ClusterIP-сервисы (`<svc>.<ns>.svc...:8080`).
 - **Egress NetworkPolicy** (`mlscan-egress`) в `mlscan-testing/analytics/integrations/ops`:
   запрет наружу; разрешены DNS и кластерные CIDR (`10.152.0.0/16`, `10.1.0.0/16`);
-  для `mlscan-testing` дополнительно разрешён Kubernetes API (узел `192.168.20.116:16443`).
+  для `mlscan-testing` дополнительно разрешён Kubernetes API (`<API_ENDPOINT>`; замените на адрес вашего API).
 - Песочница `mlscan-sandbox` сохраняет собственную строгую политику (default-deny + sinkhole
   + artifact-сервер :8090).
 
@@ -37,7 +37,7 @@ bash deploy/ingress/verify.sh
 ## Проверка (с рабочей станции)
 
 ```bash
-GW=192.168.20.116:30217
+GW=<NODE_IP>:30217
 curl -sS --noproxy '*' -H 'Host: analytics.mlscan.local'    http://$GW/healthz
 curl -sS --noproxy '*' -H 'Host: integrations.mlscan.local' http://$GW/healthz
 curl -sS --noproxy '*' -H 'Host: ops.mlscan.local'          http://$GW/healthz
@@ -57,7 +57,7 @@ except Exception as e: print('DENY',type(e).__name__)"
 Добавьте в hosts-файл (или DNS/прокси):
 
 ```
-192.168.20.116 analytics.mlscan.local integrations.mlscan.local ops.mlscan.local api.mlscan.local
+<NODE_IP> analytics.mlscan.local integrations.mlscan.local ops.mlscan.local api.mlscan.local
 ```
 
 и открывайте `http://analytics.mlscan.local:30217` (порт шлюза).

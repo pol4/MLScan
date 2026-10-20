@@ -62,7 +62,7 @@ bash deploy/stage3/run-demo.sh                       # sync + сводка ве�
 ```
 
 Доступ к UI:
-- NodePort: `http://rtx-cluster:30808`
+- NodePort: `http://<CLUSTER>:30808`
 - или `kubectl -n mlscan-analytics port-forward svc/mlscan-analytics 18081:8080` → `http://127.0.0.1:18081`
 
 Проверено (evidence):
@@ -92,7 +92,7 @@ apply.sh / run-demo.sh   развёртывание и синхронизаци�
 
 ## Доработка (Этап 3+): загрузка моделей, прогресс и статистика в UI
 
-Веб-UI (`http://192.168.20.116:30808`) теперь умеет:
+Веб-UI (`http://<NODE_IP>:30808`) теперь умеет:
 
 - **Загружать файлы моделей прямо в системе** (в т.ч. большие): форма на главной странице;
   браузер шлёт файл на `POST /upload` (Analytics), который **потоково проксирует** его в сервис
@@ -113,8 +113,8 @@ apply.sh / run-demo.sh   развёртывание и синхронизаци�
 Пример:
 ```bash
 curl --noproxy '*' -X POST --data-binary @model.pkl \
-  "http://192.168.20.116:30808/upload?name=model.pkl&fmt=pickle"
-curl --noproxy '*' "http://192.168.20.116:30808/api/stats"
+  "http://<NODE_IP>:30808/upload?name=model.pkl&fmt=pickle"
+curl --noproxy '*' "http://<NODE_IP>:30808/api/stats"
 ```
 
 ### Доработка (Этап 3++): фильтры и сортировка на дашборде
