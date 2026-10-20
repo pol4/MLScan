@@ -60,6 +60,8 @@ spec:
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
+        - name: MLSCAN_KEYS
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_KEYS}}
         ports:
         - {name: http, containerPort: 8080}
         - {name: artifacts, containerPort: 8090}
@@ -84,6 +86,7 @@ spec:
         - {name: data, mountPath: /data}
         - {name: s3client, mountPath: /opt/s3, readOnly: true}
         - {name: pgclient, mountPath: /opt/pg, readOnly: true}
+        - {name: authz, mountPath: /opt/auth, readOnly: true}
         - {name: modeltmp, mountPath: /var/tmp}
         - {name: tmp, mountPath: /tmp}
       volumes:
@@ -92,6 +95,7 @@ spec:
       - {name: data, persistentVolumeClaim: {claimName: mlscan-testing-data}}
       - {name: s3client, configMap: {name: mlscan-s3client}}
       - {name: pgclient, configMap: {name: mlscan-pgclient}}
+      - {name: authz, configMap: {name: mlscan-authz}}
       - {name: modeltmp, emptyDir: {sizeLimit: 120Gi}}
       - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
 ---

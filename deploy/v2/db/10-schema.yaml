@@ -79,7 +79,7 @@ data:
     );
     CREATE TABLE IF NOT EXISTS audit_log (
       id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ DEFAULT now(), actor_id BIGINT, action TEXT,
-      object_type TEXT, object_id TEXT, request_id TEXT, ip TEXT, details JSONB,
+      object_type TEXT, object_id TEXT, request_id TEXT, ip TEXT, details TEXT,
       prev_hash TEXT, hash TEXT
     );
     CREATE OR REPLACE FUNCTION mlscan_deny_modify() RETURNS trigger AS $$

@@ -95,7 +95,30 @@ bash deploy/v2/db/apply.sh
 в БД: `artifacts=10, fingerprints=8, scans=21, findings=135`. Ранее найденные и исправленные
 тонкости: `jsonb` нормализует JSON (портил хэш) → `payload TEXT`; гонки при rolling update → `Recreate`.
 
-**I2 завершён.** Далее — **I3** AuthN/Z (OIDC + Istio) и audit-журнал, **I4** наблюдаемость/бэкап.
+**I2 завершён.**
+
+## I3 — AuthN/Z и аудит (реализовано частично: I3a)
+
+Чтобы не трогать чужие Keycloak/Istio-ресурсы на общем кластере, аутентификация сделана
+**на уровне приложений** (API-ключи); OIDC в Istio — возможное расширение.
+
+- Модуль `deploy/v2/auth/authz.py` (stdlib): проверка ключа (`Authorization: Bearer` или
+  `X-API-Key`), генерация/проброс **correlation-id** (`X-Request-ID`), запись в БД
+  `connections` и `audit_log` (hash-chain).
+- Ключи — Secret `mlscan-keys` (`MLSCAN_KEYS` JSON + `INTERNAL_KEY`), генерируются
+  `deploy/v2/auth/keys.sh` (файл с ключами — локально, в git не попадает): роли `admin`,
+  `ci-reader`, `service` (для вызовов между сервисами).
+- **Включено** для сервиса тестирования (`mlscan-testing`) и аналитики (`mlscan-analytics`):
+  `/healthz` — без авторизации; остальное требует ключ; `X-Request-ID` возвращается в ответе.
+- Аналитика вызывает тестирование с внутренним ключом (сервис-сервис).
+
+Проверено: без ключа → **401**; с ключом → **200** (`X-Request-ID` возвращается);
+`POST /sync` с внутренним ключом → `{"ok": true, ...}`; журнал: `connections=191`,
+`audit_log=114` (события `upload`, `sync`, `auth_denied`) с `request_id`.
+
+**Осталось (I3b):** закрыть авторизацией вход `mlscan-ingest` (загрузка) и `mlscan-integrations`
+(gate/SIEM), добавить RBAC по ролям на маршруты и, опционально, OIDC (Keycloak) + Istio JWT.
+Далее — **I4** наблюдаемость/бэкап.
 
 ### Ограничения I1 (и что дальше)
 

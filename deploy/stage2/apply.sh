@@ -25,6 +25,11 @@ else
   echo "  WARN: secret mlscan-s3 не найден в mlscan-data — сервис стартует в локальном режиме (/artifacts)"
 fi
 # PG-клиент и реквизиты (I2)
+kubectl -n "$NS" create configmap mlscan-authz \
+  --from-file=authz.py="$HERE/../v2/auth/authz.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+if ! kubectl -n "$NS" get secret mlscan-keys >/dev/null 2>&1; then
+  bash "$HERE/../v2/auth/keys.sh" >/dev/null 2>&1 || true
+fi
 kubectl -n "$NS" create configmap mlscan-pgclient \
   --from-file=pgclient.py="$HERE/../v2/db/pgclient.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 if kubectl -n mlscan-data get secret mlscan-pg >/dev/null 2>&1; then

@@ -92,6 +92,12 @@ JOB_EPHEMERAL = os.environ.get("JOB_EPHEMERAL", "8Gi")
 TMP_SIZE = os.environ.get("TMP_SIZE", "6Gi")
 SANDBOX_IMAGE = os.environ.get("SANDBOX_IMAGE", "python:3.12-slim")
 
+sys.path.insert(0, "/opt/auth")
+try:
+    import authz  # noqa: E402
+except Exception:  # noqa: BLE001
+    authz = None  # type: ignore
+
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 K8S_HOST = os.environ.get("KUBERNETES_SERVICE_HOST", "")
 K8S_PORT = os.environ.get("KUBERNETES_SERVICE_PORT_HTTPS", "443")
@@ -427,18 +433,51 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _require(self):
+        if authz is None:
+            return {"subject": "anonymous"}
+        self._rid = authz.request_id(self.headers)
+        ent = authz.authenticate(self.headers)
+        if ent is None:
+            self._subject = "anonymous"
+            try:
+                authz.audit("anonymous", "auth_denied", "http", self.path, self._rid,
+                            self.client_address[0], {"method": self.command})
+            except Exception:  # noqa: BLE001
+                pass
+            self._json(401, {"error": "unauthorized", "request_id": self._rid})
+            return None
+        self._subject = ent["subject"]
+        return ent
+
     def _json(self, code: int, obj) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode()
+        rid = getattr(self, "_rid", None)
+        if rid is None and authz is not None:
+            rid = authz.new_request_id()
+            self._rid = rid
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if rid:
+            self.send_header("X-Request-ID", rid)
         self.end_headers()
         self.wfile.write(body)
+        if authz is not None and not getattr(self, "_logged", False):
+            self._logged = True
+            try:
+                authz.log_connection(getattr(self, "_subject", "anonymous"), rid,
+                                     self.client_address[0], self.headers.get("User-Agent", ""),
+                                     self.path, self.command, code)
+            except Exception:  # noqa: BLE001
+                pass
 
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         if u.path == "/healthz":
             return self._json(200, {"status": "ok", "sandbox_ns": SANDBOX_NS})
+        if self._require() is None:
+            return
         if u.path == "/scans":
             return self._json(200, {"scans": list_scans()})
         if u.path == "/stats":
@@ -507,8 +546,16 @@ class Handler(BaseHTTPRequestHandler):
             db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key) VALUES "
                     f"({_lit(sha)},{int(got)},{_lit(fmt)},{_lit(name)},{_lit(rec.get('s3_key'))}) "
                     "ON CONFLICT (sha256) DO NOTHING")
+            rid = getattr(self, "_rid", scan_id)
             db_exec("INSERT INTO uploads(artifact_id,request_id,bytes,status,finished_at) "
-                    f"SELECT id,{_lit(scan_id)},{int(got)},'received',now() FROM artifacts WHERE sha256={_lit(sha)}")
+                    f"SELECT id,{_lit(rid)},{int(got)},'received',now() FROM artifacts WHERE sha256={_lit(sha)}")
+        if authz is not None:
+            try:
+                authz.audit(getattr(self, "_subject", "anonymous"), "upload", "artifact", sha,
+                            getattr(self, "_rid", scan_id), self.client_address[0],
+                            {"name": name, "size": got, "s3_key": rec.get("s3_key")})
+            except Exception:  # noqa: BLE001
+                pass
         threading.Thread(target=process_scan, args=(scan_id, name, fmt, local), daemon=True).start()
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": got,
                                 "sha256": sha, "s3_key": rec.get("s3_key")})
@@ -516,6 +563,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        if self._require() is None:
+            return
         if u.path in ("/scans", "/scans/upload", "/upload"):
             return self._receive_upload(q)
         return self._json(404, {"error": "not found"})

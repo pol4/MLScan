@@ -34,6 +34,13 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "")
+
+
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {INTERNAL_KEY}"} if INTERNAL_KEY else {}
+
+
 TESTING_URL = os.environ.get(
     "TESTING_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
@@ -79,6 +86,12 @@ def db_exec(sql: str) -> None:
         print(f"[db] {type(exc).__name__}: {exc} | SQL: {sql[:140]}", file=sys.stderr)
 
 
+sys.path.insert(0, "/opt/auth")
+try:
+    import authz  # noqa: E402
+except Exception:  # noqa: BLE001
+    authz = None  # type: ignore
+
 _u = urllib.parse.urlparse(TESTING_URL)
 TEST_HOST = _u.hostname
 TEST_PORT = _u.port or 80
@@ -93,7 +106,8 @@ def _esc(x) -> str:
 # HTTP к сервису тестирования
 # ----------------------------------------------------------------------------
 def http_get_json(url: str, timeout: int = 20):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+    req = urllib.request.Request(url, headers=_auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -606,12 +620,44 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _require(self):
+        """Аутентификация на входе (API-ключ). Возвращает субъекта или None (401 отправлен)."""
+        if authz is None:
+            return {"subject": "anonymous"}
+        self._rid = authz.request_id(self.headers)
+        ent = authz.authenticate(self.headers)
+        if ent is None:
+            self._subject = "anonymous"
+            try:
+                authz.audit("anonymous", "auth_denied", "http", self.path, self._rid,
+                            self.client_address[0], {"method": self.command})
+            except Exception:  # noqa: BLE001
+                pass
+            self._json(401, {"error": "unauthorized", "request_id": self._rid})
+            return None
+        self._subject = ent["subject"]
+        return ent
+
     def _send(self, code: int, body: bytes, ctype: str) -> None:
+        rid = getattr(self, "_rid", None)
+        if rid is None and authz is not None:
+            rid = authz.new_request_id()
+            self._rid = rid
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if rid:
+            self.send_header("X-Request-ID", rid)
         self.end_headers()
         self.wfile.write(body)
+        if authz is not None and not getattr(self, "_logged", False):
+            self._logged = True
+            try:
+                authz.log_connection(getattr(self, "_subject", "anonymous"), rid,
+                                     self.client_address[0], self.headers.get("User-Agent", ""),
+                                     self.path, self.command, code)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _json(self, code, obj):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8")
@@ -627,6 +673,10 @@ class Handler(BaseHTTPRequestHandler):
         cx.putrequest("POST", path)
         cx.putheader("Content-Length", str(n))
         cx.putheader("Content-Type", "application/octet-stream")
+        if INTERNAL_KEY:
+            cx.putheader("Authorization", f"Bearer {INTERNAL_KEY}")
+        if getattr(self, "_rid", None):
+            cx.putheader("X-Request-ID", self._rid)
         cx.endheaders()
         got = 0
         while got < n:
@@ -645,6 +695,8 @@ class Handler(BaseHTTPRequestHandler):
         p = u.path
         if p == "/healthz":
             return self._json(200, {"status": "ok", "scans": len(_index)})
+        if self._require() is None:
+            return
         if p == "/api/scans":
             return self._json(200, {"scans": list(_index.values())})
         if p == "/api/overview":
@@ -683,8 +735,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        if self._require() is None:
+            return
         if u.path == "/sync":
-            return self._json(200, sync_once())
+            res = sync_once()
+            if authz is not None:
+                try:
+                    authz.audit(getattr(self, "_subject", "?"), "sync", "analytics", "", self._rid,
+                                self.client_address[0], res)
+                except Exception:  # noqa: BLE001
+                    pass
+            return self._json(200, res)
         if u.path == "/upload":
             return self._proxy_upload(q)
         return self._json(404, {"error": "not found"})
