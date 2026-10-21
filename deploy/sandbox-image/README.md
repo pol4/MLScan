@@ -8,12 +8,15 @@
 
 - база: `python:3.12-slim`;
 - `torch` (CPU) — **2.14.1+cpu**, `numpy` 2.5.4;
+- `safetensors`, `onnxruntime` (CPU), `h5py`, `gguf`;
 - `joblib`, `dill`, `cloudpickle`.
+
+Тег по умолчанию: **`:v2`** (см. `--image`/`SANDBOX_IMAGE`).
 
 ## Сборка (Kaniko, без Docker на хосте)
 
 ```bash
-bash deploy/sandbox-image/build.sh
+bash deploy/sandbox-image/build.sh v2       # соберёт и опубликует :v2
 kubectl -n mlscan-build logs -f job/mlscan-sandbox-build
 ```
 
@@ -28,7 +31,7 @@ Kaniko собирает образ и публикует его в **in-cluster 
 `SANDBOX_IMAGE` (см. `deploy/stage2/30-service.yaml`):
 
 ```
-SANDBOX_IMAGE = localhost:32000/mlscan-sandbox:latest
+SANDBOX_IMAGE = localhost:32000/mlscan-sandbox:v2
 ```
 
 После сборки образа достаточно, чтобы `SANDBOX_IMAGE` указывал на него (уже настроено);

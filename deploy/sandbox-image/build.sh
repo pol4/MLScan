@@ -6,7 +6,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 NS=mlscan-build
 JOB=mlscan-sandbox-build
 REG="registry.container-registry.svc.cluster.local:5000"
-IMAGE="${REG}/mlscan-sandbox:latest"
+TAG="${1:-v2}"
+IMAGE="${REG}/mlscan-sandbox:${TAG}"
 
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n "$NS" create configmap mlscan-sandbox-build --from-file=Dockerfile="$HERE/Dockerfile" \
@@ -45,4 +46,4 @@ YAML
 
 echo "Kaniko Job запущен: ${NS}/${JOB}"
 echo "Логи: kubectl -n ${NS} logs -f job/${JOB}"
-echo "После сборки образ: localhost:32000/mlscan-sandbox:latest"
+echo "После сборки образ: localhost:32000/mlscan-sandbox:${TAG}"

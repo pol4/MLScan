@@ -144,6 +144,11 @@ pickle и производные (`.pkl/.pickle`, `.joblib`, `.dill`, `.cloudpic
 | `STEG-*` | скрытые каналы (trailing после EOCD, энтропийные blob, полиглот-контейнеры) |
 | `D-*` | целостность/подпись/происхождение, «не pickle»-форматы |
 
+Образ песочницы `mlscan-sandbox` (сборка Kaniko) содержит библиотеки для динамического
+исполнения моделей: **PyTorch (CPU), numpy, safetensors, onnxruntime, h5py, gguf, joblib, dill,
+cloudpickle** — поэтому фактически загружаются и исполняются модели форматов pickle, torch,
+numpy, model-as-code (и др.).
+
 ### Методы проверки
 
 - **L1 статика** — без исполнения: опкоды/глобалы pickle, структурный разбор форматов, ссылки
@@ -187,6 +192,12 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 JSON/Markdown/SARIF:
 
 ![MLScan UI — карточка артефакта](docs/img/ui-artifact.png)
+
+**Карточка проверки torch-модели** (`pytorch_model.pt`): вердикт **Malicious** — статика нашла
+`A-01` (critical, `posix.system`) и `A-02`, а **динамика подтвердила** `F-30` (в разделе
+«Динамический этап» `subprocess: 1`, payload `os.system(...)` реально исполнен в песочнице):
+
+![MLScan UI — карточка torch-модели](docs/img/ui-torch-artifact.png)
 
 **Карточка артефакта не-pickle формата** (`evil_mar.mar`, model-as-code): вердикт **Malicious**,
 находки `EXEC-01` (critical) и `EXEC-02` (high) из адаптера формата, плюс динамическое

@@ -65,9 +65,9 @@ DANGEROUS_MODULES = {
     "socket", "ssl", "sslsocket", "http", "urllib", "urllib2", "urllib3", "requests",
     "ftplib", "telnetlib", "smtplib", "poplib", "imaplib", "socketserver", "xmlrpc",
     "ctypes", "cffi", "mmap", "fcntl", "pwd", "grp", "spwd", "crypt",
-    "builtins", "__builtin__", "imp", "importlib", "runpy", "code", "codeop",
+    "imp", "importlib", "runpy", "code", "codeop",
     "marshal", "webbrowser", "multiprocessing", "signal", "resource", "getpass",
-    "sys", "importlib.machinery", "importlib.util",
+    "importlib.machinery", "importlib.util",
 }
 
 DANGEROUS_NAMES = {
@@ -174,13 +174,11 @@ def static_scan_pickle(blob: bytes, label: str) -> tuple[list[Finding], list[str
     if err:
         findings.append(Finding("A-00", "A", f"Некорректный/незавершённый pickle ({label})",
                                 "low", 0.4, err))
-    if "REDUCE" in ops or "BUILD" in ops:
-        findings.append(Finding("A-02", "A",
-                                f"Присутствуют REDUCE/BUILD ({label}) — вызовы при десериализации",
-                                "medium", 0.6, f"opcodes={[o for o in ops if o in ('REDUCE', 'BUILD')]}"))
+    dangerous = False
     for g in globals_found:
         module, name, kind = classify_global(g)
         if kind == "dangerous":
+            dangerous = True
             findings.append(Finding("A-01", "A",
                                     f"Опасный глобал {g} ({label})",
                                     "critical", 0.9, f"GLOBAL {g}"))
@@ -188,6 +186,16 @@ def static_scan_pickle(blob: bytes, label: str) -> tuple[list[Finding], list[str
             findings.append(Finding("A-19", "A",
                                     f"Неизвестный глобал {g} ({label})",
                                     "low", 0.5, f"GLOBAL {g}"))
+    if "REDUCE" in ops or "BUILD" in ops:
+        # Сами по себе REDUCE/BUILD — норма для объектных pickle (torch, sklearn и др.);
+        # значимо только в сочетании с опасными глобалами.
+        findings.append(Finding("A-02", "A",
+                                (f"Вызовы при десериализации с опасными глобалами ({label})"
+                                 if dangerous else
+                                 f"Вызовы при десериализации ({label}) — без опасных глобалов"),
+                                "high" if dangerous else "info",
+                                0.8 if dangerous else 0.3,
+                                f"opcodes={[o for o in ops if o in ('REDUCE', 'BUILD')]}"))
     for pat, tag in SUSPICIOUS_SUBSTRINGS.items():
         if pat in blob:
             findings.append(Finding("A-20", "A",

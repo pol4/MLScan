@@ -271,6 +271,17 @@ Harness песочницы умеет **исполнять entry-код** model-
 Проверено: `evil_reqs.zip` → Malicious (install-hooks + code), `evil_polyglot.png` → Malicious
 (polyglot), `evil_url_config/evil_steg/evil_blob` → Needs review, `benign_image.png` → Safe.
 
+## Песочница: библиотеки и проверка torch (реализовано)
+
+Образ песочницы `mlscan-sandbox:v2` дополнен библиотеками (`torch` CPU, `numpy`, `safetensors`,
+`onnxruntime`, `h5py`, `gguf`, `joblib`, `dill`, `cloudpickle`), поэтому динамически
+загружаются/исполняются модели pickle, **torch**, numpy и model-as-code.
+
+Проверено на реальной torch-модели с внедрённым payload: `load.ok=true` (тип загружен),
+`subprocess=1`, вердикт **Malicious** (`A-01` `posix.system` + динамическое подтверждение `F-30`).
+Benign torch-модель → **Safe** (устранён ложный `A-01` по `__builtin__ set`; `A-02`
+REDUCE/BUILD теперь `info`, если нет опасных глобалов).
+
 ## Вход в UI: логин/пароль и единый вход (реализовано)
 
 - **Логин/пароль**: пользователи хранятся в таблице `users` (PBKDF2-HMAC-SHA256, соль+итерации).

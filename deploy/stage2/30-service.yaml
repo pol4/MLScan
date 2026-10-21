@@ -38,7 +38,7 @@ spec:
         - {name: JOB_MEMORY, value: "2Gi"}
         - {name: JOB_EPHEMERAL, value: "8Gi"}
         - {name: TMP_SIZE, value: "6Gi"}
-        - {name: SANDBOX_IMAGE, value: "localhost:32000/mlscan-sandbox:latest"}
+        - {name: SANDBOX_IMAGE, value: "localhost:32000/mlscan-sandbox:v2"}
         - {name: DATA_TMP, value: /var/tmp}
         - name: S3_ENDPOINT
           valueFrom: {secretKeyRef: {name: mlscan-s3, key: ENDPOINT}}
