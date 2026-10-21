@@ -2,28 +2,145 @@
 
 **Система анализа безопасности (вредоносности) моделей и данных, используемых в ML/AI.**
 
-> **Начните здесь:** вводная статья о проекте — [`START.md`](./START.md) — что анализируется,
-> как проект вырос из небольшого PoC и системы для pickle и почему архитектура масштабируется
-> на другие форматы; там же ссылки на описание системы (pickle) и на анализ других форматов.
+Проект отвечает на вопрос: **безопасен ли конкретный ML/AI-артефакт, и что в нём опасного** —
+исполняемый при загрузке код, закладки, утечки данных, неконтролируемое поведение,
+проблемы целостности и происхождения.
 
-Проект сфокусирован на **анализе вредоносности ML/AI-артефактов**: исполняемость кода при
-загрузке, закладки разных видов (код, весовые трояны, токенизатор/граф, стеганография,
-prompt-injection), раскрытие информации, неконтролируемое поведение, целостность и
-происхождение.
-
-**Первая реализованная часть — формат pickle.** pickle умеет исполнять произвольный код при
-десериализации, поэтому ML-модель в формате `.pkl/.pt/.pth/.bin/.joblib/.npy` — это не
-«данные», а потенциально враждебная исполняемая программа. MLScan даёт воспроизводимый и
-доказуемый ответ: **безопасна ли конкретная модель, и какие у неё особенности, уязвимости и
-вредоносное содержимое.** Архитектура при этом **формат-агностична** — расширение на другие
-форматы ML/AI не требует пересборки ядра (см. [`START.md`](./START.md)).
-
-Репозиторий содержит стартовую статью, концепцию и архитектуру системы, план реализации,
-рабочий однофайловый PoC с демонстрационными данными и анализ других форматов/закладок.
+> **Стартовая статья** (фокус, история, ссылки) — [`START.md`](./START.md).
+> Детальная техническая документация — [`docs/`](./docs).
 
 ---
 
-## Скриншоты (UI, Этап 3)
+## Развитие проекта
+
+Проект развивался **инкрементально**: от проверки одного формата к платформе, способной
+проверять произвольные ML/AI-артефакты — включая очень большие — в изолированной среде.
+
+| Этап | Что появилось | Ключевая идея |
+|------|---------------|---------------|
+| **0. PoC** | Один файл `poc/mlscan_poc.py`: статика + динамика в Docker + поведение → Markdown | Проверить, что pickle-модель можно анализировать тремя независимыми методами |
+| **1. Песочница** | Kata-микро-ВМ, deception, sinkhole, NetworkPolicy, Falco | Модель = исполняемый код → запускать только в изоляции с наблюдением |
+| **2. Сервис тестирования** | Приём артефактов, запуск песочницы, нормализация находок, вердикт | Отделить анализ от процесса загрузки, сделать его сервисом |
+| **3. Аналитика + UI** | Скоринг, Policy Engine, append-only Evidence Store (hash-chain), отчёты, веб-UI | Единая точка управления, доказательная база и заключение |
+| **4. Интеграции** | Model Registry (SHA-256), CI/CD gate, SIEM-экспорт (NDJSON/CEF), threat-intel | Встроить проверку в конвейеры поставки |
+| **5. Эксплуатация** | Метрики, метрики качества (TPR/FPR), retest, red-team, PDB, аттестация | Промышленный контур: контроль качества и непрерывность |
+| **v2 — Волна 0** | S3-хранилище (Garage), PostgreSQL, AuthN/Z + audit, наблюдаемость + бэкап | Снять ограничения по размеру и обеспечить аудит/отслеживаемость |
+| **v2 — Волны 1–3** | Адаптеры форматов и детекторы (model-as-code, Keras, ONNX, HDF5, GGUF, архивы, XXE, токенизаторы, prompt-injection, agent/MCP), динамика model-as-code, retention/TTL | Расширение за пределы pickle без пересборки ядра |
+
+```mermaid
+flowchart LR
+  P["PoC<br/>1 формат, 1 файл"] --> S["Система для pickle<br/>3 компоненты (Этапы 0-5)"]
+  S --> V0["v2 Волна 0<br/>S3, PostgreSQL, AuthN/Z, audit"]
+  V0 --> V1["v2 Волны 1-3<br/>адаптеры форматов, детекторы, lifecycle"]
+  V1 --> T["Синтетический корпус<br/>33/33 обнаружено, 0 FP"]
+```
+
+---
+
+## Зачем понадобилась более сложная архитектура и Kubernetes
+
+Причина ровно в двух требованиях, которые плохо совмещаются «в одном скрипте на хосте»:
+
+1. **Проверяемые файлы могут быть очень большими** — модели достигают десятков и сотен
+   гигабайт.
+2. **Проверка обязана идти в изолированной среде** — потому что десериализация модели
+   в формате pickle (и model-as-code) **исполняет произвольный код**.
+
+### Следствие №1: большие файлы требуют объектного хранилища и потоковой обработки
+
+- Держать модель в памяти или на диске пода нельзя: нужен **S3-совместимый object store**
+  (Garage), **content-addressed ключи** `sha256/name` (дедупликация и иммутабельность),
+  **потоковая загрузка** с подсчётом SHA-256 «на лету» и **дедупликацией** (повторная
+  загрузка того же файла не передаёт данные повторно).
+- Метаданные, отпечатки и результаты живут отдельно от «тяжёлого» блоба — в **PostgreSQL**;
+  для больших блобов действуют **retention/TTL** и **карантин** вредоносных.
+- Артефакт в песочницу доставляется тем же сервисом (`:8090`), поэтому **сетевой доступ
+  песочницы не расширяется**.
+
+### Следствие №2: изоляция требует отдельного «инстанса на артефакт»
+
+- Каждый запуск — **микро-ВМ Kata** (своё ядро), **без сети** (кроме sinkhole/артефакт-сервера),
+  read-only ФС, `drop ALL`, seccomp, лимиты CPU/RAM/диска, honeypot-файлы, наблюдение (audit
+  hooks + Falco).
+- Изоляция должна быть **гарантированно уничтожаемой** после проверки, а вредоносное поведение —
+  **наблюдаемым** (файлы, процессы, сеть, `ctypes`, изменения `builtins`/import-хуков).
+
+### Почему именно Kubernetes
+
+Совмещение «огромные файлы + изоляция + наблюдаемость + аудит + масштаб» — это уже
+**оркестрация**, а не одиночный процесс. Kubernetes даёт ровно те примитивы, которые нужны:
+
+| Требование | Примитив Kubernetes |
+|-----------|---------------------|
+| Одноразовая изолированная среда на каждый артефакт | `Job` + `runtimeClassName: kata` (микро-ВМ) |
+| Разделение доверенной и недоверенной зон | отдельные `Namespace` + Pod Security Admission `restricted` |
+| Запрет сети из песочницы | `NetworkPolicy` (Calico): default-deny + только sinkhole/артефакт |
+| Лимиты ресурсов и защита от DoS | `cgroups v2`: cpu/memory/pids/io/ephemeral-storage |
+| Подъём/уборка среды | жизненный цикл `Job` (create → run → teardown, TTL) |
+| Секреты и доступы | `Secret`, `ServiceAccount`, RBAC, монтирование без хост-томов |
+| Внешний вход/выход | Ingress (Istio) + egress-allowlist |
+| Периодические задачи | `CronJob` (retest, backup, retention) |
+| Масштабирование под объём | автоподбор узлов/воркеров, пул GPU (при наличии) |
+
+Без оркестратора пришлось бы вручную поднимать и убивать изолированные ВМ, настраивать
+сетевой запрет, лимиты, сбор трасс, хранение больших блобов и аудит — то есть воспроизводить
+эти примитивы самому. Kubernetes позволяет реализовать это **декларативно и повторяемо**,
+а контрольные плоскости (аналитика, БД, UI) при этом остаются в доверенной зоне.
+
+> Важно: **артефакт никогда не исполняется в доверенной зоне** — только в изолированной
+> микро-ВМ, которая после проверки уничтожается целиком. Подробнее — [`docs/03-isolation.md`](./docs/03-isolation.md)
+> и [`docs/07-implemented-architecture.md`](./docs/07-implemented-architecture.md).
+
+---
+
+## Текущие возможности
+
+### Форматы
+
+pickle и производные (`.pkl/.pickle`, `.joblib`, `.dill`, `.cloudpickle`, `.pt/.pth/.bin/.ckpt`,
+`.npy/.npz`), SafeTensors, ONNX, HDF5/`.keras`, GGUF, архивы (`.zip/.tar`), XML/YAML-конфиги,
+карточки моделей, tokenizer-артефакты, MCP/agent-манифесты.
+
+### Детекторы (чек-иды)
+
+| Группа | Что обнаруживается |
+|--------|--------------------|
+| `A-*`, `F-*` | RCE при десериализации (`os.system`, `subprocess`, `eval/exec`), сеть, persistence, tampering `builtins`/import-хуков, утечки |
+| `EXEC-*` | model-as-code (`.mar`/`model.py`/`MLflow`/`auto_map`/`torch.package`), Keras `Lambda`/`custom_objects`, ONNX `external_data`/custom ops, HDF5 links |
+| `INJ-*` | Jinja `chat_template` (SSTI), prompt-injection в карточках и tool-схемах, HTML/JS (XSS) |
+| `AGT-*` | MCP/agent-манифесты с запуском команд |
+| `BD-*` | токенизаторы (переопределение спец-токенов, ReDoS-regex), веса (NaN/Inf, экстремумы) |
+| `FMT-*` | структурные аномалии SafeTensors, архивы (traversal/bomb/symlink), XXE/unsafe-YAML, format mismatch |
+| `INT-*` | целостность и supply chain (внешние URL, install-hooks в архивах) |
+| `STEG-*` | скрытые каналы (trailing после EOCD, энтропийные blob, полиглот-контейнеры) |
+| `D-*` | целостность/подпись/происхождение, «не pickle»-форматы |
+
+### Методы проверки
+
+- **L1 статика** — без исполнения: опкоды/глобалы pickle, структурный разбор форматов, ссылки
+  на код, external data, шаблоны.
+- **L2 динамика** — исполнение в микро-ВМ Kata с полной наблюдаемостью (файлы/процессы/сеть/
+  `ctypes`, diff состояния процесса); **model-as-code реально исполняется** и подтверждается
+  динамикой.
+- **L3 поведение** — интроспекция и probe загруженного объекта.
+
+### Платформа и эксплуатация
+
+S3-хранилище с дедупликацией и retention/карантином, PostgreSQL с hash-chain evidence,
+AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключений/загрузок/проверок (`connections`,
+`audit_log`), Ingress/Egress-контроль, Model Registry и CI/CD gate, SIEM-экспорт, метрики и
+**метрики качества (TPR/FPR)**, непрерывный retest, red-team, бэкап БД с проверкой
+восстановления.
+
+### Проверка самой системы
+
+Синтетический корпус уязвимостей — [`tests/vulnerabilities/`](./tests/vulnerabilities):
+38 образцов (33 malicious + 5 benign), генератор, прогонщик и отчёт. **Результат: 33/33
+обнаружено, 0 пропусков, 0 ложных срабатываний**; метрики качества по форматам TPR=1.0, FPR=0.0.
+
+---
+
+## Скриншоты (UI)
 
 **Дашборд** — загрузка моделей (в т.ч. больших), статистика по вердиктам/объёму, фильтр по имени
 и результату, сортировка по дате/объёму, таблица со SHA-256, размером, прогрессом проверки,
@@ -31,11 +148,26 @@ prompt-injection), раскрытие информации, неконтроли
 
 ![MLScan UI — дашборд](docs/img/ui-dashboard.png)
 
-**Карточка артефакта** (самая крупная протестированная модель, `pytorch_model.bin` ≈ 253 МБ) —
-SHA-256, размер, тайминги, риск-скор, policy-решение, находки с доказательствами (L1/L3),
-раздел «Динамический этап» и ссылки на отчёты JSON/Markdown/SARIF:
+**Карточка артефакта** (самая крупная проверенная модель ≈ 253 МБ) — SHA-256, размер, тайминги,
+риск-скор, policy-решение, находки с доказательствами, раздел «Динамический этап» и отчёты
+JSON/Markdown/SARIF:
 
 ![MLScan UI — карточка артефакта](docs/img/ui-artifact.png)
+
+---
+
+## Архитектура системы
+
+Три компоненты (Компоненты 1–3), развёрнутые в отдельных namespace:
+
+1. **Sandbox** — изоляция и запуск моделей, полное наблюдение за поведением (Kata-микро-ВМ).
+2. **Testing Service** — подача артефактов в песочницу и безопасное получение результатов.
+3. **Analytics Engine + UI** — управление процессом, скоринг, Policy Engine, Evidence Store,
+   отчёты и веб-UI. Плюс **Integrations** (registry/gate/SIEM) и **Ops** (метрики/качество/retest).
+
+См. [`docs/05-architecture.md`](./docs/05-architecture.md), [`Concept.md`](./Concept.md),
+[`docs/07-implemented-architecture.md`](./docs/07-implemented-architecture.md) (as-built),
+[`docs/11-target-architecture-v2.md`](./docs/11-target-architecture-v2.md) (v2).
 
 ---
 
@@ -43,173 +175,76 @@ SHA-256, размер, тайминги, риск-скор, policy-решени�
 
 | Путь | Что это |
 |------|---------|
-| [`START.md`](./START.md) | **Стартовая статья:** фокус проекта, история (PoC → система для pickle), масштабируемость архитектуры и ссылки |
-| [`docs/10-plan-new-formats.md`](./docs/10-plan-new-formats.md) | **План доработок:** расширение на новые форматы ML/AI (дорожная карта) |
-| [`docs/11-target-architecture-v2.md`](./docs/11-target-architecture-v2.md) | **Целевая архитектура v2:** большие модели (S3/БД), загрузка/анализ/жизненный цикл файлов |
-| [`Concept.md`](./Concept.md) | Сводный концептуальный документ: чеклист рисков, стратегия тестирования, изоляция, обработка результатов, архитектура |
-| [`docs/`](./docs) | Детальная документация (см. ниже) |
-| [`poc/mlscan_poc.py`](./poc/mlscan_poc.py) | **PoC** — один Python-файл, реализующий все три метода проверки |
-| [`poc/README.md`](./poc/README.md) | Подробное описание PoC |
-| [`poc/scan/`](./poc/scan) | **Демонстрационные данные** — отравленные/чистые pickle (`evil0…evil6.pkl`, `benign`, `toy`) и генераторы |
-| [`poc/runs.txt`](./poc/runs.txt) | Пример собранного отчёта PoC по демонстрационным данным |
-| [`deploy/stage1/`](./deploy/stage1) | **Этап 1:** развёртывание укреплённой песочницы в кластере (Kata, deception, sinkhole, NetworkPolicy, Falco) |
-| [`deploy/stage2/`](./deploy/stage2) | **Этап 2:** сервис тестирования (приём артефактов, запуск песочницы, нормализация, вердикт) |
-| [`deploy/stage3/`](./deploy/stage3) | **Этап 3:** аналитический движок + UI (скоринг, Policy Engine, evidence store, отчёты) |
-| [`deploy/stage4/`](./deploy/stage4) | **Этап 4:** интеграции (Model Registry, CI/CD gate, SIEM-экспорт, threat-intel) |
-| [`deploy/stage5/`](./deploy/stage5) | **Этап 5:** эксплуатация (метрики/качество, retest, red-team, PDB, аттестация) |
-| [`deploy/sandbox-image/`](./deploy/sandbox-image) | Образ песочницы `mlscan-sandbox` (torch CPU) — сборка через Kaniko |
-| [`deploy/ingress/`](./deploy/ingress) | Ingress (Istio Gateway + VirtualServices) и egress-allowlist вместо NodePort |
-| [`deploy/v2/`](./deploy/v2) | **Реализация v2 (Волна 0):** S3 (Garage) + Ingest (I1/I1b), PostgreSQL (I2) |
+| [`START.md`](./START.md) | Стартовая статья: фокус проекта, история, масштабируемость архитектуры |
+| [`tests/vulnerabilities/`](./tests/vulnerabilities) | **Синтетический корпус уязвимостей** + процедура + отчёт о детекции |
+| [`poc/mlscan_poc.py`](./poc/mlscan_poc.py) | **PoC** — один Python-файл с тремя методами проверки |
+| [`poc/scan/`](./poc/scan) | Демонстрационные данные (pickle + `formats/`) и генераторы |
+| [`deploy/stage1/`](./deploy/stage1) | Этап 1: укреплённая песочница (Kata, deception, sinkhole, NetworkPolicy, Falco) |
+| [`deploy/stage2/`](./deploy/stage2) | Этап 2: сервис тестирования |
+| [`deploy/stage3/`](./deploy/stage3) | Этап 3: аналитический движок + UI |
+| [`deploy/stage4/`](./deploy/stage4) | Этап 4: интеграции (registry/CI-gate/SIEM/threat-intel) |
+| [`deploy/stage5/`](./deploy/stage5) | Этап 5: эксплуатация (метрики/качество/retest/red-team) |
+| [`deploy/sandbox-image/`](./deploy/sandbox-image) | Образ песочницы `mlscan-sandbox` (torch CPU), сборка Kaniko |
+| [`deploy/ingress/`](./deploy/ingress) | Ingress (Istio) и egress-allowlist |
+| [`deploy/v2/`](./deploy/v2) | **v2:** S3 (Garage), PostgreSQL, AuthN/Z+audit, наблюдаемость, бэкап, lifecycle, детекторы форматов |
+| [`docs/`](./docs) | Детальная документация (01–11) |
 
-### Тестирование
+### Документация (кратко)
 
-- [`tests/vulnerabilities/`](./tests/vulnerabilities) — **синтетический корпус уязвимостей** (генератор, 38 образцов, прогонщик), процедура проверки и отчёт о детекции.
-
-### Документация
-
-- [`docs/01-threat-checklist.md`](./docs/01-threat-checklist.md) — полный чеклист опасностей (A–I).
-- [`docs/02-testing-strategy.md`](./docs/02-testing-strategy.md) — стратегия тестирования L0–L4.
-- [`docs/03-isolation.md`](./docs/03-isolation.md) — методы надёжной изоляции.
-- [`docs/04-risk-analysis-decision.md`](./docs/04-risk-analysis-decision.md) — обработка результатов и принятие решений.
-- [`docs/05-architecture.md`](./docs/05-architecture.md) — детальная архитектура, API, модель данных.
-- [`docs/06-implementation-plan.md`](./docs/06-implementation-plan.md) — план реализации (первый шаг — PoC).
-- [`docs/07-implemented-architecture.md`](./docs/07-implemented-architecture.md) — **реализованная архитектура (as-built): компоненты и схема сетевого взаимодействия**.
-- [`docs/08-testing-guide.md`](./docs/08-testing-guide.md) — **что можно протестировать и куда подключаться**.
-- [`docs/09-formats-and-backdoors-analysis.md`](./docs/09-formats-and-backdoors-analysis.md) — **анализ других форматов ML/AI и видов закладок (что ещё надо проверять)**.
-- [`docs/10-plan-new-formats.md`](./docs/10-plan-new-formats.md) — **план доработок под новые форматы** (волны, задачи, критерии готовности).
-- [`docs/11-target-architecture-v2.md`](./docs/11-target-architecture-v2.md) — **целевая архитектура v2**: очень большие модели (Garage S3 + PostgreSQL), загрузка/передача/анализ/жизненный цикл файлов, оптимизации скорости.
-
----
-
-## Архитектура системы
-
-Три компоненты:
-
-1. **Sandbox** — изоляция и запуск моделей, полное наблюдение за поведением.
-2. **Testing Service** — подача запросов модели и безопасное получение результатов.
-3. **Analytics Engine + UI** — управление процессом, сбор/корреляция/анализ, заключение.
-
-См. [`docs/05-architecture.md`](./docs/05-architecture.md) и [`Concept.md`](./Concept.md).
+- `docs/01` чеклист опасностей (A–I) · `docs/02` стратегия тестирования L0–L4 · `docs/03` изоляция
+- `docs/04` обработка результатов и решения · `docs/05` архитектура
+- `docs/06` план реализации (реализован) · `docs/07` as-built архитектура · `docs/08` тест-гайд
+- `docs/09` анализ других форматов/закладок · `docs/10` план расширения (волны) · `docs/11` целевая архитектура v2
 
 ---
 
 ## Быстрый старт PoC
 
-Требования: Python 3.10+ и заранее установленный **Docker** (для динамического этапа).
+Требования: Python 3.10+ и **Docker** (для динамического этапа).
 
 ```bash
-# Анализ одной модели (статика + динамика в Docker + поведение) → Markdown-отчёт
-python3 poc/mlscan_poc.py poc/scan/evil0.pkl --out report.md
-
-# Только статика (Docker не нужен)
-python3 poc/mlscan_poc.py poc/scan/evil2.pkl --static-only
-
-# Прогнать все демонстрационные образцы
+python3 poc/mlscan_poc.py poc/scan/evil0.pkl --out report.md   # статика + динамика + поведение
+python3 poc/mlscan_poc.py poc/scan/evil2.pkl --static-only     # только статика
 for f in poc/scan/evil*.pkl; do python3 poc/mlscan_poc.py "$f"; done
 ```
 
-PoC выполняет:
-- **L1 Статический анализ** — разбор pickle (opcodes/глобалы), allowlist/denylist, разбор zip-контейнеров;
-- **L2 Динамический анализ** — десериализация в hardening-контейнере Docker (без сети, read-only, drop caps, лимиты) с наблюдаемостью через Python audit hooks;
-- **L3 Поведенческий анализ** — интерпретация эффектов загрузки, diff состояния процесса (builtins, import-хуки, sys.path, env), интроспекция и probe загруженного объекта.
-
-Файл передаётся в контейнер **без расшаренных каталогов** (через stdin/base64-бутстрап/stdout).
+Файл передаётся в контейнер **без расшаренных каталогов** (stdin + base64-бутстрап harness,
+результат — в stdout).
 
 ---
 
-## Развёртывание на кластере (по этапам плана)
+## Проверка на кластере
 
-**Этап 1 — Укреплённая песочница** развёрнут в кластере `<CLUSTER>` (MicroK8s) в отдельных
-namespace: `mlscan-sandbox` (sandbox + deception + sinkhole + NetworkPolicy) и
-`mlscan-monitoring` (Falco, eBPF). Манифесты — в [`deploy/stage1/`](./deploy/stage1).
-
-```bash
-bash deploy/stage1/apply.sh        # Kata-песочница, deception, sinkhole, network policies
-bash deploy/stage1/60-falco.sh     # eBPF-мониторинг (Falco)
-
-# Проверка одного образца в песочнице
-bash deploy/stage1/run-sandbox.sh evil2.pkl pickle   # => F-32, F-20
-bash deploy/stage1/run-sandbox.sh evil6.pkl pickle   # => deception + sinkhole
-```
-
-Подробности и результаты проверок: [`deploy/stage1/README.md`](./deploy/stage1/README.md).
-
-**Этап 2 — Сервис тестирования** развёрнут в namespace `mlscan-testing`: принимает артефакты по
-HTTP, выполняет L1 у себя, запускает L2/L3 в песочнице Этапа 1, нормализует находки и выдаёт
-вердикт. Манифесты — в [`deploy/stage2/`](./deploy/stage2).
+Каждый этап/волна разворачивается отдельным скриптом; подробности и команды — в README
+соответствующего каталога:
 
 ```bash
-bash deploy/stage2/apply.sh                             # сервис тестирования
-bash deploy/stage2/run-scan.sh poc/scan/evil0.pkl       # => Malicious (A-01, F-30)
-bash deploy/stage2/run-scan.sh poc/scan/evil2.pkl       # => Malicious (F-32, F-20)
-bash deploy/stage2/run-scan.sh poc/scan/evil6.pkl       # => Malicious (F-31, F-32)
+bash deploy/stage1/apply.sh && bash deploy/stage1/60-falco.sh   # песочница + eBPF
+bash deploy/stage2/apply.sh                                      # сервис тестирования
+bash deploy/stage3/apply.sh                                      # аналитика + UI
+bash deploy/stage4/apply.sh                                      # интеграции
+bash deploy/stage5/apply.sh                                      # эксплуатация
+bash deploy/v2/data/apply.sh && bash deploy/v2/db/apply.sh       # v2: S3 + PostgreSQL
+bash deploy/v2/auth/keys.sh                                      # API-ключи (admin/ci/service)
 ```
 
-**Этап 3 — Аналитический движок + UI** развёрнут в namespace `mlscan-analytics`: собирает
-результаты сервиса тестирования, считает риск-скор, применяет Policy Engine, ведёт
-append-only Evidence Store (hash-chain) и отдаёт отчёты (JSON/Markdown/SARIF) и веб-UI.
-Манифесты — в [`deploy/stage3/`](./deploy/stage3).
-
-**UI умеет загружать модели (в т.ч. большие файлы)**, показывать прогресс проверки и
-статистику с хэшами: форма загрузки в UI (`http://analytics.mlscan.local:30217` через Ingress), потоковая передача через
-сервис тестирования (PVC `/artifacts`, порт 8090), живые стадии `queued→static→running→done`,
-`/api/stats` (вердикты, объём, число sha256). См. `docs/08-testing-guide.md`.
+Полный прогон синтетического корпуса (см. [`tests/vulnerabilities/README.md`](./tests/vulnerabilities/README.md)):
 
 ```bash
-bash deploy/stage3/apply.sh
-bash deploy/stage3/run-demo.sh        # sync + вердикты + проверка evidence
-# UI: http://analytics.mlscan.local:30217   (Ingress; см. deploy/ingress)
+python3 tests/vulnerabilities/gen_corpus.py
+python3 tests/vulnerabilities/run_tests.py --url <testing-url> --analytics-url <analytics-url> --key <API_KEY>
 ```
-
-**Этап 4 — Интеграции** развёрнут в namespace `mlscan-integrations`: Model Registry (по SHA-256),
-CI/CD gate (по реестру и on-demand), SIEM-экспорт (NDJSON/CEF), threat-intel.
-Манифесты — в [`deploy/stage4/`](./deploy/stage4).
-
-```bash
-bash deploy/stage4/apply.sh
-bash deploy/stage4/run-demo.sh                       # registry + gate + CEF
-bash deploy/stage4/mlscan-gate.sh poc/scan/evil4.pkl # exit 1 = BLOCK
-```
-
-**Этап 5 — Промышленная эксплуатация** развёрнут в namespace `mlscan-ops`: метрики (Prometheus),
-здоровье стека, метрики качества (TPR/FPR), непрерывный retest (CronJob), red-team/эскейп-тесты,
-PDB и аттестация evidence. Манифесты — в [`deploy/stage5/`](./deploy/stage5).
-
-```bash
-bash deploy/stage5/apply.sh
-bash deploy/stage5/run-demo.sh          # red-team + retest + quality + metrics
-bash deploy/stage5/60-attest.sh         # аттестация evidence
-# Ops API: http://ops.mlscan.local:30217  (/metrics /health/stack /quality /sla)  (Ingress)
-```
-
----
-
-## Демонстрационные данные
-
-`poc/scan/evil0…evil5.pkl` — намеренно **вредоносные** pickle разных классов:
-
-| Файл | Класс атаки |
-|------|-------------|
-| `evil0`, `evil1`, `evil4` | RCE через `os.system` (`posix.system`) |
-| `evil2`, `evil5` | Исполнение кода в памяти (`builtins.exec`) + модификация `builtins` |
-| `evil3` | Сетевой доступ при десериализации (`urllib.request.urlopen`) |
-| `evil6` | Чтение подставных кредов (deception) + «утечка» на sinkhole |
-
-Последний прогон по ним — в [`poc/runs.txt`](./poc/runs.txt).
-
-> ⚠️ **Внимание.** Демонстрационные `.pkl` содержат реальные вредоносные (хотя и безобидные
-> по эффекту) payload'ы. Запускайте их **только** внутри изолированной песочницы PoC.
-> Не десериализуйте их напрямую.
 
 ---
 
 ## Статус
 
-Реализованы и развёрнуты: PoC, система для pickle (Этапы 0–5), целевая архитектура v2
+Реализованы и проверены: PoC, система для pickle (Этапы 0–5), целевая архитектура v2
 (Волна 0: S3/PostgreSQL/AuthN+audit/наблюдаемость+бэкап; волны форматов 1–3: адаптеры и
-детекторы `EXEC/INJ/FMT/BD/AGT`, динамика model-as-code; retention/TTL и карантин) и метрики
-качества по форматам (TPR=1.0, FPR=0.0). Описание — [`deploy/v2/README.md`](./deploy/v2/README.md),
-план — [`docs/10-plan-new-formats.md`](./docs/10-plan-new-formats.md),
+детекторы, динамика model-as-code; retention/TTL и карантин), метрики качества по форматам
+(TPR=1.0, FPR=0.0) и синтетический корпус уязвимостей (33/33, 0 FP).
+
+Контекст: [`deploy/v2/README.md`](./deploy/v2/README.md), план — [`docs/10-plan-new-formats.md`](./docs/10-plan-new-formats.md),
 целевая архитектура — [`docs/11-target-architecture-v2.md`](./docs/11-target-architecture-v2.md).
 
 ---
