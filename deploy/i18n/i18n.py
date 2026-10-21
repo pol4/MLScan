@@ -70,6 +70,8 @@ CATALOG: dict[str, dict[str, str]] = {
                        "en": "CI/scripts can sign in with an API key:"},
     "login.key": {"ru": "API-ключ", "en": "API key"},
     "login.key_submit": {"ru": "Войти по ключу", "en": "Sign in with key"},
+    "login.session_expired": {"ru": "Сессия истекла — войдите заново",
+                              "en": "Your session has expired — please sign in again"},
     "login.err_credentials": {"ru": "Неверный логин или пароль", "en": "Invalid username or password"},
     "login.err_key": {"ru": "Неверный ключ", "en": "Invalid API key"},
     # --- дашборд

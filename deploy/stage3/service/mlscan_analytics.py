@@ -36,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "")
 COOKIE_DOMAIN = os.environ.get("MLSCAN_COOKIE_DOMAIN", "")
+SESSION_TTL = int(os.environ.get("MLSCAN_SESSION_TTL", str(12 * 3600)))
 
 
 def _cookie_attr() -> str:
@@ -617,11 +618,13 @@ async function refresh(){
   // 1) список сканов -> сразу отрисовываем таблицу
   try{
     const r=await fetch('/api/overview',{cache:'no-store'});
+    if(r.status===401){ location.href='/login?expired=1'; return; }
     if(r.ok){ OV=(await r.json()).scans||[]; renderRows(); }
   }catch(e){}
   // 2) агрегаты -> отдельно обновляем карточки
   try{
     const r2=await fetch('/api/stats',{cache:'no-store'});
+    if(r2.status===401){ location.href='/login?expired=1'; return; }
     if(r2.ok) renderCards(await r2.json());
   }catch(e){}
 }
@@ -647,8 +650,9 @@ loop();
 </script>""".replace("__LABELS__", json.dumps(labels, ensure_ascii=False))
 
 
-def _login_page(error: str = "", lang: str = "ru") -> bytes:
+def _login_page(error: str = "", lang: str = "ru", notice: str = "") -> bytes:
     body = (f"<h2>{T('login.heading', lang)}</h2>"
+            + (f"<p style='color:#ffcf6b'>{_esc(notice)}</p>" if notice else "")
             + (f"<p style='color:#ff6b6b'>{_esc(error)}</p>" if error else "")
             + "<form method='post' action='/login' style='display:flex;flex-direction:column;gap:8px;max-width:320px'>"
             f"<input name='username' placeholder='{T('login.username', lang)}' autocomplete='username' "
@@ -812,6 +816,11 @@ class Handler(BaseHTTPRequestHandler):
         return i18n.resolve(headers=self.headers, query=query,
                             cookie=self.headers.get("Cookie"))
 
+    def _wants_html(self) -> bool:
+        """Похоже ли на навигацию браузера (а не на API-клиент)."""
+        accept = self.headers.get("Accept") or ""
+        return "text/html" in accept and not self.headers.get("Authorization")
+
     def _require(self):
         """Аутентификация на входе: API-ключ из заголовка или cookie (после /login)."""
         if authz is None:
@@ -827,6 +836,12 @@ class Handler(BaseHTTPRequestHandler):
                             self.client_address[0], {"method": self.command})
             except Exception:  # noqa: BLE001
                 pass
+            if self._wants_html() and self.command == "GET":
+                # истёкшая сессия у открытой вкладки: возвращаем на вход с пояснением
+                self.send_response(302)
+                self.send_header("Location", "/login?expired=1")
+                self.end_headers()
+                return None
             self._json(401, {"error": T("msg.unauthorized", self._lang()),
                              "request_id": self._rid})
             return None
@@ -914,7 +929,9 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if p == "/login":
-            return self._send(200, _login_page(lang=self._lang(q)), "text/html; charset=utf-8")
+            notice = T("login.session_expired", self._lang(q)) if q.get("expired") else ""
+            return self._send(200, _login_page(lang=self._lang(q), notice=notice),
+                              "text/html; charset=utf-8")
         if p == "/logout":
             self.send_response(302)
             self.send_header("Set-Cookie", "mlscan_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
@@ -1024,7 +1041,9 @@ class Handler(BaseHTTPRequestHandler):
                     authz.audit(ent["subject"], "login", "user", ent["subject"], rid, ip, {"roles": ent["roles"]})
                 self.send_response(302)
                 if token:
-                    self.send_header("Set-Cookie", f"mlscan_session={token}; HttpOnly; Path=/; SameSite=Lax{_cookie_attr()}")
+                    self.send_header("Set-Cookie",
+                                     f"mlscan_session={token}; HttpOnly; Path=/; SameSite=Lax; "
+                                     f"Max-Age={SESSION_TTL}{_cookie_attr()}")
                 self.send_header("Location", "/")
                 self.end_headers()
                 return
