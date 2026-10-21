@@ -459,9 +459,13 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
         if af in ("torchserve-mar", "model-as-code", "python"):
             sandbox_fmt = "model-as-code"
         elif af in ("safetensors", "onnx", "hdf5", "keras", "gguf", "tar", "zip",
-                    "config", "card", "xml", "yaml", "tokenizer", "image"):
+                    "config", "card", "xml", "yaml", "tokenizer", "image", "pmml",
+                    "notebook", "script", "dataset", "tflite", "coreml",
+                    "mlflow", "savedmodel"):
             sandbox_fmt = af
-        elif af in ("torch-package", "torch-zip", "unknown", None):
+        elif af in ("torch-package", "torch-zip"):
+            sandbox_fmt = "zip"
+        elif af in ("unknown", None):
             sandbox_fmt = "raw"
         update(scan_id, stage="submitted", progress=25, sandbox_fmt=sandbox_fmt)
         t = time.time()

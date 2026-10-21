@@ -35,7 +35,11 @@ FMT_BY_EXT = {"pkl": "pickle", "pickle": "pickle", "p": "pickle",
               "safetensors": "safetensors", "onnx": "onnx", "h5": "hdf5", "hdf5": "hdf5",
               "keras": "keras", "gguf": "gguf", "zip": "zip", "tar": "tar", "gz": "tar",
               "tgz": "tar", "xml": "xml", "yaml": "config", "yml": "config",
-              "md": "card", "png": "image", "jpg": "image"}
+              "md": "card", "png": "image", "jpg": "image",
+              # «Волна 4»: ноутбуки, скрипты, MLflow/SavedModel/TFLite/CoreML/PMML, датасеты
+              "ipynb": "notebook", "sh": "script", "bash": "script", "ps1": "script",
+              "tflite": "tflite", "mlmodel": "coreml", "pmml": "pmml",
+              "parquet": "dataset", "arrow": "dataset", "feather": "dataset"}
 
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))

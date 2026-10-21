@@ -130,6 +130,17 @@ considered complete**:
 * the scan record stores a structured `coverage` field (`modules`, `failed`, `complete`) which is
   shown as a banner on the artifact card and included in the reports (JSON/Markdown).
 
+Wave 4 additionally supports **notebooks** (.ipynb), **scripts** (.sh/.ps1/.bat and others),
+**MLflow models** (a zip with `MLmodel`), **TensorFlow SavedModel** (`saved_model.pb`),
+**TFLite** (`TFL3`), **CoreML** (`.mlmodel`), **PMML**, **Parquet/Arrow/Feather datasets**
+(pyarrow) and **TorchScript/torch.package** (`archive/code/...`). For these, static analysis
+looks at executable code, external references and pickle streams in metadata, while the dynamic
+stage parses the container (structural load/schema). Archive member names are normalised
+(`archive/` is torch's service prefix), TorchScript code is distinguished from arbitrary Python,
+and for data-only formats `exec` performed by parser libraries (pyarrow/onnxruntime etc.) does not
+count as payload execution. HDF5 external links are detected dynamically at load time
+(finding `EXEC-07`).
+
 The dynamic stage loads more than pickle: the harness can read **safetensors** (mmap), **ONNX**
 (onnxruntime plus a trial inference), **HDF5** (h5py), **Keras `.keras`** (zip: `config.json` and
 `weights.h5` in memory — no temporary files), **GGUF**, `.zip`/`.tar*` archives, text artifacts

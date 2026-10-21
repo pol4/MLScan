@@ -70,6 +70,139 @@ def _scan_json(text: str, label: str) -> list[dict]:
     return out
 
 
+# --- Волна 4: ноутбуки, скрипты, MLflow/SavedModel/TFLite/CoreML/PMML, датасеты ---
+NOTEBOOK_EXT = {".ipynb"}
+SCRIPT_EXT = {".sh", ".bash", ".zsh", ".ksh", ".ps1", ".bat", ".cmd"}
+DATASET_EXT = {".parquet", ".arrow", ".feather", ".ipc"}
+PIPE_TO_SHELL = re.compile(r"(curl|wget|iwr|invoke-webrequest)[^\n|]{0,300}\|\s*(ba|z|k)?sh\b", re.I)
+SCRIPT_EXEC = ("invoke-expression", "iex(", "downloadstring", "-encodedcommand",
+               "frombase64string", "nc -e", "/dev/tcp/", "bash -i", "certutil -urlcache",
+               "bitsadmin", "chmod +x", "base64 -d", "python -c", "os.system", "subprocess",
+               "eval ", "exec ", "rm -rf /")
+NOTEBOOK_SHELL = ("!pip", "!curl", "!wget", "!bash", "!sh ")
+
+
+def _scan_script(text: str, label: str) -> list[dict]:
+    """Скрипты (.sh/.ps1/.bat): запуск скачанного кода, обфускация, внешние URL."""
+    out: list[dict] = []
+    low = text.lower()
+    if PIPE_TO_SHELL.search(text):
+        out.append(_f("EXEC-02", f"Запуск скачанного кода в скрипте ({label})", "high", 0.85,
+                      "curl|bash / download-and-execute", cat="EXEC"))
+    hits = [h for h in SCRIPT_EXEC if h in low]
+    if hits:
+        out.append(_f("EXEC-02", f"Исполняемые конструкции в скрипте ({label})", "high", 0.7,
+                      "hints: " + ", ".join(hits[:5]), cat="EXEC"))
+    if "http://" in low or "https://" in low:
+        out.append(_f("INT-03", f"Внешние URL в скрипте ({label})", "medium", 0.5,
+                      "внешний источник может подтягивать код/данные", cat="INT"))
+    return out
+
+
+def _scan_notebook(blob: bytes, label: str) -> list[dict]:
+    """Jupyter notebook: код ячеек исполняется при запуске (и часто при открытии)."""
+    out: list[dict] = []
+    try:
+        nb = json.loads(_btext(blob))
+    except Exception as exc:  # noqa: BLE001
+        return [_f("FMT-01", f"Notebook: нечитаемый JSON ({label})", "low", 0.3, str(exc), cat="FMT")]
+    code: list[str] = []
+    md: list[str] = []
+    for cell in (nb.get("cells") or []):
+        src = "".join(cell.get("source") or [])
+        if cell.get("cell_type") == "code":
+            code.append(src)
+        elif cell.get("cell_type") == "markdown":
+            md.append(src)
+    text = "\n".join(code)
+    if code:
+        # NB: общий _scan_python здесь не годится — PY_CODE_HINTS ловит обычный "import "
+        hits = [h for h in ("os.system", "subprocess", "eval(", "exec(", "__import__",
+                            "socket.", "urlopen", "requests.get", "pty.spawn") if h in text]
+        if hits:
+            out.append(_f("EXEC-02", f"Исполняемый код в notebook ({label})", "high", 0.75,
+                          "hints: " + ", ".join(hits[:5]), cat="EXEC"))
+        shell = [h for h in NOTEBOOK_SHELL if h in text.lower()]
+        if shell:
+            out.append(_f("INT-03", f"Shell-команды в notebook ({label})", "medium", 0.5,
+                          "hints: " + ", ".join(shell[:4]), cat="INT"))
+    out.extend(_scan_card("\n".join(md), label))
+    return out
+
+
+def _scan_dataset(blob: bytes, label: str) -> list[dict]:
+    """Parquet/Arrow/Feather: pickle-потоки и внешние ссылки в метаданных."""
+    out: list[dict] = []
+    if not (blob[:4] == b"PAR1" or blob[:6] == b"ARROW1" or blob[:4] == b"FEA1"):
+        out.append(_f("FMT-01", f"Датасет: неизвестная сигнатура ({label})", "low", 0.3,
+                      "not parquet/arrow/feather", cat="FMT"))
+        return out
+    has_pickle = any(m in blob for m in (b"\x80\x04", b"\x80\x05"))
+    marks = [g for g in (b"posix", b"system", b"subprocess", b"builtins", b"os.system") if g in blob]
+    if has_pickle and marks:
+        out.append(_f("EXEC-02", f"Pickle-поток в метаданных датасета ({label})", "critical", 0.85,
+                      "pickle stream + " + ", ".join(m.decode() for m in marks[:3]), cat="EXEC"))
+    if b"http://" in blob or b"https://" in blob:
+        out.append(_f("INT-03", f"Внешние URL в метаданных датасета ({label})", "medium", 0.5,
+                      "внешний источник", cat="INT"))
+    return out
+
+
+def _scan_flatbuffer_ops(blob: bytes, label: str, kind: str) -> list[dict]:
+    """TFLite/CoreML: нестандартные (custom/python) операции."""
+    low = blob.lower()
+    hits = [h for h in (b"flex", b"custom", b"pywrap", b"python") if h in low]
+    if hits:
+        return [_f("EXEC-02", f"{kind}: кастомные/нестандартные операции ({label})", "high", 0.6,
+                   "custom ops: " + ", ".join(h.decode() for h in hits[:4]), cat="EXEC")]
+    return []
+
+
+def _scan_savedmodel(blob: bytes, label: str) -> list[dict]:
+    """TensorFlow SavedModel: ссылки на Python-код внутри графа."""
+    low = blob.lower()
+    hits = [h for h in (b"py_function", b"pyfunc", b"tf.py_func", b"python_op", b"pywrap")
+            if h in low]
+    if hits:
+        return [_f("EXEC-01", f"SavedModel со ссылкой на Python-код ({label})", "high", 0.7,
+                   "py_function/PyFunc", cat="EXEC")]
+    return []
+
+
+def _scan_pmml(text: str, label: str) -> list[dict]:
+    """PMML: расширения с исполняемым кодом (Java/Python/Script)."""
+    low = text.lower()
+    hits = [h for h in ("<extension", "java", "script", "python", "external") if h in low]
+    if hits:
+        return [_f("EXEC-02", f"PMML: расширяемый код/внешние ссылки ({label})", "medium", 0.5,
+                   "hints: " + ", ".join(hits[:4]), cat="EXEC")]
+    return []
+
+
+def _scan_mlflow(path: Path) -> list[dict]:
+    """MLflow-модель (zip с MLmodel): код и внешние источники в метаданных."""
+    out: list[dict] = []
+    try:
+        zf = zipfile.ZipFile(path)
+        names = [n for n in zf.namelist()]
+    except Exception:  # noqa: BLE001
+        return out
+    for n in names:
+        ln = n.lower()
+        try:
+            if ln.endswith(".py"):
+                out.extend(_scan_python(_btext(zf.read(n)), f"{path.name}:{n}"))
+            elif ln.endswith((".yaml", ".yml", ".json", ".txt")):
+                out.extend(_scan_python(_btext(zf.read(n)), f"{path.name}:{n}"))
+                t = _btext(zf.read(n))
+                if "http://" in t or "https://" in t:
+                    out.append(_f("INT-03", f"Внешние URL в метаданных MLflow ({path.name})",
+                                  "medium", 0.5, f"{n}", cat="INT"))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
 def _scan_zip(path: Path) -> tuple[list[dict], str]:
     out: list[dict] = []
     fmt = "zip"
@@ -78,11 +211,18 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
         names = zf.namelist()
     except Exception as exc:  # noqa: BLE001
         return [_f("FMT-01", "Повреждённый zip-контейнер", "low", 0.4, str(exc), cat="FMT")], fmt
-    low = [n.lower() for n in names]
+    low = [_norm_name(n) for n in names]
     if any(n.endswith("mar-inf/manifest.json") for n in low):
         fmt = "torchserve-mar"
-    has_py = [n for n in names if Path(n).suffix.lower() in CODE_EXT]
-    if has_py:
+    norm = [_norm_name(n) for n in names]
+    is_mlflow = any(n == "mlmodel" or n.endswith("/mlmodel") for n in norm)
+    code_dir = [n for n in names if _norm_name(n).startswith("code/")]
+    ts_like = bool(code_dir) and (any(n == "version" for n in norm)
+                                  or any(n.endswith("constants.pkl") for n in norm))
+    code_norm = {_norm_name(n) for n in code_dir}
+    has_py = [n for n in names if Path(n).suffix.lower() in CODE_EXT
+              and _norm_name(n) not in code_norm]      # TorchScript code/ разбирается отдельно
+    if has_py and not ts_like:
         out.append(_f("EXEC-02", f"Python-код внутри контейнера ({', '.join(has_py[:4])})",
                       "high", 0.85, "files: " + ", ".join(has_py[:6])))
     if fmt == "torchserve-mar" and has_py:
@@ -90,9 +230,47 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
                       "critical", 0.9, "MAR-INF + handler.py"))
     if any(n in ("mar-inf/manifest.json",) for n in low):
         pass
-    if any(n.startswith("code/") or n.endswith("constants.pkl") for n in low):
-        out.append(_f("EXEC-03", "torch.package/TorchScript с кодом внутри архива",
-                      "high", 0.85, "code/ или constants.pkl"))
+    code_files = [n for n in names
+                  if _norm_name(n).startswith("code/") and _norm_name(n).endswith((".py", ".pyi"))]
+    constants = [n for n in names if _norm_name(n).endswith("constants.pkl")]
+    if code_files or constants:
+        # Легитимный TorchScript (torch.jit) тоже хранит код в code/ — это НЕ закладка.
+        suspicious: list[str] = []
+        ts_markers = ("__torch__", "torch.jit", "torch._C", "torch/csrc", "TorchScript")
+        for n in code_files[:20]:
+            try:
+                t = _btext(zf.read(n))
+            except Exception:  # noqa: BLE001
+                continue
+            if ("os.system" in t or "subprocess" in t or "socket:" in t
+                    or [h for h in PY_CODE_HINTS if h in t]):
+                suspicious.append(n)
+        bad_const = False
+        for n in constants[:3]:
+            try:
+                raw = zf.read(n)
+            except Exception:  # noqa: BLE001
+                continue
+            if any(g in raw for g in (b"posix", b"os.system", b"subprocess", b"system",
+                                      b"Popen", b"eval", b"exec")):
+                bad_const = True
+        if suspicious:
+            out.append(_f("EXEC-03", "torch.package/TorchScript с исполняемым кодом внутри архива",
+                          "high", 0.85, "code/: " + ", ".join(suspicious[:3])))
+            for n in suspicious[:5]:
+                try:
+                    out.extend(_scan_python(_btext(zf.read(n)), f"{path.name}:{n}"))
+                except Exception:  # noqa: BLE001
+                    pass
+        elif bad_const:
+            out.append(_f("EXEC-03", "torch.package: опасный pickle в constants.pkl",
+                          "high", 0.8, "constants.pkl + os/system", cat="FMT"))
+        elif not (code_files and all(
+                any(m in _btext(zf.read(n)) for m in ts_markers)
+                for n in code_files[:20] if True)):
+            if code_files:
+                out.append(_f("EXEC-03", "torch.package/TorchScript со сторонним кодом в архиве",
+                              "medium", 0.6, "code/ без признаков TorchScript"))
     # конфиги внутри zip (Keras .keras, прочее)
     for n in names:
         ln = n.lower()
@@ -116,9 +294,9 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
 def _scan_hdf5(blob: bytes, label: str) -> list[dict]:
     out: list[dict] = []
     text = _btext(blob)
-    if "Lambda" in text or "__reduce__" in text or "external" in text.lower():
-        out.append(_f("EXEC-05", f"HDF5: признаки Lambda/__reduce__/external ({label})",
-                      "high", 0.7, "strings found"))
+    if "Lambda" in text or "__reduce__" in text:
+        out.append(_f("EXEC-05", f"HDF5: признаки Lambda/__reduce__ ({label})",
+                      "high", 0.7, "lambda/reduce strings"))
     if "external link" in text.lower() or "external_link" in text.lower():
         out.append(_f("EXEC-07", f"HDF5: внешние ссылки ({label})", "high", 0.7, "external link"))
     return out
@@ -133,6 +311,10 @@ def _scan_onnx(blob: bytes, label: str) -> list[dict]:
         out.append(_f("EXEC-06", f"ONNX custom/contrib ops ({label})", "high", 0.7,
                       "custom ops/domain"))
     if b"location" in blob:
+        external = b"external" in blob or b"data_location" in blob
+        if external:
+            out.append(_f("EXEC-06", f"ONNX external_data с location ({label}) — риск path traversal/URL",
+                          "high", 0.75, "external + location"))
         out.append(_f("FMT-09", f"ONNX external location ({label})", "medium", 0.6, "location"))
     return out
 
@@ -165,6 +347,15 @@ def _scan_safetensors(blob: bytes, label: str, total_size: int | None = None) ->
         header = json.loads(blob[8:8 + hlen].decode("utf-8", "replace"))
     except Exception as exc:  # noqa: BLE001
         return [_f("FMT-01", f"SafeTensors: нечитаемый заголовок ({label})", "high", 0.8, str(exc), cat="FMT")]
+    meta = header.get("__metadata__") or {}
+    if isinstance(meta, dict):
+        meta_blob = " ".join(str(v) for v in meta.values()).lower()
+        hits = [h for h in ("curl ", "wget ", "| bash", "| sh", "os.system", "subprocess",
+                            "eval(", "__import__", "base64 -d", "powershell", "iex(")
+                if h in meta_blob]
+        if hits:
+            out.append(_f("EXEC-02", f"SafeTensors: полезная нагрузка в метаданных ({label})",
+                          "high", 0.7, "metadata: " + ", ".join(hits[:4]), cat="EXEC"))
     data_start = 8 + hlen
     data_len = size - data_start
     ranges = []
@@ -235,8 +426,11 @@ def _scan_zip_extra(path: Path) -> list[dict]:
         zf = zipfile.ZipFile(path)
     except Exception:  # noqa: BLE001
         return out
-    names_low = [n.lower() for n in zf.namelist()]
+    names_low = [_norm_name(n) for n in zf.namelist()]
+    is_mlflow = any(n == "mlmodel" or n.endswith("/mlmodel") for n in names_low)
     hits = [n for n in names_low if Path(n).name in INSTALL_FILES]
+    if hits and is_mlflow:
+        hits = []      # requirements.txt/conda.yaml — штатная часть MLflow-модели
     if hits:
         out.append(_f("INT-04", f"Архив содержит install-файлы ({', '.join(hits[:4])})",
                       "high", 0.75, "install hooks могут выполнять код при установке", cat="INT"))
@@ -274,7 +468,25 @@ def _scan_tar(path: Path) -> list[dict]:
     except Exception:  # noqa: BLE001
         return [_f("FMT-01", "Повреждённый tar-архив", "low", 0.3, str(path.name), cat="FMT")]
     total_u = 0
+    text_members = (".sh", ".bash", ".ps1", ".bat", ".cmd", ".py", ".json", ".yaml", ".yml",
+                    ".txt", ".cfg", ".toml")
     for m in tf.getmembers():
+        low = m.name.lower()
+        if m.isfile() and low.endswith(text_members) and m.size <= 2 * 1024 * 1024:
+            try:
+                fh = tf.extractfile(m)
+                text = _btext(fh.read()) if fh else ""
+            except Exception:  # noqa: BLE001
+                text = ""
+            if not text:
+                continue
+            if low.endswith((".sh", ".bash", ".ps1", ".bat", ".cmd")):
+                out.extend(_scan_script(text, f"{path.name}:{m.name}"))
+            elif low.endswith(".py"):
+                out.extend(_scan_python(text, f"{path.name}:{m.name}"))
+            elif low.endswith((".json", ".yaml", ".yml")):
+                if low.endswith(".json"):
+                    out.extend(_scan_json(text, f"{path.name}:{m.name}"))
         if m.name.startswith("/") or ".." in Path(m.name).parts:
             out.append(_f("FMT-03", f"Tar: подозрительный путь ({m.name})", "high", 0.8,
                           "path traversal/absolute", cat="FMT"))
@@ -403,11 +615,17 @@ def _scan_image_polyglot(blob: bytes, label: str) -> list[dict]:
     return out
 
 
+def _norm_name(name: str) -> str:
+    """Имя члена архива без служебного префикса torch ("archive/")."""
+    low = name.lower()
+    return low[len("archive/"):] if low.startswith("archive/") else low
+
+
 def detect(path: Path, head: bytes) -> str:
     ext = path.suffix.lower()
     if head.startswith(ZIP_MAGIC):
         try:
-            names = [n.lower() for n in zipfile.ZipFile(path).namelist()]
+            names = [_norm_name(n) for n in zipfile.ZipFile(path).namelist()]
         except Exception:  # noqa: BLE001
             names = []
         if any(n.endswith("mar-inf/manifest.json") for n in names):
@@ -418,6 +636,10 @@ def detect(path: Path, head: bytes) -> str:
             return "torch-package"
         if any(n == "data.pkl" for n in names):
             return "torch-zip"
+        if any(n == "mlmodel" or n.endswith("/mlmodel") for n in names):
+            return "mlflow"
+        if any(n.endswith("saved_model.pb") for n in names):
+            return "savedmodel"
         return "zip"
     if head.startswith(MAGIC_HDF5):
         return "hdf5"
@@ -433,7 +655,19 @@ def detect(path: Path, head: bytes) -> str:
         return "safetensors"
     if ext in (".tar", ".tgz", ".gz"):
         return "tar"
-    if ext in (".xml", ".pmml", ".ovpn"):
+    if ext in CODE_EXT or ext in NOTEBOOK_EXT:
+        return "python" if ext not in NOTEBOOK_EXT else "notebook"
+    if ext in SCRIPT_EXT:
+        return "script"
+    if ext in DATASET_EXT:
+        return "dataset"
+    if ext == ".tflite" or head[:4] == b"TFL3":
+        return "tflite"
+    if ext in (".mlmodel", ".mlpackage"):
+        return "coreml"
+    if ext == ".pmml":
+        return "pmml"
+    if ext in (".xml", ".ovpn"):
         return "xml"
     if ext in (".json", ".yaml", ".yml"):
         return "config"
@@ -464,10 +698,15 @@ def static_scan(path: Path) -> dict:
     fmt = detect(path, head)
     findings: list[dict] = []
     try:
-        if fmt in ("torchserve-mar", "keras", "torch-package", "torch-zip", "zip"):
+        if fmt in ("torchserve-mar", "keras", "torch-package", "torch-zip", "zip",
+                   "mlflow", "savedmodel"):
             findings.extend(_scan_zip_extra(path))
             f2, real = _scan_zip(path)
             findings.extend(f2)
+            if fmt == "mlflow":
+                findings.extend(_scan_mlflow(path))
+            if fmt == "savedmodel":
+                findings.extend(_scan_savedmodel(_read_bounded(path), path.name))
             fmt = real if real != "zip" else fmt
         elif fmt == "python":
             findings.extend(_scan_python(_btext(_read_bounded(path)), path.name))
@@ -506,6 +745,19 @@ def static_scan(path: Path) -> dict:
                     findings.extend(_scan_tools(data, path.name))
         elif fmt == "card":
             findings.extend(_scan_card(_btext(_read_bounded(path)), path.name))
+        elif fmt == "notebook":
+            findings.extend(_scan_notebook(_read_bounded(path), path.name))
+        elif fmt == "script":
+            findings.extend(_scan_script(_btext(_read_bounded(path)), path.name))
+        elif fmt == "dataset":
+            findings.extend(_scan_dataset(_read_bounded(path), path.name))
+        elif fmt == "tflite":
+            findings.extend(_scan_flatbuffer_ops(_read_bounded(path), path.name, "TFLite"))
+        elif fmt == "coreml":
+            findings.extend(_scan_flatbuffer_ops(_read_bounded(path), path.name, "CoreML"))
+        elif fmt == "pmml":
+            findings.extend(_scan_xml(_read_bounded(path), path.name))
+            findings.extend(_scan_pmml(_btext(_read_bounded(path)), path.name))
         elif fmt == "image":
             findings.extend(_scan_image_polyglot(_read_bounded(path), path.name))
     except Exception as exc:  # noqa: BLE001

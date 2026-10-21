@@ -286,6 +286,16 @@ curl -s http://<analytics>/healthz
 curl -X POST -H "Authorization: Bearer $ADMIN_KEY" "http://<ops>/settings/language?lang=en"
 ```
 
+## Форматы «Волны 4» (реализовано)
+
+Поддержаны ноутбуки (.ipynb), скрипты (.sh/.ps1/.bat), MLflow-модель (zip с `MLmodel`),
+TF SavedModel, TFLite, CoreML, PMML, датасеты Parquet/Arrow/Feather (pyarrow), TorchScript
+(`archive/code/…`, легитимный `torch.jit` отделяется от произвольного кода). Статика ищет
+исполняемый код, внешние ссылки и pickle-потоки в метаданных (`EXEC-06` — ONNX external_data
+с `location`, `EXEC-07` — внешние ссылки HDF5, определяются динамикой при загрузке), динамика
+разбирает контейнер (схема/структура). Для форматов-данных `exec` библиотек-парсеров не
+считается исполнением payload. Образ песочницы — `:v4` (+pyarrow).
+
 ## Загрузка сложных форматов в песочнице (реализовано)
 
 Harness динамики читает форматы профильными библиотеками: safetensors (mmap), ONNX

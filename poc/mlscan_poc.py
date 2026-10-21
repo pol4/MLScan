@@ -60,13 +60,18 @@ FORMAT_BY_EXT = {
     ".zip": "zip", ".tar": "tar", ".gz": "tar", ".tgz": "tar", ".tar.gz": "tar",
     ".json": "config", ".yaml": "yaml", ".yml": "yaml", ".xml": "xml",
     ".md": "card", ".txt": "card", ".png": "image", ".jpg": "image", ".jpeg": "image",
-    ".gguf": "gguf", ".keras": "keras", ".tflite": "tflite",
+    ".gguf": "gguf", ".keras": "keras", ".tflite": "tflite", ".pmml": "pmml",
+    ".ipynb": "notebook", ".sh": "script", ".bash": "script", ".zsh": "script",
+    ".ps1": "script", ".bat": "script", ".cmd": "script",
+    ".mlmodel": "coreml", ".mlpackage": "coreml",
+    ".parquet": "dataset", ".arrow": "dataset", ".feather": "dataset",
 }
 
 # Форматы, для которых pickle-десериализация неприменима: их разбирают адаптеры,
 # а динамика загружает профильными библиотеками (mmap/парсеры).
 NON_PICKLE_FORMATS = {"hdf5", "safetensors", "onnx", "gguf", "keras", "config", "card",
-                      "tokenizer", "xml", "yaml", "json", "image", "tflite"}
+                      "tokenizer", "xml", "yaml", "json", "image", "tflite", "pmml",
+                      "notebook", "script", "coreml", "dataset", "mlflow", "savedmodel"}
 
 DANGEROUS_MODULES = {
     "os", "posix", "nt", "subprocess", "shutil", "pty", "platform",
@@ -176,10 +181,20 @@ def classify_global(g: str) -> tuple[str, str, str]:
     return module, name, "unknown"
 
 
+# Ошибки, которые не означают повреждение файла (штатные механизмы сериализации).
+_PICKLE_BENIGN_ERRORS = ("persistent id", "unsupported persistent id", "persistent_load")
+
+
+def _pickle_error_is_benign(err: str | None) -> bool:
+    low = (err or "").lower()
+    return any(m in low for m in _PICKLE_BENIGN_ERRORS)
+
+
 def static_scan_pickle(blob: bytes, label: str) -> tuple[list[Finding], list[str], list[str], str | None]:
     findings: list[Finding] = []
     ops, globals_found, err = disassemble(blob)
-    if err:
+    if err and not _pickle_error_is_benign(err):
+        # «persistent id» — штатный механизм torch-сериализации, а не повреждение файла
         findings.append(Finding("A-00", "A", f"Некорректный/незавершённый pickle ({label})",
                                 "low", 0.4, err))
     dangerous = False
@@ -235,18 +250,33 @@ def scan_zip_container(path: Path, data: bytes) -> tuple[list[Finding], list[str
     except Exception as exc:  # noqa: BLE001
         findings.append(Finding("B-01", "B", "Не удалось открыть zip-контейнер", "low", 0.3, str(exc)))
         return findings, members_scanned
+    names = [i.filename for i in zf.infolist()]
+
+    def norm(n: str) -> str:
+        low = n.lower()
+        return low[len("archive/"):] if low.startswith("archive/") else low
+
+    # TorchScript/torch.package: code/ внутри "archive/" — легитимная упаковка,
+    # поэтому такие члены в pickle-разбор не берём (код проверяет адаптер форматов)
+    ts_like = any(norm(n).startswith("code/") for n in names) and (
+        any(norm(n) == "version" for n in names)
+        or any(norm(n).endswith("constants.pkl") for n in names))
     for info in zf.infolist():
         name = info.filename
         if name.startswith("/") or ".." in Path(name).parts:
             findings.append(Finding("B-03", "B", f"Подозрительный путь в архиве: {name}",
                                     "high", 0.8, "zip-slip/path traversal"))
-        low = name.lower()
-        candidate = low.endswith((".pkl", ".pickle", ".joblib", ".pt", ".pth", ".bin", "data.pkl"))
+        nm = norm(name)
+        if ts_like and nm.startswith("code/"):
+            continue
+        by_name = nm.endswith((".pkl", ".pickle", ".joblib", ".dill", ".cloudpickle",
+                               ".pt", ".pth", ".bin", ".ckpt", "data.pkl"))
         try:
-            head = zf.read(info)[:2] if info.file_size < 200_000_000 else b""
+            with zf.open(info) as fh:
+                head = fh.read(2)
         except Exception:  # noqa: BLE001
             head = b""
-        if not candidate and not head.startswith(b"\x80"):
+        if not by_name and not head.startswith(b"\x80"):
             continue
         try:
             member = zf.read(info)
@@ -254,6 +284,10 @@ def scan_zip_container(path: Path, data: bytes) -> tuple[list[Finding], list[str
             findings.append(Finding("B-02", "B", f"Не удалось прочитать член {name}", "low", 0.3, str(exc)))
             continue
         sub, _ops, _g, _e = static_scan_pickle(member, name)
+        if not by_name:
+            # член определён по «магии», а не по имени: A-00 (повреждённый pickle)
+            # здесь недостоверен — это могут быть данные тензора
+            sub = [f for f in sub if f.check_id != "A-00"]
         findings.extend(sub)
         members_scanned.append(name)
     return findings, members_scanned
@@ -279,6 +313,12 @@ def detect_format(path: Path) -> str:
         return "hdf5"
     if head.startswith(b"GGUF"):
         return "gguf"
+    if head[:4] == b"TFL3":
+        return "tflite"
+    if head[:4] == b"PAR1":
+        return "dataset"
+    if head[:6] == b"ARROW1":
+        return "dataset"
     if head.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8", b"GIF87a", b"GIF89a")):
         return "image"
     if head.startswith(MAGIC_ZIP) and fmt in ("unknown", "pickle", "torch", "joblib", "numpy"):
@@ -353,12 +393,29 @@ def _static_stage_impl(path: Path) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             result["error"] = "%s: %s" % (type(e).__name__, e)
         result["members"] = members[:200]
-        if not any(m.lower().endswith((".pkl", ".pickle", ".joblib", ".dill", ".cloudpickle",
-                                       ".pt", ".pth", ".bin", ".ckpt")) for m in members):
+        pk = [m for m in members if m.lower().endswith(
+            (".pkl", ".pickle", ".joblib", ".dill", ".cloudpickle", ".pt", ".pth", ".bin", ".ckpt"))]
+        if not pk:
             result["findings"].append(
                 Finding("B-11", "B", "Tar-архив без распознанных pickle-членов", "info", 0.5,
                         "нет *.pkl/*.pt").__dict__)
             return result
+        # разбираем именно pickle-члены (а не байты архива целиком)
+        import tarfile as _tf
+        with _tf.open(path, "r:*") as t:
+            for name in pk[:16]:
+                try:
+                    fh = t.extractfile(name)
+                    blob = fh.read(MAX_STATIC_BYTES) if fh else b""
+                except Exception:  # noqa: BLE001
+                    continue
+                if not blob:
+                    continue
+                f2, ops, globs, err = static_scan_pickle(blob, f"{path.name}:{name}")
+                result["findings"].extend(f.__dict__ for f in f2)
+                if ops:
+                    result.setdefault("members_ops", {})[name] = len(ops)
+        return result
 
     blob = _npy_payload(data) if fmt == "numpy" else data
     findings, ops, globals_found, err = static_scan_pickle(blob, path.name)
@@ -646,6 +703,25 @@ def _load_hdf5(path, errors):
             info["attrs"] = sorted(list(f.attrs.keys()))[:32]
         except Exception:
             pass
+        # внешние ссылки (external links) — риск подтягивания данных/кода извне
+        ext = []
+
+        def _links(group, prefix=""):
+            for key in list(group.keys()):
+                try:
+                    link = group.get(key, getlink=True)
+                except Exception:
+                    continue
+                if isinstance(link, h5py.ExternalLink):
+                    ext.append("%s%s -> %s" % (prefix, key, link.filename))
+                elif isinstance(link, h5py.Group):
+                    _links(group[key], prefix + key + "/")
+
+        try:
+            _links(f)
+        except Exception:
+            pass
+        info["external_links"] = ext[:16]
     return info
 
 
@@ -691,6 +767,27 @@ def _load_gguf(path, errors):
             "sample": [[t.name, list(t.shape)] for t in tensors[:32]]}
 
 
+def _load_dataset(path, errors):
+    """Parquet/Arrow/Feather: читаем схему/метаданные (pyarrow), иначе — структуру."""
+    try:
+        import pyarrow.parquet as pq
+        md = pq.read_metadata(path)          # только метаданные, без чтения данных
+        schema = md.schema.to_arrow_schema()
+        return {"format": "parquet", "rows": md.num_rows, "row_groups": md.num_row_groups,
+                "columns": [f.name for f in schema][:64]}
+    except Exception as exc:  # noqa: BLE001
+        try:
+            data = open(path, "rb").read(64)
+            magic = {b"PAR1": "parquet", b"ARROW1": "arrow", b"FEA1": "feather"}
+            for m, name in magic.items():
+                if data.startswith(m):
+                    return {"format": name, "size": os.path.getsize(path)}
+            errors.append("dataset: %s: %s" % (type(exc).__name__, exc))
+        except Exception as exc2:  # noqa: BLE001
+            errors.append("dataset: %s" % exc2)
+        return None
+
+
 def _load_archive(path, errors, fmt=None):
     """Архивы: перечисляем содержимое (без исполнения)."""
     out = {"members": []}
@@ -725,6 +822,15 @@ def _load_image(path, errors):
     return None
 
 
+def _load_flatbuffer(path, errors, kind="tflite"):
+    """TFLite/CoreML: структурная проверка контейнера (magic/размер)."""
+    data = open(path, "rb").read(64)
+    if kind == "tflite" and data[:4] != b"TFL3":
+        errors.append("tflite: неверная сигнатура контейнера")
+        return None
+    return {"format": kind, "size": os.path.getsize(path), "magic": data[:4].decode("latin1")}
+
+
 def _load_text(path, errors):
     """Текстовые артефакты (config/card/tokenizer/xml/json): читаем ограниченно."""
     data = open(path, "rb").read(1 << 20)
@@ -749,12 +855,17 @@ def load_target(path, fmt, errors):
         return _load_keras(path, errors)
     if fmt == "gguf":
         return _load_gguf(path, errors)
-    if fmt in ("tar", "zip"):
-        return _load_archive(path, errors, fmt)
-    if fmt in ("config", "card", "tokenizer", "xml", "json", "yaml"):
+    if fmt in ("tar", "zip", "torch-package", "torch-zip"):
+        return _load_archive(path, errors, "tar" if fmt == "tar" else "zip")
+    if fmt in ("config", "card", "tokenizer", "xml", "json", "yaml", "pmml",
+               "notebook", "script", "savedmodel"):
         return _load_text(path, errors)
-    if fmt in ("image", "tflite"):
+    if fmt == "image":
         return _load_image(path, errors)
+    if fmt in ("tflite", "coreml"):
+        return _load_flatbuffer(path, errors, fmt)
+    if fmt == "dataset":
+        return _load_dataset(path, errors)
     if fmt in ("model-as-code", "mar", "python"):
         return _run_model_code(path, errors)
     data = open(path, "rb").read()
@@ -1065,12 +1176,19 @@ def prewarm(fmt):
             "safetensors": ["numpy", "safetensors"], "onnx": ["numpy", "onnxruntime"],
             "hdf5": ["h5py"], "keras": ["h5py"], "gguf": ["gguf"],
             "tar": [], "zip": [], "config": [], "card": [], "tokenizer": [],
-            "xml": [], "json": [], "yaml": [], "image": []}.get(fmt, [])
+            "xml": [], "json": [], "yaml": [], "image": [], "pmml": [], "notebook": [],
+            "script": [], "savedmodel": [], "coreml": [], "tflite": [],
+            "dataset": ["pyarrow"]}.get(fmt, [])
     for m in mods:
         try:
             __import__(m)
         except Exception:
             pass
+
+
+DATA_ONLY_FORMATS = {"dataset", "tflite", "coreml", "image", "card", "config", "xml",
+                     "yaml", "pmml", "notebook", "script", "gguf", "safetensors",
+                     "hdf5", "onnx", "keras"}
 
 
 def summarize(events):
@@ -1084,6 +1202,8 @@ def summarize(events):
         if ev in ("os.system", "os.exec", "os.spawn", "os.posix_spawn", "subprocess.Popen"):
             s["subprocess"] += 1
         if ev in ("exec", "compile"):
+            if FMT in DATA_ONLY_FORMATS:
+                continue   # exec библиотек-парсеров (pyarrow/onnxruntime и т.п.), не payload
             s["exec"] += 1
             a0 = args[0] if args else ""
             # Учитываем только исполнение в фазе загрузки (payload); в фазе probe
@@ -1154,6 +1274,12 @@ def main():
     beh["findings"] = behavior_findings(state_load, state_probe,
                                         beh.get("suspicious_strings") or [],
                                         info["summary"], events)
+    # находки, вытекающие из содержимого загруженного контейнера
+    if isinstance(obj, dict):
+        for target in (obj.get("external_links") or []):
+            beh["findings"].append({"check_id": "EXEC-07", "category": "EXEC",
+                                    "title": "HDF5: внешняя ссылка (%s)" % target,
+                                    "severity": "high", "confidence": 0.8, "evidence": target})
     phase[0] = "done"
     global _record
     _record = False

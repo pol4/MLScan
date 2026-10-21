@@ -83,9 +83,33 @@ python3 tests/vulnerabilities/run_tests.py \
   Keras/TF/ONNX — только статика (нет фреймворк-образов).
 
 
+## Дополнительные форматы «Волны 4» (вредоносные и безопасные)
+
+Помимо базового набора корпус содержит примеры форматов, которые часто встречаются в
+ML-пайплайнах и редко проверяются сканерами:
+
+| Формат | Вредоносный пример | Безопасный пример |
+|--------|--------------------|-------------------|
+| Jupyter notebook | `vuln_notebook.ipynb` (код ячеек + injection) | `safe_notebook.ipynb` |
+| Скрипты | `vuln_script.sh` (curl\|bash), `vuln_script.ps1` (IEX+DownloadString) | `safe_script.sh` |
+| TorchScript/torch.package | `vuln_torchscript_code.pt` (код в `code/`) | `safe_torchscript.pt` (легитимный torch.jit) |
+| MLflow-модель | `vuln_mlflow.zip` (python_model + внешний канал) | `safe_mlflow.zip` |
+| TF SavedModel | `vuln_savedmodel.zip` (`py_function`) | `safe_savedmodel.zip` |
+| TFLite / CoreML | `vuln_tflite.tflite`, `vuln_coreml.mlmodel` (custom-операции) | `safe_tflite.tflite`, `safe_coreml.mlmodel` |
+| PMML | `vuln_pmml.pmml` (Extension/Java) | `safe_pmml.pmml` |
+| Parquet/Arrow | `vuln_parquet_pickle.parquet` (pickle в метаданных) | `safe_parquet.parquet`, `safe_arrow.arrow` |
+| ONNX external_data | `vuln_onnx_external.onnx` (path traversal в `location`) | — |
+| HDF5 external link | `vuln_hdf5_extlink.h5` | — |
+| safetensors metadata | `vuln_safetensors_meta.safetensors` (`__metadata__` с payload) | — |
+| Поведение интерпретатора | `vuln_behavior_state.pkl` (import hooks/env/sys.path) | — |
+
+Вредоносные генерируются [`gen_corpus_extra.py`](./gen_corpus_extra.py) (запускать в образе
+песочницы — нужны torch/onnx/h5py/pyarrow), безопасные — `gen_benign_formats.py`.
+Проверки: `EXEC-01..07`, `INT-03/04`, `INJ-03`, `F-22/F-24/F-32`, `FMT-09`.
+
 ## Доброкачественные примеры сложных форматов
 
-Кроме образцов с закладками корпус содержит **25 безопасных** примеров (`safe_*`), в том числе
+Кроме образцов с закладками корпус содержит **35 безопасных** примеров (`safe_*`) в 28 форматах, в том числе
 реальные файлы сложных форматов: safetensors (f32/f16), numpy `.npz`, torch `.pt`, HDF5 `.h5`,
 ONNX (MatMul+Add, opset 13), GGUF, Keras `.keras` (zip: `config.json` + `weights.h5`),
 архивы `.zip`/`.tar.gz`, joblib/dill/cloudpickle, tokenizer.json, MCP-манифест, YAML/XML-конфиги,

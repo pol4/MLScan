@@ -322,5 +322,170 @@
     "expect_checks": [],
     "kind": "benign",
     "note": "PNG-картинка без trailing-данных"
+  },
+  "vuln_notebook.ipynb": {
+    "expect_checks": [
+      "EXEC-02",
+      "INJ-03"
+    ],
+    "kind": "malicious",
+    "note": "код ячеек исполняется при запуске; injection в markdown"
+  },
+  "vuln_script.sh": {
+    "expect_checks": [
+      "EXEC-02",
+      "INT-03"
+    ],
+    "kind": "malicious",
+    "note": "curl|bash — запуск скачанного кода"
+  },
+  "vuln_script.ps1": {
+    "expect_checks": [
+      "EXEC-02",
+      "INT-03"
+    ],
+    "kind": "malicious",
+    "note": "Invoke-Expression + DownloadString"
+  },
+  "vuln_torchscript_code.pt": {
+    "expect_checks": [
+      "EXEC-03",
+      "EXEC-02"
+    ],
+    "kind": "malicious",
+    "note": "TorchScript-архив с исполняемым кодом в code/"
+  },
+  "vuln_mlflow.zip": {
+    "expect_checks": [
+      "EXEC-02",
+      "INT-03"
+    ],
+    "kind": "malicious",
+    "note": "MLflow-модель: код + внешний канал conda"
+  },
+  "vuln_savedmodel.zip": {
+    "expect_checks": [
+      "EXEC-01"
+    ],
+    "kind": "malicious",
+    "note": "SavedModel со ссылкой на Python-код (py_function)"
+  },
+  "vuln_tflite.tflite": {
+    "expect_checks": [
+      "EXEC-02"
+    ],
+    "kind": "malicious",
+    "note": "TFLite с кастомными (flex) операциями"
+  },
+  "vuln_coreml.mlmodel": {
+    "expect_checks": [
+      "EXEC-02"
+    ],
+    "kind": "malicious",
+    "note": "CoreML с нестандартным слоем"
+  },
+  "vuln_pmml.pmml": {
+    "expect_checks": [
+      "EXEC-02"
+    ],
+    "kind": "malicious",
+    "note": "PMML с Extension/Java и исполняемым кодом"
+  },
+  "vuln_parquet_pickle.parquet": {
+    "expect_checks": [
+      "EXEC-02"
+    ],
+    "kind": "malicious",
+    "note": "pickle-поток в метаданных parquet"
+  },
+  "vuln_onnx_external.onnx": {
+    "expect_checks": [
+      "EXEC-06",
+      "FMT-09"
+    ],
+    "kind": "malicious",
+    "note": "ONNX с external_data и подозрительным location (path traversal)"
+  },
+  "vuln_hdf5_extlink.h5": {
+    "expect_checks": [
+      "EXEC-07"
+    ],
+    "kind": "malicious",
+    "note": "HDF5 с внешней ссылкой (external link)"
+  },
+  "vuln_safetensors_meta.safetensors": {
+    "expect_checks": [
+      "EXEC-02"
+    ],
+    "kind": "malicious",
+    "note": "полезная нагрузка в __metadata__ safetensors"
+  },
+  "vuln_behavior_state.pkl": {
+    "expect_checks": [
+      "A-01",
+      "F-22",
+      "F-24",
+      "F-32"
+    ],
+    "kind": "malicious",
+    "note": "payload меняет import hooks/env/sys.path (поведенческие находки)"
+  },
+  "vuln_archive_script.tar.gz": {
+    "expect_checks": [
+      "EXEC-02",
+      "INT-03"
+    ],
+    "kind": "malicious",
+    "note": "tar с install-скриптом (curl|bash) и pickle-моделью"
+  },
+  "safe_notebook.ipynb": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "notebook: чистый код обучения"
+  },
+  "safe_script.sh": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "shell-скрипт: обучение, без загрузок и URL"
+  },
+  "safe_torchscript.pt": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "TorchScript (torch.jit) — легитимный code/"
+  },
+  "safe_mlflow.zip": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "MLflow-модель без кода и URL"
+  },
+  "safe_savedmodel.zip": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "SavedModel без py_function"
+  },
+  "safe_tflite.tflite": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "TFLite со встроенными операциями"
+  },
+  "safe_coreml.mlmodel": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "CoreML со стандартными слоями"
+  },
+  "safe_pmml.pmml": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "PMML без Extension/Java"
+  },
+  "safe_parquet.parquet": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "Parquet: обычная схема"
+  },
+  "safe_arrow.arrow": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "Arrow IPC: обычная схема"
   }
 }

@@ -127,6 +127,16 @@ Job `succeeded` **и** модель загрузилась (`load.ok`); пове
 * в записи скана хранится структурное поле `coverage` (`modules`, `failed`, `complete`),
   оно показывается баннером в карточке артефакта и попадает в отчёты (JSON/Markdown).
 
+Дополнительно (Волна 4) поддержаны **ноутбуки** (.ipynb), **скрипты** (.sh/.ps1/.bat и др.),
+**MLflow-модель** (zip с `MLmodel`), **TensorFlow SavedModel** (`saved_model.pb`),
+**TFLite** (`TFL3`), **CoreML** (`.mlmodel`), **PMML**, **датасеты Parquet/Arrow/Feather**
+(pyarrow) и **TorchScript/torch.package** (`archive/code/…`). Для них статика проверяет
+исполняемый код, внешние ссылки и pickle-потоки в метаданных, а динамика разбирает контейнер
+(структурная загрузка/схема). Имена членов архивов нормализуются (`archive/` — служебный
+префикс torch), TorchScript-код отделяется от произвольного Python, а для форматов-данных
+`exec` библиотек-парсеров (pyarrow/onnxruntime и т.п.) не засчитывается как исполнение payload.
+Внешние ссылки HDF5 определяются динамикой на этапе загрузки (находка `EXEC-07`).
+
 Динамика загружает не только pickle: harness умеет читать **safetensors** (mmap), **ONNX**
 (onnxruntime + пробный инференс), **HDF5** (h5py), **Keras `.keras`** (zip: `config.json` +
 `weights.h5` в памяти — без временных файлов), **GGUF**, архивы `.zip`/`.tar*`, текстовые

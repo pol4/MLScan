@@ -274,6 +274,82 @@ def gen_texts() -> None:
     add("safe_real_image.png", _png(48, 48, (12, 34, 56)), "PNG-картинка без trailing-данных")
 
 
+def gen_extra_formats() -> None:
+    """Форматы «Волны 4»: ноутбуки, скрипты, TorchScript, MLflow, SavedModel,
+    TFLite, CoreML, PMML, датасеты Parquet/Arrow — корректные версии."""
+    # ноутбук: чистый код обучения, без shell-команд и injection
+    nb = {
+        "cells": [
+            {"cell_type": "markdown", "metadata": {}, "source": [
+                "# Demo training\n", "A small image classifier for documentation.\n"]},
+            {"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [],
+             "source": ["import torch\n", "model = torch.nn.Linear(8, 4)\n",
+                        "print(model(torch.zeros(1, 8)).shape)\n"]},
+        ],
+        "metadata": {"kernelspec": {"name": "python3", "display_name": "Python 3"}},
+        "nbformat": 4, "nbformat_minor": 5,
+    }
+    add("safe_notebook.ipynb", json.dumps(nb).encode(), "notebook: чистый код обучения")
+
+    add("safe_script.sh",
+        b"#!/bin/sh\nset -e\npython3 -m venv .venv\n. .venv/bin/activate\n"
+        b"pip install -r requirements.txt\npython3 train.py --epochs 3\n",
+        "shell-скрипт: обучение, без загрузок и URL")
+
+    # TorchScript (реальная сериализация torch.jit) — проверяем отсутствие ложного EXEC-03
+    torch = _need("torch")
+    if torch is not None:
+        buf = io.BytesIO()
+        net = torch.nn.Sequential(torch.nn.Linear(8, 4), torch.nn.ReLU())
+        scripted = torch.jit.trace(net, torch.zeros(1, 8))
+        torch.jit.save(scripted, buf)
+        add("safe_torchscript.pt", buf.getvalue(), "TorchScript (torch.jit) — легитимный code/")
+
+    # MLflow-модель без кода и внешних источников
+    m_buf = io.BytesIO()
+    with zipfile.ZipFile(m_buf, "w") as z:
+        z.writestr("MLmodel", "artifact_path: model\nflavors:\n  sklearn:\n"
+                              "    pickled_model: model.pkl\n    sklearn_version: 1.5.0\n")
+        z.writestr("conda.yaml", "name: env\nchannels: [conda-forge]\n"
+                                 "dependencies:\n  - python=3.12\n  - pip\n")
+        z.writestr("requirements.txt", "scikit-learn==1.5.0\n")
+        z.writestr("python_env.yaml", "python: 3.12.0\n")
+        import pickle as _pkl
+        z.writestr("model.pkl", _pkl.dumps({"coef": [0.1, 0.2], "intercept": 0.0}))
+    add("safe_mlflow.zip", m_buf.getvalue(), "MLflow-модель без кода и URL")
+
+    # SavedModel без Python-операций
+    s_buf = io.BytesIO()
+    with zipfile.ZipFile(s_buf, "w") as z:
+        z.writestr("saved_model.pb", b"\x1a\x08graphdef" + b"\x00" * 64)
+        z.writestr("variables/variables.index", b"\x00" * 128)
+        z.writestr("assets/tokenizer.json", json.dumps({"model": {"type": "BPE"}}).encode())
+    add("safe_savedmodel.zip", s_buf.getvalue(), "SavedModel без py_function")
+
+    add("safe_tflite.tflite", b"TFL3" + b"\x00" * 24 + b"CONV_2D" + b"FULLY_CONNECTED" + b"\x00" * 32,
+        "TFLite со встроенными операциями")
+    add("safe_coreml.mlmodel", b"\x0a\x0c" + b"convolution" + b"innerProduct" + b"\x00" * 32,
+        "CoreML со стандартными слоями")
+    add("safe_pmml.pmml",
+        b'<?xml version="1.0"?><PMML version="4.4"><Header/><DataDictionary>'
+        b'<DataField name="x" optype="continuous" dataType="double"/></DataDictionary>'
+        b'<RegressionModel functionName="regression"/></PMML>',
+        "PMML без Extension/Java")
+
+    # Датасеты Parquet/Arrow (pyarrow)
+    if _need("pyarrow") is not None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        table = pa.table({"feature": [0.0, 1.0, 2.0], "label": [0, 1, 0]})
+        buf = io.BytesIO()
+        pq.write_table(table, buf)
+        add("safe_parquet.parquet", buf.getvalue(), "Parquet: обычная схема")
+        buf2 = io.BytesIO()
+        with pa.ipc.new_file(buf2, table.schema) as w:
+            w.write_table(table)
+        add("safe_arrow.arrow", buf2.getvalue(), "Arrow IPC: обычная схема")
+
+
 # --------------------------------------------------------------------------
 # Крупные корректные примеры (по умолчанию не сохраняются в репозиторий)
 # --------------------------------------------------------------------------
@@ -355,6 +431,7 @@ def main() -> int:
     gen_archives()
     gen_pickles()
     gen_texts()
+    gen_extra_formats()
     if args.large_mb:
         print("== крупные корректные примеры")
         gen_large(args.large_mb)
