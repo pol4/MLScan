@@ -104,6 +104,16 @@ one-time token. The per-scan ConfigMap transport is no longer used.
 | PVC `mlscan-artifacts` | hostpath 20Gi | uploaded models (`/artifacts/<scan_id>/<name>`) |
 | ConfigMap `mlscan-poc-lib`, `mlscan-testing-code`, `mlscan-formats`, `mlscan-s3client`, `mlscan-pgclient`, `mlscan-authz`, `mlscan-i18n` | — | shared analysis (PoC), service code, format adapters, S3 and PG clients, authentication/authorization, localisation |
 
+
+Scan reads: the list (`/scans`) and aggregates (`/stats`) are served **from PostgreSQL**
+(`scans JOIN artifacts`; ~0.1 s for 1900+ rows instead of re-reading thousands of JSON files),
+while `/data/scans/*.json` remains the fallback (when the DB is unavailable) and the store of
+scan details (`/scans/<id>`: `static`, `sandbox`, trace). Writes go to both places (file + DB),
+and scan progress is mirrored into the DB. On startup the service marks interrupted scans
+(`queued`/`running`) as `error` — there is no queue, processing runs in the process thread.
+Historical records are linked to artifacts (`scans.artifact_id`) by
+`deploy/v2/db/backfill_scans.py`.
+
 ### 2.4 `mlscan-analytics` — analytics engine + UI (Component 3)
 
 | Object | Type | Purpose |
@@ -387,6 +397,10 @@ stdlib `pgclient.py` with SCRAM authentication).
 | `audit_log`, `uploads`, `connections` | all services (via `authz`) | action audit, upload log, HTTP connection log |
 | `settings` | admin (`/settings` page / API) | system settings, incl. the **global language** (`language`) |
 | `policies`, `decisions` | — | the schema is ready; in practice the policy is set by `policy.json` (ConfigMap) |
+
+The testing service's hot read paths (`/scans`, `/stats`) are served from these tables (a
+`scans`+`artifacts` join), so the list and statistics do not depend on the number of files on the
+PVC; writes are dual (file + DB).
 
 Integrity: `evidence` and `audit_log` have triggers prohibiting `UPDATE/DELETE`
 (append-only "at the DB level"), in addition to the hash chain. Backup —

@@ -86,6 +86,23 @@ def db_exec(sql: str) -> None:
         c.close()
     except Exception as exc:  # noqa: BLE001
         print(f"[db] {type(exc).__name__}: {exc} | SQL: {sql[:160]}", file=sys.stderr)
+def db_query(sql: str):
+    """Читающий запрос к PostgreSQL: список кортежей или None (БД недоступна)."""
+    if not DB_ENABLED or _Pg is None:
+        return None
+    try:
+        c = _Pg(PG_HOST, int(os.environ.get("PGPORT", "5432")),
+                os.environ.get("PGUSER", "mlscan"), os.environ.get("PGPASSWORD", ""),
+                os.environ.get("PGDATABASE", "mlscan"), timeout=30)
+        c.connect()
+        _cols, rows = c.query(sql)
+        c.close()
+        return rows
+    except Exception as exc:  # noqa: BLE001
+        print(f"[db] query {type(exc).__name__}: {exc}", file=sys.stderr)
+        return None
+
+
 MAX_UPLOAD = int(os.environ.get("MAX_UPLOAD", str(20 * 1024**3)))
 JOB_MEMORY = os.environ.get("JOB_MEMORY", "2Gi")
 JOB_EPHEMERAL = os.environ.get("JOB_EPHEMERAL", "8Gi")
@@ -124,7 +141,7 @@ K8S_PORT = os.environ.get("KUBERNETES_SERVICE_PORT_HTTPS", "443")
 _ssl_ctx = ssl.create_default_context(cafile=os.path.join(SA_DIR, "ca.crt"))
 _token = open(os.path.join(SA_DIR, "token")).read().strip()
 
-_lock = threading.Lock()
+_lock = threading.RLock()   # реентерабельный: update() держит _lock и вызывает save_scan()
 
 # Кэш списка сканов: чтение тысяч JSON-файлов на каждый запрос дорого (дашборд опрашивает
 # /scans и /stats часто). TTL 5 с; сбрасывается при сохранении нового скана.
@@ -190,6 +207,17 @@ def update(scan_id: str, **fields) -> None:
             return
         rec.update(fields)
         save_scan(rec)
+    # прогресс скана зеркалируется в PostgreSQL, чтобы список/статистика читались из БД
+    # (вне _lock: сетевой ввод-вывод не должен блокировать остальные операции)
+    sets = []
+    if "state" in fields:
+        sets.append(f"status={_lit(fields['state'])}")
+    if "stage" in fields:
+        sets.append(f"stage={_lit(fields['stage'])}")
+    if "progress" in fields:
+        sets.append(f"progress={int(fields['progress'])}")
+    if sets:
+        db_exec(f"UPDATE scans SET {', '.join(sets)} WHERE scan_id={_lit(scan_id)}")
 
 
 def _invalidate_scans_cache() -> None:
@@ -198,7 +226,22 @@ def _invalidate_scans_cache() -> None:
         _scans_cache["ts"] = 0.0
 
 
+_LIST_SQL = (
+    "SELECT s.scan_id, a.filename, a.size, a.sha256, s.status, s.stage, s.progress, s.verdict, "
+    "to_char(s.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS'), "
+    "to_char(COALESCE(s.finished_at, s.created_at), 'YYYY-MM-DD\"T\"HH24:MI:SS') "
+    "FROM scans s LEFT JOIN artifacts a ON a.id = s.artifact_id "
+    "ORDER BY s.created_at DESC")
+
+
 def list_scans() -> list[dict]:
+    # Основной путь — PostgreSQL (метаданные сканов и артефактов), без чтения тысяч файлов.
+    rows = db_query(_LIST_SQL)
+    if rows:
+        keys = ("scan_id", "name", "size", "sha256", "state", "stage", "progress",
+                "verdict", "created", "updated")
+        return [dict(zip(keys, r)) for r in rows]
+    # Фолбэк (БД недоступна): файлы /data/scans/*.json
     now = time.time()
     with _lock:
         cached = _scans_cache["data"]
@@ -223,6 +266,22 @@ def list_scans() -> list[dict]:
 
 
 def stats() -> dict:
+    rows = db_query("SELECT s.status, s.verdict, a.size, a.sha256 "
+                    "FROM scans s LEFT JOIN artifacts a ON a.id = s.artifact_id")
+    if rows is not None:
+        by_state: dict[str, int] = {}
+        by_verdict: dict[str, int] = {}
+        total_bytes = 0
+        hashes = set()
+        for status, verdict, size, sha in rows:
+            by_state[status or "?"] = by_state.get(status or "?", 0) + 1
+            if verdict:
+                by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
+            total_bytes += int(size or 0)
+            if sha:
+                hashes.add(sha)
+        return {"scans": len(rows), "by_state": by_state, "by_verdict": by_verdict,
+                "total_bytes": total_bytes, "distinct_sha256": len(hashes)}
     scans = list_scans()
     by_state: dict[str, int] = {}
     by_verdict: dict[str, int] = {}
@@ -629,9 +688,19 @@ class Handler(BaseHTTPRequestHandler):
             rec["local_path"] = local
         save_scan(rec)
         if DB_ENABLED:
-            db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key) VALUES "
-                    f"({_lit(sha)},{int(got)},{_lit(fmt)},{_lit(name)},{_lit(rec.get('s3_key'))}) "
-                    "ON CONFLICT (sha256) DO NOTHING")
+            rows = db_query(
+                "INSERT INTO artifacts(sha256,size,format,filename,s3_key) VALUES "
+                f"({_lit(sha)},{int(got)},{_lit(fmt)},{_lit(name)},{_lit(rec.get('s3_key'))}) "
+                "ON CONFLICT (sha256) DO UPDATE SET size=EXCLUDED.size, "
+                "filename=EXCLUDED.filename, s3_key=EXCLUDED.s3_key RETURNING id")
+            art_id = rows[0][0] if rows else None
+            if art_id is not None:
+                rec["artifact_id"] = art_id
+                save_scan(rec)
+            db_exec("INSERT INTO scans(scan_id,artifact_id,status,stage,progress) VALUES "
+                    f"({_lit(scan_id)},{art_id if art_id is not None else 'NULL'},"
+                    f"'queued','queued',0) "
+                    "ON CONFLICT (scan_id) DO UPDATE SET artifact_id=EXCLUDED.artifact_id")
             db_exec("INSERT INTO uploads(artifact_id,request_id,bytes,status,finished_at) "
                     f"SELECT id,{_lit(scan_id)},{int(got)},'received',now() FROM artifacts WHERE sha256={_lit(sha)}")
         if authz is not None:
@@ -655,6 +724,29 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": "not found"})
 
 
+def reap_stale_scans() -> int:
+    """Помечает прерванные сканы (queued/running) как error.
+
+    Очереди нет: обработка идёт в потоке процесса, поэтому после перезапуска пода
+    такие сканы остаются «вечно в процессе». При старте переводим их в error
+    (файл + зеркало в PostgreSQL), чтобы список и статистика были корректны.
+    """
+    n = 0
+    for fn in os.listdir(store_dir()):
+        if not fn.endswith(".json"):
+            continue
+        sid = fn[:-5]
+        rec = load_scan(sid)
+        if not rec or rec.get("state") not in ("queued", "running"):
+            continue
+        update(sid, state="error", stage="error", progress=100, verdict="Inconclusive",
+               reason="проверка прервана (перезапуск сервиса тестирования)")
+        n += 1
+    if n:
+        print(f"[testing] прерванных сканов помечено error: {n}", flush=True)
+    return n
+
+
 def main() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(DATA_TMP, exist_ok=True)
@@ -663,6 +755,10 @@ def main() -> None:
     threading.Thread(target=lambda: ThreadingHTTPServer(("0.0.0.0", ARTIFACT_PORT),
                                                         ArtifactHandler).serve_forever(),
                      daemon=True).start()
+    try:
+        reap_stale_scans()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] housekeeping: {type(exc).__name__}: {exc}", file=sys.stderr)
     port = int(os.environ.get("PORT", "8080"))
     print(f"[testing] api :{port}, artifacts :{ARTIFACT_PORT}, artifacts_dir={ARTIFACTS_DIR}",
           flush=True)
