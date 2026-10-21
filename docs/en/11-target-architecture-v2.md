@@ -24,6 +24,8 @@ What is already in the perimeter (as-built, see §11):
 | Retention/TTL and quarantine | ✅ (`deploy/v2/lifecycle`, `mlscan-lifecycle`) |
 | Format adapters and detectors (model-as-code, Keras, ONNX, HDF5, GGUF, archives, XXE, tokenizers, prompt-injection, agent/MCP) | ✅ (`deploy/v2/formats`) |
 | Localisation of the UI and messages RU/EN, global language setting | ✅ (`deploy/i18n`, [`12-i18n.md`](./12-i18n.md)) |
+| Coverage completeness taken into account in the verdict (`Inconclusive` instead of a false `Safe`) | ✅ (`poc.decide`, analytics, UI banner) |
+| Synthetic corpus of samples (141: 87 malicious + 54 benign, including ~198 MB) | ✅ (`tests/vulnerabilities`, `REPORT.md`) |
 | Multipart/presigned direct-to-S3, mmap profiles, object-lock quarantine, Keycloak/mTLS | ⏳ plan |
 
 ---
