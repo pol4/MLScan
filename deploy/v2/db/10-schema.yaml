@@ -68,6 +68,7 @@ data:
     );
     CREATE TABLE IF NOT EXISTS users (
       id BIGSERIAL PRIMARY KEY, subject TEXT UNIQUE, email TEXT, roles TEXT[],
+      password_hash TEXT, salt TEXT, iterations INT DEFAULT 200000,
       created_at TIMESTAMPTZ DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS api_keys (

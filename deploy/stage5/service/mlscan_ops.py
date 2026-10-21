@@ -345,6 +345,8 @@ class Handler(BaseHTTPRequestHandler):
         self._rid = authz.request_id(self.headers)
         ent = authz.authenticate(self.headers)
         if ent is None:
+            ent = authz.from_cookie(self.headers)
+        if ent is None:
             self._subject = "anonymous"
             self._json(401, {"error": "unauthorized", "request_id": self._rid})
             return None

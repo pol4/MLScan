@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -30,6 +31,98 @@ try:
 except Exception:  # noqa: BLE001
     KEYS = {}
 AUTH_ENABLED = os.environ.get("MLSCAN_AUTH", "on").lower() not in ("off", "0", "false")
+
+
+SESSION_SECRET = os.environ.get("MLSCAN_SESSION_SECRET", "")
+PBKDF2_ITER = int(os.environ.get("PBKDF2_ITER", "200000"))
+
+
+def _roles(v) -> list:
+    """TEXT[] из pgclient приходит строкой вида '{admin,analyst}'."""
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        return [r for r in v.strip("{}").split(",") if r]
+    return []
+
+
+def hash_password(password: str, salt: str | None = None, iterations: int = PBKDF2_ITER):
+    import hashlib as _h
+    import secrets as _s
+    if salt is None:
+        salt = _s.token_hex(16)
+    dk = _h.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), iterations)
+    return salt, iterations, dk.hex()
+
+
+def verify_password(subject: str, password: str):
+    """Проверка логина/пароля по таблице users. Возвращает {subject, roles} или None."""
+    c = _conn()
+    if not c:
+        return None
+    try:
+        _cols, rows = c.query("SELECT subject, roles, salt, iterations, password_hash FROM users "
+                              f"WHERE subject = {_lit(subject)}")
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        c.close()
+    if not rows:
+        return None
+    subj, roles, salt, iters, ph = rows[0]
+    if not ph or not salt:
+        return None
+    import hashlib as _h
+    calc = _h.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt),
+                          int(iters or PBKDF2_ITER)).hex()
+    if hmac.compare_digest(calc, ph):
+        return {"subject": subj, "roles": _roles(roles)}
+    return None
+
+
+def make_session(subject: str, roles, ttl: int = 12 * 3600):
+    if not SESSION_SECRET:
+        return None
+    import base64 as _b
+    payload = _b.urlsafe_b64encode(json.dumps(
+        {"sub": subject, "roles": list(roles or []), "exp": int(__import__("time").time()) + ttl}
+    ).encode()).decode()
+    sig = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return payload + "." + sig
+
+
+def verify_session(token: str):
+    if not SESSION_SECRET or not token or "." not in token:
+        return None
+    import base64 as _b
+    payload, sig = token.rsplit(".", 1)
+    exp = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, exp):
+        return None
+    try:
+        d = json.loads(_b.urlsafe_b64decode(payload))
+    except Exception:  # noqa: BLE001
+        return None
+    if int(d.get("exp", 0)) < int(__import__("time").time()):
+        return None
+    return {"subject": d.get("sub"), "roles": d.get("roles", [])}
+
+
+def from_cookie(headers):
+    """Сессия/ключ из cookie (mlscan_session — подписанная, mlscan_key — API-ключ)."""
+    raw = headers.get("Cookie", "") or ""
+    vals = {}
+    for part in raw.split(";"):
+        k, _, v = part.strip().partition("=")
+        if k:
+            vals[k] = v
+    if vals.get("mlscan_session"):
+        ent = verify_session(vals["mlscan_session"])
+        if ent:
+            return ent
+    if vals.get("mlscan_key"):
+        return validate_key(vals["mlscan_key"])
+    return None
 
 
 def new_request_id() -> str:

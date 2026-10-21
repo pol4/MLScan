@@ -271,6 +271,23 @@ Harness песочницы умеет **исполнять entry-код** model-
 Проверено: `evil_reqs.zip` → Malicious (install-hooks + code), `evil_polyglot.png` → Malicious
 (polyglot), `evil_url_config/evil_steg/evil_blob` → Needs review, `benign_image.png` → Safe.
 
+## Вход в UI: логин/пароль и единый вход (реализовано)
+
+- **Логин/пароль**: пользователи хранятся в таблице `users` (PBKDF2-HMAC-SHA256, соль+итерации).
+  Создание/обновление: `bash deploy/v2/auth/users.sh` (пароли генерируются, либо задаются
+  `PASS_ADMIN`/`PASS_ANALYST`; печатаются и сохраняются локально в `/tmp/mlscan-users.json`).
+- **Сессия**: при успешном входе выдаётся подписанная cookie `mlscan_session`
+  (HMAC-SHA256, TTL 12 ч; секрет — `SESSION_SECRET` в Secret `mlscan-keys`).
+- **Единый вход** для `analytics`/`ops`/`integrations`: cookie ставится с `Domain=.mlscan.local`
+  (`MLSCAN_COOKIE_DOMAIN`), поэтому один вход открывает все хосты UI/API.
+- **Выход**: `GET /logout` (сброс cookie).
+- **API-ключи остаются** для CI/скриптов (`Authorization: Bearer <key>` или форма «по ключу»);
+  роли: `admin`, `analyst` (+`ci-reader`), `service`.
+- Журнал: события `login`, `login_failed` пишутся в `audit_log`.
+
+Проверено: вход `admin`/`analyst` → 302 + cookie → `/api/overview` 200; неверный пароль → 401;
+без сессии → 401; одна сессия даёт доступ к `analytics`, `ops`, `integrations` (все 200).
+
 ## Метрики качества по форматам (A8, реализовано)
 
 Golden-набор расширен на **все форматы** (`poc/scan/*.pkl` + `poc/scan/formats/*`):

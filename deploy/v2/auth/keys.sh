@@ -33,9 +33,18 @@ PY
 KEYS="$(cat "$OUT")"
 SVC="$(python3 -c "import json;d=json.load(open('$OUT'));print([k for k,v in d.items() if v.get('roles')==['service']][0])")"
 
+# секрет для подписи сессионных cookie
+SESS_FILE="${OUT}.session"
+if [ ! -f "$SESS_FILE" ]; then
+  python3 -c "import secrets;print(secrets.token_hex(32))" > "$SESS_FILE"
+  chmod 600 "$SESS_FILE"
+fi
+SESSION_SECRET="$(cat "$SESS_FILE")"
+
 for ns in mlscan-testing mlscan-analytics mlscan-integrations mlscan-data mlscan-ops; do
   kubectl -n "$ns" create secret generic mlscan-keys \
     --from-literal=MLSCAN_KEYS="$KEYS" --from-literal=INTERNAL_KEY="$SVC" \
+    --from-literal=SESSION_SECRET="$SESSION_SECRET" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1 || true
 done
 

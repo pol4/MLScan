@@ -35,6 +35,11 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "")
+COOKIE_DOMAIN = os.environ.get("MLSCAN_COOKIE_DOMAIN", "")
+
+
+def _cookie_attr() -> str:
+    return f"; Domain={COOKIE_DOMAIN}" if COOKIE_DOMAIN else ""
 
 
 def _auth_headers() -> dict:
@@ -457,7 +462,7 @@ input[type=file]{color:#e6e6e6} button{background:#3d7dd8;color:#fff;border:0;bo
 def _page(title: str, body: str, script: str = "") -> bytes:
     return (f"<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
             f"<title>{title} — MLScan</title>{_STYLE}</head><body>"
-            f"<header><h1><a href='/'>MLScan — Analytics</a></h1><a href='/login'>вход</a>"
+            f"<header><h1><a href='/'>MLScan — Analytics</a></h1><a href='/login'>вход</a> <a href='/logout'>выход</a>"
             f"<a href='/api/overview'>JSON</a><a href='/api/evidence/verify'>evidence</a>"
             f"<a href='/policy'>policy</a></header><main>{body}</main>{script}</body></html>").encode()
 
@@ -523,10 +528,16 @@ refresh();setInterval(refresh,3000);
 def _login_page(error: str = "") -> bytes:
     body = ("<h2>Вход в MLScan</h2>"
             + (f"<p style='color:#ff6b6b'>{error}</p>" if error else "")
-            + "<form method='post' action='/login'>"
-            "<input name='key' type='password' placeholder='API-ключ' style='padding:8px;min-width:280px'> "
+            + "<form method='post' action='/login' style='display:flex;flex-direction:column;gap:8px;max-width:320px'>"
+            "<input name='username' placeholder='Логин' autocomplete='username' "
+            "style='padding:8px'>"
+            "<input name='password' type='password' placeholder='Пароль' autocomplete='current-password' "
+            "style='padding:8px'>"
             "<button type='submit'>Войти</button></form>"
-            "<p style='color:#9aa4b2'>Ключ выдаётся администратором (admin/ci).</p>")
+            "<p style='color:#9aa4b2;margin-top:14px'>Для CI/скриптов можно войти по API-ключу:</p>"
+            "<form method='post' action='/login' style='display:flex;gap:8px;max-width:320px'>"
+            "<input name='key' type='password' placeholder='API-ключ' style='padding:8px;flex:1'>"
+            "<button type='submit'>Войти по ключу</button></form>")
     return _page("Вход", body)
 
 
@@ -630,11 +641,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _cookie_key(self):
+    def _cookie(self, name: str) -> str:
         raw = self.headers.get("Cookie", "") or ""
         for part in raw.split(";"):
             k, _, v = part.strip().partition("=")
-            if k == "mlscan_key":
+            if k == name:
                 return v
         return ""
 
@@ -644,8 +655,8 @@ class Handler(BaseHTTPRequestHandler):
             return {"subject": "anonymous"}
         self._rid = authz.request_id(self.headers)
         ent = authz.authenticate(self.headers)
-        if ent is None and self._cookie_key():
-            ent = authz.validate_key(self._cookie_key())
+        if ent is None:
+            ent = authz.from_cookie(self.headers)
         if ent is None:
             self._subject = "anonymous"
             try:
@@ -717,6 +728,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"status": "ok", "scans": len(_index)})
         if p == "/login":
             return self._send(200, _login_page(), "text/html; charset=utf-8")
+        if p == "/logout":
+            self.send_response(302)
+            self.send_header("Set-Cookie", "mlscan_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+            self.send_header("Set-Cookie", "mlscan_key=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+            self.send_header("Location", "/login")
+            self.end_headers()
+            return
         if self._require() is None:
             return
         if p == "/api/scans":
@@ -761,12 +779,35 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", "0") or "0")
             body = self.rfile.read(n).decode() if n else ""
             form = urllib.parse.parse_qs(body)
+            rid = authz.request_id(self.headers) if authz else ""
+            ip = self.client_address[0]
+            username = (form.get("username", [""])[0] or "").strip()
+            password = form.get("password", [""])[0] or ""
             key = (form.get("key", [""])[0] or "").strip()
+            if username:
+                ent = authz.verify_password(username, password) if authz else None
+                if not ent:
+                    if authz:
+                        authz.audit(username, "login_failed", "user", username, rid, ip, {})
+                    return self._send(401, _login_page("Неверный логин или пароль"), "text/html; charset=utf-8")
+                token = authz.make_session(ent["subject"], ent["roles"]) if authz else None
+                if authz:
+                    authz.audit(ent["subject"], "login", "user", ent["subject"], rid, ip, {"roles": ent["roles"]})
+                self.send_response(302)
+                if token:
+                    self.send_header("Set-Cookie", f"mlscan_session={token}; HttpOnly; Path=/; SameSite=Lax{_cookie_attr()}")
+                self.send_header("Location", "/")
+                self.end_headers()
+                return
             ent = authz.validate_key(key) if authz else None
             if not ent:
+                if authz:
+                    authz.audit("anonymous", "login_failed", "apikey", "", rid, ip, {})
                 return self._send(401, _login_page("Неверный ключ"), "text/html; charset=utf-8")
+            if authz:
+                authz.audit(ent["subject"], "login", "apikey", ent["subject"], rid, ip, {})
             self.send_response(302)
-            self.send_header("Set-Cookie", f"mlscan_key={key}; HttpOnly; Path=/; SameSite=Lax")
+            self.send_header("Set-Cookie", f"mlscan_key={key}; HttpOnly; Path=/; SameSite=Lax{_cookie_attr()}")
             self.send_header("Location", "/")
             self.end_headers()
             return

@@ -39,6 +39,9 @@ spec:
           valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_KEYS}}
         - name: INTERNAL_KEY
           valueFrom: {secretKeyRef: {name: mlscan-keys, key: INTERNAL_KEY}}
+        - {name: MLSCAN_COOKIE_DOMAIN, value: ".mlscan.local"}
+        - name: MLSCAN_SESSION_SECRET
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: SESSION_SECRET}}
         - {name: PGHOST, value: postgres.mlscan-data.svc.cluster.local}
         - {name: PGPORT, value: "5432"}
         - {name: PGUSER, value: mlscan}
