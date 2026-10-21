@@ -54,6 +54,13 @@
 - **v2, волны форматов 1–3** — адаптеры и детекторы вне pickle (model-as-code, Keras, ONNX, HDF5,
   GGUF, архивы, XXE/unsafe-YAML, токенизаторы, prompt-injection, agent/MCP), динамика
   model-as-code; чек-иды `EXEC/INJ/AGT/BD/FMT/INT/STEG`/`D`.
+- **v2, волны форматов 4–7** — ноутбуки, скрипты, MLflow, TF SavedModel, TFLite, CoreML, PMML,
+  датасеты Parquet/Arrow, TorchScript-код, wheel/`.pth`-хуки, нативные библиотеки (`EXEC-08`),
+  Jinja-шаблоны промптов, HTML/SVG, Dockerfile, GGUF chat_template, вложенные архивы, сжатые
+  payload'ы (`.gz/.bz2/.xz`), JSONL/CSV-датасеты (`INJ-06`), MessagePack, утечки секретов
+  (`SEC-01`), дубликаты записей (`FMT-12`), tar-bomb и маскировка формата (`FMT-02`).
+- **Полнота покрытия** — если модуль проверки не смог отработать, вердикт `Safe` заменяется на
+  `Inconclusive` с частичным результатом (в сервисе тестирования и в аналитике/UI).
 - **Локализация** — UI и сообщения сервисов на **RU/EN** с глобальной настройкой языка
   (`MLSCAN_LANG` при запуске или настройка в БД; см. `docs/12-i18n.md`).
 

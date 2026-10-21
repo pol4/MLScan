@@ -126,9 +126,15 @@ planes (analytics, DB, UI) stay in the trusted zone.
 
 ### Formats
 
-pickle and derivatives (`.pkl/.pickle`, `.joblib`, `.dill`, `.cloudpickle`, `.pt/.pth/.bin/.ckpt`,
-`.npy/.npz`), SafeTensors, ONNX, HDF5/`.keras`, GGUF, archives (`.zip/.tar`), XML/YAML configs,
-model cards, tokenizer artifacts, MCP/agent manifests.
+**Models:** pickle and derivatives (`.pkl/.pickle`, `.joblib`, `.dill`, `.cloudpickle`,
+`.pt/.pth/.bin/.ckpt`), `.npy/.npz`, SafeTensors, ONNX, HDF5/`.keras`, GGUF, TFLite, CoreML,
+TorchScript/torch.package, TF SavedModel/`.pb`, PMML, MLflow models, model-as-code (`.mar`,
+`model.py`), Parquet/Arrow/Feather datasets.
+**Packages and data:** archives (`.zip/.tar/.tar.gz/.whl`), compressed payloads (`.gz/.bz2/.xz`),
+JSONL/CSV/TSV datasets, MessagePack, notebooks (`.ipynb`), scripts (`.sh/.ps1/.bat`), Dockerfiles,
+HTML/SVG documents, Jinja templates (`.j2`), XML/YAML/JSON configs, model cards, tokenizer artifacts,
+MCP/agent manifests, native libraries (`.so/.dll/.dylib`), `.pth` hooks, and unsupported containers
+(7z/rar/zstd - an honest "cannot be parsed").
 
 ### Detectors (check IDs)
 
@@ -143,11 +149,19 @@ model cards, tokenizer artifacts, MCP/agent manifests.
 | `INT-*` | integrity and supply chain (external URLs, install hooks in archives) |
 | `STEG-*` | covert channels (trailing data after EOCD, entropy blobs, polyglot containers) |
 | `D-*` | integrity/signature/provenance, "non-pickle" formats |
+| `SEC-*` | secret and token leaks (AWS keys, private keys, HF/GitHub/Slack tokens) |
 
-The sandbox image `mlscan-sandbox` (built with Kaniko) contains libraries for dynamic model
-execution: **PyTorch (CPU), numpy, safetensors, onnxruntime, h5py, gguf, joblib, dill,
-cloudpickle** — so models in pickle, torch, numpy and model-as-code formats are actually loaded
-and executed.
+Also: nested archives are traversed recursively (zip in zip), `INJ-06` covers CSV formula
+injection, `FMT-12` duplicate archive entries (parser differential) and `EXEC-08` native libraries.
+The verdict accounts for **coverage completeness**: when a verification module could not run (the
+model failed to load, a dependency is missing, a timeout), `Safe` becomes `Inconclusive` with a
+partial result - both in the testing service and in analytics/UI.
+
+The sandbox image `mlscan-sandbox:v4` (built with Kaniko) contains libraries for dynamic model
+execution and parsing: **PyTorch (CPU), numpy, safetensors, onnxruntime, onnx, h5py, gguf, pyarrow,
+PyYAML, joblib, dill, cloudpickle** — so models in pickle, torch, numpy and model-as-code formats are
+actually loaded and executed, while safetensors/ONNX/HDF5/GGUF/Keras/Parquet containers are parsed by
+dedicated libraries (mmap/schema).
 
 **An honest verdict when the scan is incomplete.** There are three modules (static L1, dynamic L2,
 behaviour L3). If a module could not run — the model failed to load (missing dependency),
@@ -201,11 +215,21 @@ analytics/ops/integrations); CI/scripts can sign in with an API key:
 
 ![MLScan UI — sign in](docs/img/en/ui-login.png)
 
+**Session expired** — when a session in an open tab runs out (12 h), the UI returns to the sign-in
+screen with a notice instead of silently showing an empty table:
+
+![MLScan UI — session expired](docs/img/en/ui-login-expired.png)
+
 **Dashboard** — model upload (including large files), statistics by verdict/volume, filtering by
 name and result, sorting by date/volume, a table with SHA-256, size, scan progress, verdict, risk
-score and policy action:
+score and policy action (the current stand holds 3575 scans):
 
 ![MLScan UI — dashboard](docs/img/en/ui-dashboard.png)
+
+**Settings** — the global message language of the whole system (available to the `admin` role; stored
+in the database and applied by every service to new and historical records):
+
+![MLScan UI — settings](docs/img/en/ui-settings.png)
 
 **Incomplete scan card** — a model the dynamic stage could not load (module `mymod` is missing):
 verdict **Inconclusive** instead of a false `Safe`, the banner "The scan is incomplete" and the

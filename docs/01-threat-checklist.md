@@ -27,6 +27,11 @@
 
 ---
 
+> **Реализованные проверки** (чек-иды `A-*`, `EXEC-*`, `INJ-*`, `AGT-*`, `BD-*`, `FMT-*`,
+> `INT-*`, `STEG-*`, `SEC-*`, `D-*`) и их соответствие классам риска — в
+> [`07-implemented-architecture.md`](./07-implemented-architecture.md); фактический корпус
+> примеров (с закладками и без) — [`../tests/vulnerabilities/`](../tests/vulnerabilities).
+
 ## A. Риски десериализации (execution-time)
 
 | ID | Риск | Механизм | Наблюдаемые признаки | Severity |
