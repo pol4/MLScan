@@ -194,7 +194,7 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 **«Динамический этап»**: `загрузка: ok`, `тип: dict`, `subprocess: 1` — модель действительно
 загружена и payload исполнен в песочнице:
 
-![MLScan UI — карточка артефакта (torch-модель ≈256 МиБ)](docs/img/ui-artifact.png)
+![MLScan UI — карточка артефакта (torch-модель ≈256 МиБ)](docs/img/ui-torch-large.png)
 
 **Карточка артефакта не-pickle формата** (`evil_mar.mar`, model-as-code): вердикт **Malicious**,
 находки `EXEC-01` (critical) и `EXEC-02` (high) из адаптера формата, плюс динамическое
