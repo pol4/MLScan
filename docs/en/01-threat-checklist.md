@@ -2,6 +2,11 @@
 
 # Checklist of potential hazards of ML models in pickle format
 
+> **Implemented checks** (`A-*`, `EXEC-*`, `INJ-*`, `AGT-*`, `BD-*`, `FMT-*`, `INT-*`, `STEG-*`,
+> `SEC-*`, `D-*`) and how they map to risk classes are in
+> [`07-implemented-architecture.md`](./07-implemented-architecture.md); the corpus of samples
+> (with and without backdoors) is in [`../../tests/vulnerabilities/`](../../tests/vulnerabilities).
+
 The document describes an exhaustive list of risks associated with the intake, storage,
 loading and use of ML models supplied in pickle format (`.pkl`, `.pickle`,
 `.joblib`, `.pt`, `.pth`, `.bin`, `.npy/.npz` with `allow_pickle=True`, `dill`,

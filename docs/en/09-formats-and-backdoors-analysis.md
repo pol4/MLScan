@@ -2,7 +2,13 @@
 
 # 09. Analysis of ML/AI model and data formats: what else needs to be checked for security
 
-Status: draft for elaboration. The goal is to determine **which other formats** of models and data
+Status: **most of the analysed formats are implemented** (format waves 1-7: model-as-code, Keras,
+ONNX, HDF5, GGUF, archives, XXE/unsafe YAML, tokenizers, prompt injection, agent/MCP, notebooks,
+scripts, MLflow, TF SavedModel, TFLite, CoreML, PMML, Parquet/Arrow datasets, TorchScript,
+wheel/`.pth`, native libraries, Jinja, HTML/SVG, Dockerfile, compressed payloads, JSONL/CSV,
+MessagePack, secret leaks, duplicate entries, tar bombs). What is implemented is in
+[`07-implemented-architecture.md`](./07-implemented-architecture.md), the plan in
+[`10-plan-new-formats.md`](./10-plan-new-formats.md). The goal is to determine **which other formats** of models and data
 in ML/AI require security analysis, **which backdoors** occur in them, and **exactly what**
 needs to be checked, so that MLScan can then be extended.
 
