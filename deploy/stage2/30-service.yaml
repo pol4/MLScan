@@ -58,6 +58,7 @@ spec:
           valueFrom: {secretKeyRef: {name: mlscan-pg, key: POSTGRES_PASSWORD}}
         - {name: MAX_UPLOAD, value: "21474836480"}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+        - {name: MLSCAN_LANG, value: "ru"}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
         - name: MLSCAN_KEYS
@@ -88,6 +89,7 @@ spec:
         - {name: pgclient, mountPath: /opt/pg, readOnly: true}
         - {name: formats, mountPath: /opt/formats, readOnly: true}
         - {name: authz, mountPath: /opt/auth, readOnly: true}
+        - {name: i18n, mountPath: /opt/i18n, readOnly: true}
         - {name: modeltmp, mountPath: /var/tmp}
         - {name: tmp, mountPath: /tmp}
       volumes:
@@ -98,6 +100,7 @@ spec:
       - {name: pgclient, configMap: {name: mlscan-pgclient}}
       - {name: formats, configMap: {name: mlscan-formats}}
       - {name: authz, configMap: {name: mlscan-authz}}
+      - {name: i18n, configMap: {name: mlscan-i18n}}
       - {name: modeltmp, emptyDir: {sizeLimit: 120Gi}}
       - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
 ---

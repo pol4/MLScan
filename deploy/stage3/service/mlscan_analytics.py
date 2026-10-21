@@ -97,6 +97,22 @@ try:
 except Exception:  # noqa: BLE001
     authz = None  # type: ignore
 
+sys.path.insert(0, "/opt/i18n")
+try:
+    import i18n  # noqa: E402
+except Exception:  # noqa: BLE001
+    i18n = None  # type: ignore
+
+
+def T(key: str, lang: str = "ru", **fmt) -> str:
+    """Строка UI по ключу каталога (RU/EN). Без i18n — ключ как есть."""
+    return i18n.t(key, lang, **fmt) if i18n else key
+
+
+def TR(text, lang: str = "ru"):
+    """Перевод «свободной» строки (находка, причина, ошибка сервиса)."""
+    return i18n.tr(text, lang) if i18n else text
+
 _u = urllib.parse.urlparse(TESTING_URL)
 TEST_HOST = _u.hostname
 TEST_PORT = _u.port or 80
@@ -392,46 +408,63 @@ def stats() -> dict:
 # ----------------------------------------------------------------------------
 # Отчёты
 # ----------------------------------------------------------------------------
-def report_md(rec: dict) -> str:
-    L = [f"# MLScan отчёт: {rec.get('name')}", ""]
-    L.append(f"- **scan_id:** `{rec.get('scan_id')}`")
+def report_md(rec: dict, lang: str = "ru") -> str:
+    L = [f"# {T('report.title', lang, name=rec.get('name'))}", ""]
+    L.append(f"- **{T('report.scan_id', lang)}:** `{rec.get('scan_id')}`")
     L.append(f"- **SHA-256:** `{rec.get('sha256')}`")
-    L.append(f"- **Размер:** {rec.get('size')} байт")
-    L.append(f"- **Формат:** `{rec.get('format')}`")
-    L.append(f"- **Вердикт:** **{rec.get('verdict')}** "
+    L.append(f"- **{T('report.size', lang)}:** {rec.get('size')} {T('art.bytes', lang)}")
+    L.append(f"- **{T('report.format', lang)}:** `{rec.get('format')}`")
+    L.append(f"- **{T('report.verdict', lang)}:** **{rec.get('verdict')}** "
              f"(policy: {rec['policy'].get('rule_id')} → {rec['policy'].get('action')})")
-    L.append(f"- **Риск-скор:** {rec['score'].get('risk_score')} "
+    L.append(f"- **{T('report.risk', lang)}:** {rec['score'].get('risk_score')} "
              f"(max severity: {rec['score'].get('max_severity')})")
     if rec.get("timings"):
-        L.append(f"- **Тайминги:** {rec['timings']}")
+        L.append(f"- **{T('report.timings', lang)}:** {rec['timings']}")
+    if rec.get("service_reason"):
+        L.append(f"- **{T('art.reason', lang)}:** {TR(rec.get('service_reason'), lang)}")
     L.append("")
-    L.append("## Находки")
+    L.append(f"## {T('report.findings', lang)}")
     L.append("")
-    L.append("| Уровень | ID | Severity | Уверенность | Находка |")
+    L.append(f"| {T('report.col.level', lang)} | {T('report.col.id', lang)} | "
+             f"{T('report.col.severity', lang)} | {T('report.col.conf', lang)} | "
+             f"{T('report.col.finding', lang)} |")
     L.append("|---------|----|----------|-------------|---------|")
     for f in sorted(rec.get("findings", []), key=lambda x: -SEV_RANK.get(x["severity"], 0)):
-        L.append(f"| {f['level']} | {f['check_id']} | {f['severity']} | {f.get('confidence', 0):.2f} | {f['title']} |")
+        L.append(f"| {f['level']} | {f['check_id']} | {f['severity']} | {f.get('confidence', 0):.2f} | "
+                 f"{TR(f['title'], lang)} |")
     if not rec.get("findings"):
-        L.append("Находок нет.")
+        L.append(T("report.no_findings", lang))
     return "\n".join(L)
 
 
-def report_sarif(rec: dict) -> dict:
+def report_sarif(rec: dict, lang: str = "ru") -> dict:
     rules, results = {}, []
     for f in rec.get("findings", []):
-        rules.setdefault(f["check_id"], {"id": f["check_id"], "name": f["title"],
-                                         "shortDescription": {"text": f["title"]},
+        title = TR(f["title"], lang)
+        rules.setdefault(f["check_id"], {"id": f["check_id"], "name": title,
+                                         "shortDescription": {"text": title},
                                          "properties": {"severity": f["severity"], "category": f["category"]}})
         results.append({"ruleId": f["check_id"],
                         "level": {"critical": "error", "high": "error", "medium": "warning",
                                   "low": "note", "info": "note"}.get(f["severity"], "warning"),
-                        "message": {"text": f["title"] + (f" — {f.get('evidence','')}" if f.get("evidence") else "")},
+                        "message": {"text": title + (f" — {TR(f.get('evidence'), lang)}" if f.get("evidence") else "")},
                         "properties": {"confidence": f.get("confidence"), "level": f["level"]}})
     return {"$schema": "https://json.schemastore.org/sarif-2.1.0.json", "version": "2.1.0",
             "runs": [{"tool": {"driver": {"name": "MLScan", "informationUri": "https://github.com/pol4/MLScan",
                                           "rules": list(rules.values())}},
                       "results": results,
-                      "properties": {"verdict": rec.get("verdict"), "risk_score": rec["score"].get("risk_score")}}]}
+                      "properties": {"verdict": rec.get("verdict"), "risk_score": rec["score"].get("risk_score"),
+                                     "language": lang}}]}
+
+
+def localized_record(rec: dict, lang: str = "ru") -> dict:
+    """Копия записи с локализованными находками/причиной (для JSON-отчёта/API)."""
+    out = dict(rec)
+    out["findings"] = i18n.localize_findings(rec.get("findings", []), lang) if i18n else rec.get("findings", [])
+    if rec.get("service_reason"):
+        out["service_reason"] = TR(rec["service_reason"], lang)
+    out["language"] = lang
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -459,15 +492,43 @@ input[type=file]{color:#e6e6e6} button{background:#3d7dd8;color:#fff;border:0;bo
 </style>"""
 
 
-def _page(title: str, body: str, script: str = "") -> bytes:
-    return (f"<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
+def _lang_switch(lang: str, next_path: str = "/") -> str:
+    """Переключатель языка: RU | EN (cookie mlscan_lang)."""
+    nxt = urllib.parse.quote(next_path or "/")
+    parts = []
+    for code in ("ru", "en"):
+        label = "RU" if code == "ru" else "EN"
+        if code == lang:
+            parts.append(f"<b>{label}</b>")
+        else:
+            parts.append(f"<a href='/lang?set={code}&next={nxt}'>{label}</a>")
+    return (f"<span style='margin-left:auto;color:#9aa4b2;font-size:12px'>"
+            f"{T('nav.language', lang)}: " + " | ".join(parts) + "</span>")
+
+
+def _page(title: str, body: str, script: str = "", lang: str = "ru",
+          subject: str = "anonymous", roles: list | None = None) -> bytes:
+    roles = roles or []
+    extra = ("<a href='/settings'>" + T("settings.title", lang) + "</a>") if "admin" in roles else ""
+    return (f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>"
             f"<title>{title} — MLScan</title>{_STYLE}</head><body>"
-            f"<header><h1><a href='/'>MLScan — Analytics</a></h1><a href='/login'>вход</a> <a href='/logout'>выход</a>"
-            f"<a href='/api/overview'>JSON</a><a href='/api/evidence/verify'>evidence</a>"
-            f"<a href='/policy'>policy</a></header><main>{body}</main>{script}</body></html>").encode()
+            f"<header><h1><a href='/'>MLScan — Analytics</a></h1>"
+            f"<a href='/login'>{T('nav.login', lang)}</a> <a href='/logout'>{T('nav.logout', lang)}</a>"
+            f"<a href='/api/overview'>{T('nav.json', lang)}</a>"
+            f"<a href='/api/evidence/verify'>{T('nav.evidence', lang)}</a>"
+            f"<a href='/policy'>{T('nav.policy', lang)}</a>{extra}"
+            f"{_lang_switch(lang)}</header><main>{body}</main>{script}</body></html>").encode()
 
 
-_JS = """<script>
+def _js(lang: str) -> str:
+    labels = {
+        "total": T("dash.total", lang),
+        "volume": T("dash.volume", lang),
+        "shown": T("dash.shown", lang, n="{n}", m="{m}"),
+        "upload_error": T("dash.upload_error", lang),
+    }
+    return """<script>
+const L = __LABELS__;
 function fmtBytes(b){b=+b||0;const u=['B','KiB','MiB','GiB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++;}return b.toFixed(b<10&&i>0?1:0)+' '+u[i];}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function shortDate(s){if(!s)return '—';s=String(s).replace('T',' ');return s.slice(0,16);}
@@ -491,8 +552,8 @@ async function refresh(){
   document.getElementById('cards').innerHTML =
     ['Malicious','Dangerous','Needs review','Safe','Inconclusive'].map(v=>
       `<div class="card"><div class="n v-${v.replace(' ','')}">${(st.by_verdict||{})[v]||0}</div><div class="l">${v}</div></div>`).join('')
-    + `<div class="card"><div class="n">${st.scans||0}</div><div class="l">Всего</div></div>`
-    + `<div class="card"><div class="n">${fmtBytes(st.total_bytes)}</div><div class="l">Объём</div></div>`;
+    + `<div class="card"><div class="n">${st.scans||0}</div><div class="l">${esc(L.total)}</div></div>`
+    + `<div class="card"><div class="n">${fmtBytes(st.total_bytes)}</div><div class="l">${esc(L.volume)}</div></div>`;
   const shown=currentRows(ov);
   const rows=shown.map(r=>{
     const v=r.verdict||'';
@@ -503,7 +564,7 @@ async function refresh(){
       +`<td class="v-${String(v).replace(' ','')}">${esc(v||'—')}</td>`
       +`<td>${r.risk_score!=null?r.risk_score:'—'}</td><td>${esc(r.policy_action||'—')}</td></tr>`;}).join('');
   document.getElementById('rows').innerHTML=rows;
-  document.getElementById('count').textContent='Показано: '+shown.length+' из '+ov.length;
+  document.getElementById('count').textContent=L.shown.replace('{n}',shown.length).replace('{m}',ov.length);
 }
 ['q','vf','sort'].forEach(id=>{const e=document.getElementById(id);e.addEventListener('input',refresh);e.addEventListener('change',refresh);});
 document.getElementById('f').addEventListener('submit',e=>{
@@ -518,62 +579,79 @@ document.getElementById('f').addEventListener('submit',e=>{
   box.style.display='block';
   xhr.upload.onprogress=ev=>{bar.style.width=Math.round(ev.loaded/ev.total*100)+'%';};
   xhr.onload=()=>{setTimeout(()=>{box.style.display='none';bar.style.width='0';},400);refresh();};
-  xhr.onerror=()=>{alert('Ошибка загрузки');};
+  xhr.onerror=()=>{alert(L.upload_error);};
   xhr.send(file);
 });
 refresh();setInterval(refresh,3000);
-</script>"""
+</script>""".replace("__LABELS__", json.dumps(labels, ensure_ascii=False))
 
 
-def _login_page(error: str = "") -> bytes:
-    body = ("<h2>Вход в MLScan</h2>"
-            + (f"<p style='color:#ff6b6b'>{error}</p>" if error else "")
+def _login_page(error: str = "", lang: str = "ru") -> bytes:
+    body = (f"<h2>{T('login.heading', lang)}</h2>"
+            + (f"<p style='color:#ff6b6b'>{_esc(error)}</p>" if error else "")
             + "<form method='post' action='/login' style='display:flex;flex-direction:column;gap:8px;max-width:320px'>"
-            "<input name='username' placeholder='Логин' autocomplete='username' "
+            f"<input name='username' placeholder='{T('login.username', lang)}' autocomplete='username' "
             "style='padding:8px'>"
-            "<input name='password' type='password' placeholder='Пароль' autocomplete='current-password' "
-            "style='padding:8px'>"
-            "<button type='submit'>Войти</button></form>"
-            "<p style='color:#9aa4b2;margin-top:14px'>Для CI/скриптов можно войти по API-ключу:</p>"
+            f"<input name='password' type='password' placeholder='{T('login.password', lang)}' "
+            "autocomplete='current-password' style='padding:8px'>"
+            f"<button type='submit'>{T('login.submit', lang)}</button></form>"
+            f"<p style='color:#9aa4b2;margin-top:14px'>{T('login.key_hint', lang)}</p>"
             "<form method='post' action='/login' style='display:flex;gap:8px;max-width:320px'>"
-            "<input name='key' type='password' placeholder='API-ключ' style='padding:8px;flex:1'>"
-            "<button type='submit'>Войти по ключу</button></form>")
-    return _page("Вход", body)
+            f"<input name='key' type='password' placeholder='{T('login.key', lang)}' style='padding:8px;flex:1'>"
+            f"<button type='submit'>{T('login.key_submit', lang)}</button></form>")
+    return _page(T("login.title", lang), body, lang=lang)
 
 
-def ui_index() -> bytes:
+def ui_index(lang: str = "ru", roles: list | None = None) -> bytes:
     body = ("<div class='cards' id='cards'></div>"
-            "<form class='upload' id='f'><b>Загрузить модель</b><br><br>"
-            "<input type='file' name='file'> <button type='submit'>Загрузить и проверить</button>"
+            f"<form class='upload' id='f'><b>{T('dash.upload', lang)}</b><br><br>"
+            f"<input type='file' name='file'> <button type='submit'>{T('dash.upload_btn', lang)}</button>"
             "<div class='uprog' id='uprog'><span id='ubar'></span></div>"
-            "<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>"
-            "Поддерживаются большие файлы; формат определяется по расширению.</div></form>"
+            f"<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>{T('dash.upload_hint', lang)}</div>"
+            "</form>"
             "<div class='controls'>"
-            "<input id='q' type='search' placeholder='Фильтр по имени…'>"
+            f"<input id='q' type='search' placeholder='{T('dash.filter', lang)}'>"
             "<select id='vf'>"
-            "<option value=''>Все вердикты</option>"
+            f"<option value=''>{T('dash.all_verdicts', lang)}</option>"
             "<option value='Malicious'>Malicious</option>"
             "<option value='Dangerous'>Dangerous</option>"
             "<option value='Needs review'>Needs review</option>"
             "<option value='Safe'>Safe</option>"
             "<option value='Inconclusive'>Inconclusive</option>"
-            "<option value='__none__'>Без вердикта (в процессе)</option>"
+            f"<option value='__none__'>{T('dash.no_verdict', lang)}</option>"
             "</select>"
             "<select id='sort'>"
-            "<option value='date_desc'>Сортировка: новые сначала</option>"
-            "<option value='date_asc'>Сортировка: старые сначала</option>"
-            "<option value='size_desc'>Сортировка: объём ↓</option>"
-            "<option value='size_asc'>Сортировка: объём ↑</option>"
+            f"<option value='date_desc'>{T('dash.sort_date_desc', lang)}</option>"
+            f"<option value='date_asc'>{T('dash.sort_date_asc', lang)}</option>"
+            f"<option value='size_desc'>{T('dash.sort_size_desc', lang)}</option>"
+            f"<option value='size_asc'>{T('dash.sort_size_asc', lang)}</option>"
             "</select>"
             "<span id='count' style='color:#9aa4b2;font-size:12px'></span>"
             "</div>"
-            "<table><thead><tr><th>Артефакт</th><th>Дата проверки</th><th>Размер</th><th>SHA-256</th>"
-            "<th>Прогресс</th><th>Вердикт</th><th>Скор</th><th>Действие</th></tr></thead>"
+            f"<table><thead><tr><th>{T('dash.col.artifact', lang)}</th>"
+            f"<th>{T('dash.col.date', lang)}</th><th>{T('dash.col.size', lang)}</th><th>SHA-256</th>"
+            f"<th>{T('dash.col.progress', lang)}</th><th>{T('dash.col.verdict', lang)}</th>"
+            f"<th>{T('dash.col.score', lang)}</th><th>{T('dash.col.action', lang)}</th></tr></thead>"
             "<tbody id='rows'></tbody></table>")
-    return _page("Обзор", body, _JS)
+    return _page(T("ui.overview", lang), body, _js(lang), lang=lang, roles=roles)
 
 
-def ui_artifact(sid: str) -> bytes | None:
+def ui_settings(lang: str = "ru", current: str = "ru", message: str = "",
+                roles: list | None = None) -> bytes:
+    opts = "".join(
+        f"<option value='{c}'{' selected' if c == current else ''}>{T(f'nav.lang_{c}', lang)}</option>"
+        for c in ("ru", "en"))
+    body = (f"<h2>{T('settings.title', lang)}</h2>"
+            f"<p style='color:#9aa4b2'>{T('settings.language_hint', lang)}</p>"
+            + (f"<p style='color:#5dd39e'>{_esc(message)}</p>" if message else "")
+            + "<form method='post' action='/settings/language' style='display:flex;gap:8px;align-items:center'>"
+            f"<b>{T('settings.language', lang)}:</b>"
+            f"<select name='lang' style='padding:8px'>{opts}</select>"
+            f"<button type='submit'>{T('settings.save', lang)}</button></form>")
+    return _page(T("settings.title", lang), body, lang=lang, roles=roles)
+
+
+def ui_artifact(sid: str, lang: str = "ru", roles: list | None = None) -> bytes | None:
     rec = _index.get(sid)
     live = progress_of(sid)
     if not rec:
@@ -592,44 +670,49 @@ def ui_artifact(sid: str) -> bytes | None:
               ".then(function(r){return r.ok?r.json():null;})"
               ".then(function(d){if(d&&(d.state==='done'||d.state==='error'))location.reload();})"
               ".catch(function(){});},3000);</script>") % sid
-        return _page("артефакт",
-                     f"<p><a href='/'>← к обзору</a></p><h2>{live.get('name')}</h2>"
-                     f"<p>Проверка выполняется: <b>{live.get('state')}/{live.get('stage')}</b> "
+        return _page("artifact",
+                     f"<p><a href='/'>{T('art.back', lang)}</a></p><h2>{_esc(live.get('name'))}</h2>"
+                     f"<p>{T('art.running', lang)}: <b>{_esc(live.get('state'))}/{_esc(live.get('stage'))}</b> "
                      f"({live.get('progress')}%)</p>"
                      f"<div class='pbar'><span style='width:{live.get('progress',0)}%'></span></div>"
-                     f"<p style='color:#9aa4b2'>Страница обновится автоматически, когда результат будет готов.</p>",
-                     js)
+                     f"<p style='color:#9aa4b2'>{T('art.auto_refresh', lang)}</p>",
+                     js, lang=lang, roles=roles)
     v = rec.get("verdict", "")
     rows = "".join(
         f"<tr><td>{f['level']}</td><td>{f['check_id']}</td><td>{f['severity']}</td>"
-        f"<td>{f.get('confidence',0):.2f}</td><td>{f['title']}</td>"
-        f"<td><code>{(f.get('evidence') or '')[:140]}</code></td></tr>"
+        f"<td>{f.get('confidence',0):.2f}</td><td>{_esc(TR(f['title'], lang))}</td>"
+        f"<td><code>{_esc(TR(f.get('evidence') or '', lang))[:140]}</code></td></tr>"
         for f in sorted(rec.get("findings", []), key=lambda x: -SEV_RANK.get(x["severity"], 0)))
-    body = (f"<p><a href='/'>← к обзору</a></p><h2>{rec.get('name')} — "
+    body = (f"<p><a href='/'>{T('art.back', lang)}</a></p><h2>{_esc(rec.get('name'))} — "
             f"<span class='v-{v.replace(' ','')}'>{v}</span></h2>"
             f"<p>SHA-256: <code>{rec.get('sha256')}</code><br>"
-            f"Размер: {rec.get('size')} байт<br>"
-            f"Риск-скор: <b>{rec['score'].get('risk_score')}</b>, max severity: {rec['score'].get('max_severity')}<br>"
-            f"Policy: <code>{rec['policy'].get('rule_id')}</code> → {rec['policy'].get('action')}<br>"
-            f"Тайминги: {rec.get('timings')}<br>"
-            f"Причина (сервис): {rec.get('service_reason')}</p>"
-            f"<p>Отчёты: <a href='/reports/{sid}.json'>JSON</a> · "
-            f"<a href='/reports/{sid}.md'>Markdown</a> · <a href='/reports/{sid}.sarif'>SARIF</a></p>"
-            "<table><tr><th>Ур.</th><th>ID</th><th>Severity</th><th>Увер.</th><th>Находка</th>"
-            "<th>Доказательство</th></tr>" + rows + "</table>")
+            f"{T('art.size', lang)}: {rec.get('size')} {T('art.bytes', lang)}<br>"
+            f"{T('art.risk', lang)}: <b>{rec['score'].get('risk_score')}</b>, "
+            f"{T('art.max_severity', lang)}: {rec['score'].get('max_severity')}<br>"
+            f"{T('art.policy', lang)}: <code>{rec['policy'].get('rule_id')}</code> → "
+            f"{rec['policy'].get('action')}<br>"
+            f"{T('art.timings', lang)}: {rec.get('timings')}<br>"
+            f"{T('art.reason', lang)}: {_esc(TR(rec.get('service_reason'), lang))}</p>"
+            f"<p>{T('art.reports', lang)}: <a href='/reports/{sid}.json?lang={lang}'>JSON</a> · "
+            f"<a href='/reports/{sid}.md?lang={lang}'>Markdown</a> · "
+            f"<a href='/reports/{sid}.sarif?lang={lang}'>SARIF</a></p>"
+            f"<table><tr><th>{T('art.col.level', lang)}</th><th>{T('art.col.id', lang)}</th>"
+            f"<th>Severity</th><th>{T('art.col.conf', lang)}</th><th>{T('art.col.finding', lang)}</th>"
+            f"<th>{T('art.col.evidence', lang)}</th></tr>" + rows + "</table>")
     sb = (live or {}).get("sandbox") or {}
     if sb:
         load = sb.get("load") or {}
         sm = {k: v for k, v in (sb.get("summary") or {}).items() if k != "imports"}
         errs = load.get("errors") or []
-        body += ("<h3>Динамический этап (L2/L3)</h3>"
-                 f"<p>Статус: <b>{_esc(sb.get('status'))}</b>; загрузка: "
-                 f"{'ok' if load.get('ok') else 'fail'}; тип: {_esc(load.get('type'))}</p>"
-                 f"<p>Сигналы: <code>{_esc(json.dumps(sm, ensure_ascii=False))}</code></p>")
+        body += (f"<h3>{T('art.dynamic', lang)}</h3>"
+                 f"<p>{T('art.dyn.status', lang)}: <b>{_esc(sb.get('status'))}</b>; "
+                 f"{T('art.dyn.load', lang)}: {'ok' if load.get('ok') else 'fail'}; "
+                 f"{T('art.dyn.type', lang)}: {_esc(load.get('type'))}</p>"
+                 f"<p>{T('art.dyn.signals', lang)}: <code>{_esc(json.dumps(sm, ensure_ascii=False))}</code></p>")
         if errs:
-            body += ("<p>Ошибки загрузки:<br>"
-                     + "".join(f"<code>{_esc(e)}</code><br>" for e in errs[:5]) + "</p>")
-    return _page(rec.get("name", "артефакт"), body)
+            body += (f"<p>{T('art.dyn.errors', lang)}:<br>"
+                     + "".join(f"<code>{_esc(TR(e, lang))}</code><br>" for e in errs[:5]) + "</p>")
+    return _page(rec.get("name", "artifact"), body, lang=lang, roles=roles)
 
 
 # ----------------------------------------------------------------------------
@@ -649,6 +732,12 @@ class Handler(BaseHTTPRequestHandler):
                 return v
         return ""
 
+    def _lang(self, query: dict | None = None) -> str:
+        """Язык запроса: ?lang= → cookie mlscan_lang → X-MLScan-Lang → глобальная настройка."""
+        if i18n is None:
+            return "ru"
+        return i18n.resolve(headers=self.headers, query=query, cookie=self._cookie("mlscan_lang"))
+
     def _require(self):
         """Аутентификация на входе: API-ключ из заголовка или cookie (после /login)."""
         if authz is None:
@@ -664,9 +753,11 @@ class Handler(BaseHTTPRequestHandler):
                             self.client_address[0], {"method": self.command})
             except Exception:  # noqa: BLE001
                 pass
-            self._json(401, {"error": "unauthorized", "request_id": self._rid})
+            self._json(401, {"error": T("msg.unauthorized", self._lang()),
+                             "request_id": self._rid})
             return None
         self._subject = ent["subject"]
+        self._roles = ent.get("roles") or []
         return ent
 
     def _send(self, code: int, body: bytes, ctype: str) -> None:
@@ -698,7 +789,7 @@ class Handler(BaseHTTPRequestHandler):
         fmt = q.get("fmt", ["pickle"])[0]
         n = int(self.headers.get("Content-Length", "0") or "0")
         if n <= 0:
-            return self._json(400, {"error": "empty body"})
+            return self._json(400, {"error": T("msg.empty_body_cl", self._lang(q))})
         cx = http.client.HTTPConnection(TEST_HOST, TEST_PORT, timeout=1800)
         path = f"/scans/upload?name={urllib.parse.quote(name)}&fmt={urllib.parse.quote(fmt)}"
         cx.putrequest("POST", path)
@@ -724,10 +815,30 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         p = u.path
+        q = urllib.parse.parse_qs(u.query)
         if p == "/healthz":
-            return self._json(200, {"status": "ok", "scans": len(_index)})
+            lang = self._lang(q)
+            return self._json(200, {"status": "ok", "scans": len(_index),
+                                    "language": i18n.global_lang() if i18n else "ru",
+                                    "startup_language": i18n.startup_lang() if i18n else "ru",
+                                    "languages": list(i18n.SUPPORTED) if i18n else ["ru"],
+                                    "request_language": lang})
+        if p == "/lang":
+            # переключатель языка UI: cookie на год, затем возврат на исходную страницу
+            code = (q.get("set", ["ru"])[0] or "ru").lower()
+            if i18n is not None and i18n.normalize(code) is None:
+                code = "ru"
+            nxt = (q.get("next", ["/"])[0] or "/")
+            if not nxt.startswith("/") or nxt.startswith("//"):
+                nxt = "/"
+            self.send_response(302)
+            self.send_header("Set-Cookie",
+                             f"mlscan_lang={code}; Path=/; Max-Age=31536000; SameSite=Lax{_cookie_attr()}")
+            self.send_header("Location", nxt)
+            self.end_headers()
+            return
         if p == "/login":
-            return self._send(200, _login_page(), "text/html; charset=utf-8")
+            return self._send(200, _login_page(lang=self._lang(q)), "text/html; charset=utf-8")
         if p == "/logout":
             self.send_response(302)
             self.send_header("Set-Cookie", "mlscan_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
@@ -737,6 +848,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self._require() is None:
             return
+        lang = self._lang(q)
+        if p == "/settings":
+            cur = i18n.global_lang() if i18n else "ru"
+            if "admin" not in (getattr(self, "_roles", []) or []):
+                return self._send(403, ui_settings(lang, cur, T("settings.admin_only", lang),
+                                                   roles=getattr(self, "_roles", [])),
+                                  "text/html; charset=utf-8")
+            msg = T("settings.saved", lang, lang=cur) if q.get("saved") else ""
+            return self._send(200, ui_settings(lang, cur, msg, roles=getattr(self, "_roles", [])),
+                              "text/html; charset=utf-8")
         if p == "/api/scans":
             return self._json(200, {"scans": list(_index.values())})
         if p == "/api/overview":
@@ -752,29 +873,58 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, live) if live else self._json(404, {"error": "not found"})
         if p.startswith("/api/scans/"):
             rec = _index.get(p.split("/", 3)[3])
-            return self._json(200, rec) if rec else self._json(404, {"error": "not found"})
+            if not rec:
+                return self._json(404, {"error": T("msg.not_found", lang)})
+            return self._json(200, localized_record(rec, lang))
         if p.startswith("/reports/"):
             sid, _, ext = p.split("/", 2)[2].rpartition(".")
             rec = _index.get(sid)
             if not rec:
-                return self._json(404, {"error": "not found"})
+                return self._json(404, {"error": T("msg.not_found", lang)})
             if ext == "json":
-                return self._send(200, json.dumps(rec, ensure_ascii=False, indent=2).encode(), "application/json")
+                return self._send(200, json.dumps(localized_record(rec, lang), ensure_ascii=False, indent=2).encode(),
+                                  "application/json; charset=utf-8")
             if ext == "md":
-                return self._send(200, report_md(rec).encode(), "text/markdown; charset=utf-8")
+                return self._send(200, report_md(rec, lang).encode(), "text/markdown; charset=utf-8")
             if ext == "sarif":
-                return self._send(200, json.dumps(report_sarif(rec), ensure_ascii=False, indent=2).encode(), "application/json")
-            return self._json(404, {"error": "unknown format"})
+                return self._send(200, json.dumps(report_sarif(rec, lang), ensure_ascii=False, indent=2).encode(),
+                                  "application/json; charset=utf-8")
+            return self._json(404, {"error": T("msg.unknown_format", lang)})
         if p == "/":
-            return self._send(200, ui_index(), "text/html; charset=utf-8")
+            return self._send(200, ui_index(lang, roles=getattr(self, "_roles", [])), "text/html; charset=utf-8")
         if p.startswith("/artifact/"):
-            html = ui_artifact(p.split("/", 2)[2])
+            html = ui_artifact(p.split("/", 2)[2], lang, roles=getattr(self, "_roles", []))
             return self._send(200, html, "text/html; charset=utf-8") if html else self._send(404, b"not found", "text/plain")
-        return self._json(404, {"error": "not found"})
+        return self._json(404, {"error": T("msg.not_found", lang)})
 
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        lang = self._lang(q)
+        if u.path == "/settings/language":
+            ent = self._require()
+            if ent is None:
+                return
+            if "admin" not in (getattr(self, "_roles", []) or []):
+                return self._json(403, {"error": T("msg.forbidden", lang)})
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            form = urllib.parse.parse_qs(self.rfile.read(n).decode()) if n else {}
+            code = (form.get("lang", [""])[0] or q.get("lang", [""])[0] or "").strip()
+            applied = i18n.set_global_lang(code) if i18n else "ru"
+            if authz is not None:
+                try:
+                    authz.audit(ent["subject"], "set_language", "settings", "language",
+                                getattr(self, "_rid", ""), self.client_address[0], {"lang": applied})
+                except Exception:  # noqa: BLE001
+                    pass
+            if "application/json" in (self.headers.get("Accept") or ""):
+                return self._json(200, {"language": applied})
+            self.send_response(302)
+            self.send_header("Set-Cookie",
+                             f"mlscan_lang={applied}; Path=/; Max-Age=31536000; SameSite=Lax{_cookie_attr()}")
+            self.send_header("Location", "/settings?saved=1")
+            self.end_headers()
+            return
         if u.path == "/login":
             n = int(self.headers.get("Content-Length", "0") or "0")
             body = self.rfile.read(n).decode() if n else ""
@@ -789,7 +939,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not ent:
                     if authz:
                         authz.audit(username, "login_failed", "user", username, rid, ip, {})
-                    return self._send(401, _login_page("Неверный логин или пароль"), "text/html; charset=utf-8")
+                    return self._send(401, _login_page(T("login.err_credentials", lang), lang),
+                                      "text/html; charset=utf-8")
                 token = authz.make_session(ent["subject"], ent["roles"]) if authz else None
                 if authz:
                     authz.audit(ent["subject"], "login", "user", ent["subject"], rid, ip, {"roles": ent["roles"]})
@@ -803,7 +954,8 @@ class Handler(BaseHTTPRequestHandler):
             if not ent:
                 if authz:
                     authz.audit("anonymous", "login_failed", "apikey", "", rid, ip, {})
-                return self._send(401, _login_page("Неверный ключ"), "text/html; charset=utf-8")
+                return self._send(401, _login_page(T("login.err_key", lang), lang),
+                                  "text/html; charset=utf-8")
             if authz:
                 authz.audit(ent["subject"], "login", "apikey", ent["subject"], rid, ip, {})
             self.send_response(302)
@@ -824,7 +976,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, res)
         if u.path == "/upload":
             return self._proxy_upload(q)
-        return self._json(404, {"error": "not found"})
+        return self._json(404, {"error": T("msg.not_found", lang)})
 
 
 def main() -> None:

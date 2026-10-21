@@ -33,6 +33,7 @@ spec:
         - {name: PORT, value: "8080"}
         - {name: POLL_INTERVAL, value: "3600"}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+        - {name: MLSCAN_LANG, value: "ru"}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
         - name: MLSCAN_KEYS
@@ -70,6 +71,7 @@ spec:
         - {name: policy, mountPath: /etc/mlscan, readOnly: true}
         - {name: pgclient, mountPath: /opt/pg, readOnly: true}
         - {name: authz, mountPath: /opt/auth, readOnly: true}
+        - {name: i18n, mountPath: /opt/i18n, readOnly: true}
         - {name: data, mountPath: /data}
         - {name: tmp, mountPath: /tmp}
       volumes:
@@ -77,6 +79,7 @@ spec:
       - {name: policy, configMap: {name: mlscan-policy}}
       - {name: pgclient, configMap: {name: mlscan-pgclient}}
       - {name: authz, configMap: {name: mlscan-authz}}
+      - {name: i18n, configMap: {name: mlscan-i18n}}
       - {name: data, persistentVolumeClaim: {claimName: mlscan-analytics-data}}
       - {name: tmp, emptyDir: {sizeLimit: 128Mi, medium: Memory}}
 ---

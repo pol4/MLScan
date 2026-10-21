@@ -27,6 +27,20 @@ try:
 except Exception:  # noqa: BLE001
     authz = None  # type: ignore
 
+sys.path.insert(0, "/opt/i18n")
+try:
+    import i18n  # noqa: E402
+except Exception:  # noqa: BLE001
+    i18n = None  # type: ignore
+
+
+def T(key: str, lang: str = "ru", **fmt) -> str:
+    return i18n.t(key, lang, **fmt) if i18n else key
+
+
+def TR(text, lang: str = "ru"):
+    return i18n.tr(text, lang) if i18n else text
+
 INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "")
 
 
@@ -121,20 +135,20 @@ def register(rec: dict) -> dict:
     return entry
 
 
-def gate_decision(entry: dict) -> dict:
+def gate_decision(entry: dict, lang: str = "ru") -> dict:
     sha = entry.get("sha256")
     if sha and sha in _intel.get("known_bad_sha256", []):
-        return {"decision": "block", "http": 403, "reason": "sha256 в списке известных-плохих (threat-intel)"}
+        return {"decision": "block", "http": 403, "reason": T("msg.intel_block", lang)}
     checks = set(entry.get("active_checks") or [])
     watch = checks & set(_intel.get("watch_checks") or [])
     if watch:
         return {"decision": "block", "http": 403,
-                "reason": "сработали наблюдения threat-intel: " + ",".join(sorted(watch))}
+                "reason": T("msg.intel_watch", lang, ids=",".join(sorted(watch)))}
     action = (entry.get("action") or "").lower()
     if action == "allow":
         return {"decision": "allow", "http": 200, "reason": f"policy allow ({entry.get('verdict')})"}
     if action == "quarantine":
-        return {"decision": "review", "http": 409, "reason": "policy quarantine: требуется разбор"}
+        return {"decision": "review", "http": 409, "reason": T("msg.policy_review", lang)}
     return {"decision": "block", "http": 403,
             "reason": f"policy {action or 'block'} ({entry.get('verdict')})"}
 
@@ -169,7 +183,7 @@ def poller() -> None:
 # ----------------------------------------------------------------------------
 # On-demand gate scan (CI): отправить артефакт в сервис тестирования и решить
 # ----------------------------------------------------------------------------
-def gate_scan(name: str, fmt: str, data: bytes) -> dict:
+def gate_scan(name: str, fmt: str, data: bytes, lang: str = "ru") -> dict:
     try:
         r = http_post_bytes(f"{TESTING_URL}/scans?name={urllib.parse.quote(name)}&fmt={fmt}", data)
         sid = r["scan_id"]
@@ -191,14 +205,14 @@ def gate_scan(name: str, fmt: str, data: bytes) -> dict:
                 "action": ("block" if rec.get("verdict") in ("Malicious", "Dangerous")
                            else "allow" if rec.get("verdict") == "Safe" else "quarantine"),
             }
-            dec = gate_decision(entry)
+            dec = gate_decision(entry, lang)
             entry["decision"] = dec["decision"]
             _registry[entry["sha256"]] = dict(entry, updated=time.strftime("%Y-%m-%dT%H:%M:%S"))
             _save_registry()
             _log_event({"kind": "gate_scan", "scan_id": sid, **entry, "reason": dec["reason"]})
             return {"scan_id": sid, **entry, **dec}
         time.sleep(2)
-    return {"scan_id": sid, "decision": "review", "http": 409, "reason": "таймаут сканирования"}
+    return {"scan_id": sid, "decision": "review", "http": 409, "reason": T("msg.scan_timeout", lang)}
 
 
 # ----------------------------------------------------------------------------
@@ -236,6 +250,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+    def _lang(self, query: dict | None = None) -> str:
+        """Язык запроса (RU/EN): ?lang= → cookie → X-MLScan-Lang → глобальная настройка."""
+        if i18n is None:
+            return "ru"
+        raw = self.headers.get("Cookie", "") or ""
+        cookie = ""
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "mlscan_lang":
+                cookie = v
+                break
+        return i18n.resolve(headers=self.headers, query=query, cookie=cookie)
 
     def _require(self, allowed=None):
         if authz is None:
@@ -295,15 +322,17 @@ class Handler(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         p = u.path
         if p == "/healthz":
-            return self._json(200, {"status": "ok", "registry": len(_registry)})
+            return self._json(200, {"status": "ok", "registry": len(_registry),
+                                    "language": self._lang(q)})
         if self._require(["admin", "ci-reader", "service"]) is None:
             return
+        lang = self._lang(q)
         if p == "/registry":
             return self._json(200, {"entries": list(_registry.values())})
         if p.startswith("/registry/"):
             sha = p.split("/", 2)[2]
             e = _registry.get(sha)
-            return self._json(200, e) if e else self._json(404, {"error": "not found"})
+            return self._json(200, e) if e else self._json(404, {"error": T("msg.not_found", lang)})
         if p == "/intel":
             return self._json(200, _intel)
         if p == "/events":
@@ -317,24 +346,26 @@ class Handler(BaseHTTPRequestHandler):
             if "sha256" in q:
                 e = _registry.get(q["sha256"][0])
                 if not e:
-                    return self._json(404, {"decision": "review", "reason": "артефакт не зарегистрирован"})
+                    return self._json(404, {"decision": "review", "reason": T("msg.not_registered", lang)})
             elif "name" in q:
                 e = next((x for x in _registry.values() if x.get("name") == q["name"][0]), None)
                 if not e:
-                    return self._json(404, {"decision": "review", "reason": "артефакт не зарегистрирован"})
+                    return self._json(404, {"decision": "review", "reason": T("msg.not_registered", lang)})
             else:
-                return self._json(400, {"error": "укажите sha256 или name"})
-            dec = gate_decision(e)
+                return self._json(400, {"error": T("msg.need_sha_or_name", lang)})
+            dec = gate_decision(e, lang)
             _log_event({"kind": "gate", **e, "decision": dec["decision"], "reason": dec["reason"]})
             return self._json(dec["http"], {**e, **dec})
-        return self._json(404, {"error": "not found"})
+        return self._json(404, {"error": T("msg.not_found", lang)})
 
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(u.query)
         p = u.path
         n = int(self.headers.get("Content-Length", "0") or "0")
         if self._require(["admin", "ci-reader", "service"]) is None:
             return
+        lang = self._lang(q)
         if p == "/intel" and "admin" not in getattr(self, "_roles", []):
             return self._json(403, {"error": "forbidden: intel requires admin",
                                     "request_id": getattr(self, "_rid", "")})
@@ -354,9 +385,9 @@ class Handler(BaseHTTPRequestHandler):
             data = self.rfile.read(n) if n else b""
             if not data:
                 return self._json(400, {"error": "empty body"})
-            dec = gate_scan(q.get("name", ["sample.pkl"])[0], q.get("fmt", ["pickle"])[0], data)
+            dec = gate_scan(q.get("name", ["sample.pkl"])[0], q.get("fmt", ["pickle"])[0], data, lang)
             return self._json(dec.get("http", 409), dec)
-        return self._json(404, {"error": "not found"})
+        return self._json(404, {"error": T("msg.not_found", lang)})
 
 
 def main() -> None:

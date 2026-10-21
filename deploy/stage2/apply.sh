@@ -29,6 +29,8 @@ kubectl -n "$NS" create configmap mlscan-formats \
   --from-file=detector.py="$HERE/../v2/formats/detector.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap mlscan-authz \
   --from-file=authz.py="$HERE/../v2/auth/authz.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$NS" create configmap mlscan-i18n \
+  --from-file=i18n.py="$HERE/../i18n/i18n.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 if ! kubectl -n "$NS" get secret mlscan-keys >/dev/null 2>&1; then
   bash "$HERE/../v2/auth/keys.sh" >/dev/null 2>&1 || true
 fi

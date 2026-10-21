@@ -23,6 +23,9 @@ Ops-слой поверх Этапов 1–4. Namespace `mlscan-ops`. Тольк
 | GET | `/quality` | TP/FP/TN/FN, TPR/FPR/precision/accuracy + детализация |
 | GET | `/sla` | счётчики, evidence, реестр |
 | POST | `/retest` | перепроверка golden-набора + ресинк |
+| GET | `/alerts?lang=ru\|en` | алерты состояния хранилищ (локализованы) |
+| GET | `/settings` | глобальный язык системы, язык запуска, поддерживаемые |
+| POST | `/settings/language?lang=en` | смена глобального языка всей системы (только `admin`) |
 
 Метрики: `mlscan_stack_up{service}`, `mlscan_verdict_total{verdict}`,
 `mlscan_evidence_entries`, `mlscan_registry_entries`, `mlscan_gate_total{decision}`,

@@ -1,5 +1,7 @@
 # MLScan
 
+**Русский** | [English](./README.en.md)
+
 **Система анализа безопасности (вредоносности) моделей и данных, используемых в ML/AI.**
 
 Проект отвечает на вопрос: **безопасен ли конкретный ML/AI-артефакт, и что в нём опасного** —
@@ -158,6 +160,15 @@ numpy, model-as-code (и др.).
   динамикой.
 - **L3 поведение** — интроспекция и probe загруженного объекта.
 
+### Язык интерфейса и сообщений (RU/EN)
+
+UI и сообщения сервисов локализованы (RU/EN): переключатель языка в шапке UI (cookie
+`mlscan_lang`), `?lang=en` / заголовок `X-MLScan-Lang` для API и **глобальная настройка языка
+всей системы** (`MLSCAN_LANG` при запуске + `POST /settings/language` для администратора,
+хранится в БД). Локализуются UI, причины вердиктов, находки (в том числе исторические) и отчёты.
+Подробности — [`docs/12-i18n.md`](./docs/12-i18n.md). Английская версия документации —
+[`README.en.md`](./README.en.md) и [`docs/en/`](./docs/en).
+
 ### Платформа и эксплуатация
 
 S3-хранилище с дедупликацией и retention/карантином, PostgreSQL с hash-chain evidence,
@@ -233,9 +244,12 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 | [`deploy/stage4/`](./deploy/stage4) | Этап 4: интеграции (registry/CI-gate/SIEM/threat-intel) |
 | [`deploy/stage5/`](./deploy/stage5) | Этап 5: эксплуатация (метрики/качество/retest/red-team) |
 | [`deploy/sandbox-image/`](./deploy/sandbox-image) | Образ песочницы `mlscan-sandbox` (torch CPU), сборка Kaniko |
+| [`deploy/i18n/`](./deploy/i18n) | Модуль локализации RU/EN (UI, сообщения сервисов, находки) |
 | [`deploy/ingress/`](./deploy/ingress) | Ingress (Istio) и egress-allowlist |
 | [`deploy/v2/`](./deploy/v2) | **v2:** S3 (Garage), PostgreSQL, AuthN/Z+audit, наблюдаемость, бэкап, lifecycle, детекторы форматов |
 | [`docs/`](./docs) | Детальная документация (01–11) |
+| [`docs/en/`](./docs/en) | Английская версия документации (01–11) |
+| [`README.en.md`](./README.en.md) | English version of this page |
 
 ### Документация (кратко)
 
@@ -243,6 +257,8 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 - `docs/04` обработка результатов и решения · `docs/05` архитектура
 - `docs/06` план реализации (реализован) · `docs/07` as-built архитектура · `docs/08` тест-гайд
 - `docs/09` анализ других форматов/закладок · `docs/10` план расширения (волны) · `docs/11` целевая архитектура v2
+- `docs/12` локализация UI и сообщений (RU/EN) — [`docs/12-i18n.md`](./docs/12-i18n.md)
+- английские версии — [`docs/en/`](./docs/en)
 
 ---
 
@@ -290,7 +306,8 @@ python3 tests/vulnerabilities/run_tests.py --url <testing-url> --analytics-url <
 Реализованы и проверены: PoC, система для pickle (Этапы 0–5), целевая архитектура v2
 (Волна 0: S3/PostgreSQL/AuthN+audit/наблюдаемость+бэкап; волны форматов 1–3: адаптеры и
 детекторы, динамика model-as-code; retention/TTL и карантин), метрики качества по форматам
-(TPR=1.0, FPR=0.0) и синтетический корпус уязвимостей (33/33, 0 FP).
+(TPR=1.0, FPR=0.0) и синтетический корпус уязвимостей (33/33, 0 FP). UI и сообщения
+сервисов локализованы RU/EN, есть глобальная настройка языка.
 
 Контекст: [`deploy/v2/README.md`](./deploy/v2/README.md), план — [`docs/10-plan-new-formats.md`](./docs/10-plan-new-formats.md),
 целевая архитектура — [`docs/11-target-architecture-v2.md`](./docs/11-target-architecture-v2.md).

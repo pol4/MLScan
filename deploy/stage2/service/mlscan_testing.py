@@ -104,6 +104,20 @@ try:
 except Exception:  # noqa: BLE001
     authz = None  # type: ignore
 
+sys.path.insert(0, "/opt/i18n")
+try:
+    import i18n  # noqa: E402
+except Exception:  # noqa: BLE001
+    i18n = None  # type: ignore
+
+
+def T(key: str, lang: str = "ru", **fmt) -> str:
+    return i18n.t(key, lang, **fmt) if i18n else key
+
+
+def TR(text, lang: str = "ru"):
+    return i18n.tr(text, lang) if i18n else text
+
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 K8S_HOST = os.environ.get("KUBERNETES_SERVICE_HOST", "")
 K8S_PORT = os.environ.get("KUBERNETES_SERVICE_PORT_HTTPS", "443")
@@ -458,6 +472,19 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _lang(self, query: dict | None = None) -> str:
+        """Язык запроса (RU/EN): ?lang= → cookie → X-MLScan-Lang → глобальная настройка."""
+        if i18n is None:
+            return "ru"
+        raw = self.headers.get("Cookie", "") or ""
+        cookie = ""
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "mlscan_lang":
+                cookie = v
+                break
+        return i18n.resolve(headers=self.headers, query=query, cookie=cookie)
+
     def _require(self):
         if authz is None:
             return {"subject": "anonymous"}
@@ -470,7 +497,8 @@ class Handler(BaseHTTPRequestHandler):
                             self.client_address[0], {"method": self.command})
             except Exception:  # noqa: BLE001
                 pass
-            self._json(401, {"error": "unauthorized", "request_id": self._rid})
+            self._json(401, {"error": T("msg.unauthorized", self._lang()),
+                             "request_id": self._rid})
             return None
         self._subject = ent["subject"]
         return ent
@@ -499,25 +527,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(u.query)
         if u.path == "/healthz":
-            return self._json(200, {"status": "ok", "sandbox_ns": SANDBOX_NS})
+            lang = self._lang(q)
+            return self._json(200, {"status": "ok", "sandbox_ns": SANDBOX_NS, "language": lang})
         if self._require() is None:
             return
+        lang = self._lang(q)
         if u.path == "/scans":
-            return self._json(200, {"scans": list_scans()})
+            return self._json(200, {"scans": list_scans(), "language": lang})
         if u.path == "/stats":
             return self._json(200, stats())
         if u.path.startswith("/scans/"):
             rec = load_scan(u.path.split("/", 2)[2])
-            return self._json(200, rec) if rec else self._json(404, {"error": "not found"})
-        return self._json(404, {"error": "not found"})
+            if not rec:
+                return self._json(404, {"error": T("msg.not_found", lang)})
+            # сообщения отдаются на выбранном языке (находки/причина — по правилам i18n)
+            if i18n is not None and lang != "ru":
+                rec = dict(rec)
+                rec["findings"] = i18n.localize_findings(rec.get("findings", []), lang)
+                if rec.get("reason"):
+                    rec["reason"] = TR(rec["reason"], lang)
+                rec["language"] = lang
+            return self._json(200, rec)
+        return self._json(404, {"error": T("msg.not_found", lang)})
 
     def _receive_upload(self, query: dict) -> None:
         name = os.path.basename((query.get("name", ["sample.pkl"])[0]) or "sample.pkl")
         fmt = query.get("fmt", ["pickle"])[0]
         n = int(self.headers.get("Content-Length", "0") or "0")
         if n <= 0:
-            return self._json(400, {"error": "empty body (требуется Content-Length)"})
+            return self._json(400, {"error": T("msg.empty_body_cl", self._lang(query))})
         if n > MAX_UPLOAD:
             return self._json(413, {"error": f"artifact too large ({n} > {MAX_UPLOAD})"})
         scan_id = uuid.uuid4().hex

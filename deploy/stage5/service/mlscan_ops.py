@@ -30,6 +30,16 @@ try:
 except Exception:  # noqa: BLE001
     authz = None  # type: ignore
 
+sys.path.insert(0, "/opt/i18n")
+try:
+    import i18n  # noqa: E402
+except Exception:  # noqa: BLE001
+    i18n = None  # type: ignore
+
+
+def T(key: str, lang: str = "ru", **fmt) -> str:
+    return i18n.t(key, lang, **fmt) if i18n else key
+
 INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "")
 PGHOST = os.environ.get("PGHOST", "")
 GARAGE_ADMIN_URL = os.environ.get("GARAGE_ADMIN_URL", "")
@@ -239,18 +249,19 @@ def storage_metrics() -> list[str]:
     return out
 
 
-def alerts() -> list[dict]:
+def alerts(lang: str = "ru") -> list[dict]:
     """Простые проверки состояния хранилищ (без внешнего alertmanager)."""
     res: list[dict] = []
     c = _pg()
     if c is None:
-        res.append({"id": "pg_down", "severity": "critical", "summary": "PostgreSQL недоступен"})
+        res.append({"id": "pg_down", "severity": "critical",
+                    "summary": T("msg.alert_pg_down", lang)})
     else:
         try:
             _cols, rows = c.query("SELECT pg_database_size(current_database())")
             if int(rows[0][0]) > int(os.environ.get("PG_SIZE_ALERT_BYTES", str(2 * 1024**3))):
                 res.append({"id": "pg_size_high", "severity": "warning",
-                            "summary": f"Размер БД {rows[0][0]} превышает порог"})
+                            "summary": T("msg.alert_db_size", lang, size=rows[0][0])})
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -262,15 +273,16 @@ def alerts() -> list[dict]:
             with urllib.request.urlopen(req, timeout=8) as r:
                 r.read()
         except Exception:  # noqa: BLE001
-            res.append({"id": "s3_down", "severity": "critical", "summary": "S3 (Garage) недоступен"})
+            res.append({"id": "s3_down", "severity": "critical",
+                        "summary": T("msg.alert_s3_down", lang)})
     try:
         ev = get_json(ANALYTICS_URL + "/api/evidence/verify")
         if not ev.get("ok"):
             res.append({"id": "evidence_broken", "severity": "critical",
-                        "summary": f"Нарушена целостность evidence: {ev}"})
+                        "summary": T("msg.alert_evidence_broken", lang, ev=ev)})
     except Exception:  # noqa: BLE001
         res.append({"id": "evidence_unavailable", "severity": "warning",
-                    "summary": "Не удалось проверить evidence"})
+                    "summary": T("msg.alert_evidence_unchecked", lang)})
     return res
 
 
@@ -339,6 +351,19 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _lang(self, query: dict | None = None) -> str:
+        """Язык запроса (RU/EN): ?lang= → cookie → X-MLScan-Lang → глобальная настройка."""
+        if i18n is None:
+            return "ru"
+        raw = self.headers.get("Cookie", "") or ""
+        cookie = ""
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "mlscan_lang":
+                cookie = v
+                break
+        return i18n.resolve(headers=self.headers, query=query, cookie=cookie)
+
     def _require(self, allowed=None):
         if authz is None:
             return {"subject": "anonymous", "roles": ["admin"]}
@@ -348,12 +373,14 @@ class Handler(BaseHTTPRequestHandler):
             ent = authz.from_cookie(self.headers)
         if ent is None:
             self._subject = "anonymous"
-            self._json(401, {"error": "unauthorized", "request_id": self._rid})
+            self._json(401, {"error": T("msg.unauthorized", self._lang()),
+                             "request_id": self._rid})
             return None
         allowed = allowed or ["admin", "ci-reader", "service"]
         if not (set(ent["roles"]) & set(allowed)):
             self._subject = ent["subject"]
-            self._json(403, {"error": "forbidden", "request_id": self._rid})
+            self._json(403, {"error": T("msg.forbidden", self._lang()),
+                             "request_id": self._rid})
             return None
         self._subject = ent["subject"]
         return ent
@@ -375,11 +402,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode())
 
     def do_GET(self) -> None:  # noqa: N802
-        p = self.path.split("?")[0]
+        u = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(u.query)
+        p = u.path
         if p == "/healthz":
-            return self._json(200, {"status": "ok"})
+            return self._json(200, {"status": "ok", "language": self._lang(q)})
         if self._require() is None:
             return
+        lang = self._lang(q)
         if p == "/health/stack":
             h = stack_health()
             return self._json(200 if h["_overall"] else 503, h)
@@ -390,17 +420,42 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/sla":
             return self._json(200, sla())
         if p == "/alerts":
-            a = alerts()
-            return self._json(200, {"alerts": a, "count": len(a)})
-        return self._json(404, {"error": "not found"})
+            a = alerts(lang)
+            return self._json(200, {"alerts": a, "count": len(a), "language": lang})
+        if p == "/settings":
+            return self._json(200, {"language": i18n.global_lang() if i18n else "ru",
+                                    "startup_language": i18n.startup_lang() if i18n else "ru",
+                                    "supported": list(i18n.SUPPORTED) if i18n else ["ru"],
+                                    "request_language": lang})
+        return self._json(404, {"error": T("msg.not_found", lang)})
 
     def do_POST(self) -> None:  # noqa: N802
-        p = self.path.split("?")[0]
-        if self._require() is None:
+        u = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(u.query)
+        p = u.path
+        ent = self._require()
+        if ent is None:
             return
+        lang = self._lang(q)
+        if p == "/settings/language":
+            # ГЛОБАЛЬНАЯ настройка языка всей системы (только администратор)
+            if "admin" not in (ent.get("roles") or []):
+                return self._json(403, {"error": T("msg.forbidden", lang)})
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            form = urllib.parse.parse_qs(self.rfile.read(n).decode()) if n else {}
+            code = (form.get("lang", [""])[0] or q.get("lang", [""])[0] or "").strip()
+            applied = i18n.set_global_lang(code) if i18n else "ru"
+            if authz is not None:
+                try:
+                    authz.audit(ent["subject"], "set_language", "settings", "language",
+                                getattr(self, "_rid", ""), self.client_address[0], {"lang": applied})
+                except Exception:  # noqa: BLE001
+                    pass
+            return self._json(200, {"language": applied,
+                                    "startup_language": i18n.startup_lang() if i18n else "ru"})
         if p == "/retest":
             return self._json(200, retest())
-        return self._json(404, {"error": "not found"})
+        return self._json(404, {"error": T("msg.not_found", lang)})
 
 
 def main() -> None:

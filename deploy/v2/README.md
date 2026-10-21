@@ -271,6 +271,21 @@ Harness песочницы умеет **исполнять entry-код** model-
 Проверено: `evil_reqs.zip` → Malicious (install-hooks + code), `evil_polyglot.png` → Malicious
 (polyglot), `evil_url_config/evil_steg/evil_blob` → Needs review, `benign_image.png` → Safe.
 
+## Язык UI и сообщений: RU/EN (реализовано)
+
+UI и сообщения сервисов локализованы: переключатель языка в шапке UI (cookie `mlscan_lang`),
+`?lang=en` / заголовок `X-MLScan-Lang` для API, **глобальная настройка** языка системы
+(`MLSCAN_LANG` при запуске; `POST /settings/language` для администратора). Глобальный язык
+хранится в таблице `settings` (ключ `language`) и читается всеми сервисами с кэшем 30 с;
+локализуются UI, причины вердиктов, находки (включая исторические) и отчёты. Модуль —
+`deploy/i18n/i18n.py` (ConfigMap `mlscan-i18n` → `/opt/i18n`), описание — `docs/12-i18n.md`.
+
+```bash
+# текущий и глобальный язык
+curl -s http://<analytics>/healthz
+curl -X POST -H "Authorization: Bearer $ADMIN_KEY" "http://<ops>/settings/language?lang=en"
+```
+
 ## Песочница: библиотеки и проверка torch (реализовано)
 
 Образ песочницы `mlscan-sandbox:v2` дополнен библиотеками (`torch` CPU, `numpy`, `safetensors`,

@@ -76,6 +76,10 @@ data:
       key_hash TEXT UNIQUE NOT NULL, scopes TEXT[], expires_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY, value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS uploads (
       id BIGSERIAL PRIMARY KEY, artifact_id BIGINT REFERENCES artifacts(id) ON DELETE SET NULL,
       user_id BIGINT, request_id TEXT, ip TEXT, user_agent TEXT, bytes BIGINT,

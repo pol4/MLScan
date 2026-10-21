@@ -34,6 +34,17 @@ Testing Service (Этап 2)  ──HTTP──▶  Analytics Engine (Этап 3)
 | GET | `/reports/<id>.json\|.md\|.sarif` | отчёты |
 | GET | `/policy` | текущая политика |
 | POST | `/sync` | принудительная синхронизация |
+| GET | `/lang?set=ru\|en&next=<путь>` | переключатель языка UI (cookie `mlscan_lang`) |
+| GET | `/settings` | **UI**: настройки (выбор языка системы), только роль `admin` |
+| POST | `/settings/language` | смена глобального языка системы, только роль `admin` |
+
+### Локализация UI (RU/EN)
+
+Интерфейс и сообщения локализованы: переключатель `Язык: RU | EN` в шапке ставит cookie
+`mlscan_lang`; язык можно задать параметром `?lang=en` (в т.ч. в ссылках на отчёты). Находки,
+причины вердиктов и отчёты (JSON/Markdown/SARIF) отдаются на выбранном языке, включая
+исторические записи. Глобальный язык системы меняет администратор (`/settings` или
+`POST /settings/language`); модуль — `deploy/i18n/i18n.py`, описание — `docs/12-i18n.md`.
 
 ## Policy Engine
 

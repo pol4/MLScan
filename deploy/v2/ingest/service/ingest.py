@@ -33,6 +33,16 @@ try:
 except Exception:  # noqa: BLE001
     authz = None  # type: ignore
 
+sys.path.insert(0, "/opt/i18n")
+try:
+    import i18n  # noqa: E402
+except Exception:  # noqa: BLE001
+    i18n = None  # type: ignore
+
+
+def T(key: str, lang: str = "ru", **fmt) -> str:
+    return i18n.t(key, lang, **fmt) if i18n else key
+
 S3_ENDPOINT = os.environ["S3_ENDPOINT"]
 S3_REGION = os.environ.get("S3_REGION", "garage")
 S3_BUCKET = os.environ["S3_BUCKET"]
@@ -52,6 +62,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+    def _lang(self, query: dict | None = None) -> str:
+        if i18n is None:
+            return "ru"
+        raw = self.headers.get("Cookie", "") or ""
+        cookie = ""
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "mlscan_lang":
+                cookie = v
+                break
+        return i18n.resolve(headers=self.headers, query=query, cookie=cookie)
 
     def _require(self, allowed=None):
         if authz is None:
@@ -131,12 +153,12 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
             return
-        return self._json(404, {"error": "not found"})
+        return self._json(404, {"error": T("msg.not_found", self._lang())})
 
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         if u.path not in ("/uploads", "/scans/upload", "/upload"):
-            return self._json(404, {"error": "not found"})
+            return self._json(404, {"error": T("msg.not_found", self._lang())})
         if self._require(["admin", "service"]) is None:
             return
         q = urllib.parse.parse_qs(u.query)
@@ -144,7 +166,7 @@ class Handler(BaseHTTPRequestHandler):
         fmt = q.get("fmt", ["pickle"])[0]
         n = int(self.headers.get("Content-Length", "0") or "0")
         if n <= 0:
-            return self._json(400, {"error": "empty body (нужен Content-Length)"})
+            return self._json(400, {"error": T("msg.empty_body_cl", self._lang())})
         if n > MAX_UPLOAD:
             return self._json(413, {"error": f"too large ({n} > {MAX_UPLOAD})"})
         os.makedirs(DATA_TMP, exist_ok=True)

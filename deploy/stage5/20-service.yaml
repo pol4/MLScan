@@ -54,6 +54,7 @@ spec:
         - name: GARAGE_ADMIN_TOKEN
           valueFrom: {secretKeyRef: {name: garage-secrets, key: ADMIN_TOKEN}}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+        - {name: MLSCAN_LANG, value: "ru"}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
         ports:
@@ -73,6 +74,7 @@ spec:
         - {name: golden, mountPath: /etc/mlscan, readOnly: true}
         - {name: samples, mountPath: /samples, readOnly: true}
         - {name: authz, mountPath: /opt/auth, readOnly: true}
+        - {name: i18n, mountPath: /opt/i18n, readOnly: true}
         - {name: pgclient, mountPath: /opt/pg, readOnly: true}
         - {name: tmp, mountPath: /tmp}
       volumes:
@@ -80,6 +82,7 @@ spec:
       - {name: golden, configMap: {name: mlscan-golden}}
       - {name: samples, configMap: {name: mlscan-golden-samples}}
       - {name: authz, configMap: {name: mlscan-authz}}
+      - {name: i18n, configMap: {name: mlscan-i18n}}
       - {name: pgclient, configMap: {name: mlscan-pgclient}}
       - {name: tmp, emptyDir: {sizeLimit: 64Mi, medium: Memory}}
 ---
