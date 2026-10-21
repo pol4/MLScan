@@ -341,23 +341,54 @@ def verify_chain() -> dict:
 # ----------------------------------------------------------------------------
 # Анализ
 # ----------------------------------------------------------------------------
+_MODULE_LABELS = {"static": "статика", "dynamic": "динамика", "behavior": "поведение"}
+
+
+def _coverage_verdict(verdict: str, coverage: dict, reason: str, lang: str = "ru") -> tuple[str, str]:
+    """Учитывает полноту покрытия в вердикте аналитики.
+
+    Если модуль проверки не смог отработать (модель не загрузилась, нет зависимости,
+    не хватило ресурсов, таймаут), вывод «Safe»/«Needs review» некорректен: возвращаем
+    Inconclusive и поясняем, что проверено не всё. Если частичные данные УЖЕ доказывают
+    опасность — вердикт сохраняем, добавив пометку о неполноте.
+    """
+    if not coverage or coverage.get("complete") is not False:
+        return verdict, reason
+    failed = coverage.get("failed") or []
+    parts = []
+    for key in failed:
+        mod = (coverage.get("modules") or {}).get(key) or {}
+        label = _MODULE_LABELS.get(key, key)
+        parts.append(f"{label}: {mod['reason']}" if mod.get("reason") else label)
+    detail = "; ".join(parts)
+    if verdict in ("Malicious", "Dangerous"):
+        return verdict, f"{reason}; проверка неполная ({detail})"
+    return "Inconclusive", (f"проверить всеми модулями не получилось ({detail}); "
+                            f"частичный результат: {reason}")
+
+
 def analyze(scan: dict) -> dict:
     findings = scan.get("findings", []) or []
     sc = scoring(findings)
     decision = apply_policy(load_policy(), findings, sc["max_severity"])
+    coverage = scan.get("coverage") or {}
+    verdict = decision.get("verdict") or scan.get("verdict")
+    reason = decision.get("reason") or scan.get("reason") or ""
+    verdict, reason = _coverage_verdict(verdict, coverage, reason)
     return {
         "scan_id": scan.get("scan_id"), "name": scan.get("name"), "format": scan.get("format"),
         "sha256": scan.get("sha256"), "size": scan.get("size"), "s3_key": scan.get("s3_key"),
         "timings": scan.get("timings"),
         "created": scan.get("created"), "service_verdict": scan.get("verdict"),
-        "service_reason": scan.get("reason"), "score": sc, "policy": decision,
-        "verdict": decision.get("verdict") or scan.get("verdict"),
+        "service_reason": reason, "service_reason_raw": scan.get("reason"),
+        "score": sc, "policy": decision, "coverage": coverage,
+        "verdict": verdict,
         "findings": findings, "state": scan.get("state"),
         "analyzed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
 
 
-def sync_once() -> dict:
+def sync_once(backfill: int = 0) -> dict:
     try:
         listing = http_get_json(TESTING_URL + "/scans")
     except Exception as exc:  # noqa: BLE001
@@ -372,7 +403,25 @@ def sync_once() -> dict:
             continue
         _append(analyze(scan))
         new += 1
-    return {"ok": True, "new": new, "total": len(_index)}
+    # пересчёт записей, проанализированных до внедрения учёта покрытия: их вердикт
+    # мог быть «Safe» при неполной проверке. В append-only store добавляем исправленную
+    # запись (история не перезаписывается).
+    fixed = 0
+    if backfill:
+        for sid, rec in list(_index.items()):
+            if fixed >= backfill:
+                break
+            if rec.get("coverage") is not None:
+                continue
+            scan = progress_of(sid)
+            if not scan or scan.get("state") != "done":
+                continue
+            try:
+                _append(analyze(scan))
+                fixed += 1
+            except Exception:  # noqa: BLE001
+                continue
+    return {"ok": True, "new": new, "reanalyzed": fixed, "total": len(_index)}
 
 
 def poller() -> None:
@@ -430,9 +479,6 @@ def stats() -> dict:
 # ----------------------------------------------------------------------------
 # Отчёты
 # ----------------------------------------------------------------------------
-_MODULE_LABELS = {"static": "статика", "dynamic": "динамика", "behavior": "поведение"}
-
-
 def report_md(rec: dict, lang: str = "ru") -> str:
     L = [f"# {T('report.title', lang, name=rec.get('name'))}", ""]
     L.append(f"- **{T('report.scan_id', lang)}:** `{rec.get('scan_id')}`")
@@ -1063,7 +1109,11 @@ class Handler(BaseHTTPRequestHandler):
         if self._require() is None:
             return
         if u.path == "/sync":
-            res = sync_once()
+            try:
+                limit = int(q.get("backfill", ["0"])[0] or "0")
+            except ValueError:
+                limit = 0
+            res = sync_once(backfill=limit)
             if authz is not None:
                 try:
                     authz.audit(getattr(self, "_subject", "?"), "sync", "analytics", "", self._rid,

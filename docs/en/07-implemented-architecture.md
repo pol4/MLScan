@@ -182,6 +182,14 @@ sandbox by the adapter (`sandbox_fmt`), and the libraries ship in the `mlscan-sa
 service — **3Gi**, sandbox Job — **3Gi** (`JOB_MEMORY`). The full body is read by the dynamic
 stage (mmap where the library supports it).
 
+Analytics applies the same rule: when `coverage.complete = false`, a `Safe`/`Needs review` verdict
+from the Policy Engine is replaced by **`Inconclusive`** with the reason "not all verification modules
+could run (...); partial result: ...", while `Malicious`/`Dangerous` is kept with an "incomplete scan"
+note. The `coverage` field is stored in the record and shown as a banner on the card. Historical
+records (analysed before coverage accounting was introduced) are recalculated during sync:
+`POST /sync?backfill=<N>` appends a corrected record to the append-only evidence store (history is
+never overwritten) - with backfill enabled, 3449 records received a correct verdict.
+
 The per-module reason comes from the sandbox: e.g.
 `pickle.loads: ModuleNotFoundError: No module named 'mymod'` (model not loaded) or
 `формат safetensors не является pickle; динамика не применима`. The logic lives in
