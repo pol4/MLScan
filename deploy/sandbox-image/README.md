@@ -21,8 +21,8 @@ kubectl -n mlscan-build logs -f job/mlscan-sandbox-build
 ```
 
 Kaniko собирает образ и публикует его в **in-cluster registry**:
-`registry.container-registry.svc.cluster.local:5000/mlscan-sandbox:latest`,
-что соответствует для kubelet `localhost:32000/mlscan-sandbox:latest`
+`registry.container-registry.svc.cluster.local:5000/mlscan-sandbox:v2`,
+что соответствует для kubelet `localhost:32000/mlscan-sandbox:v2`
 (registry addon MicroK8s).
 
 ## Использование

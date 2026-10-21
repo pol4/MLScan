@@ -7,7 +7,24 @@ MLScan (see [`07-implemented-architecture.md`](./07-implemented-architecture.md)
 formats and to **very large models**. Development plan — [`10-plan-new-formats.md`](./10-plan-new-formats.md),
 format analysis — [`09-formats-and-backdoors-analysis.md`](./09-formats-and-backdoors-analysis.md).
 
-Status: design document (to-be).
+Status: **Wave 0 (S3/PostgreSQL/AuthN+audit/observability+backup) and format waves 1–3 are
+implemented**; the target architecture and the remaining steps are described below. The actual
+state — [`07-implemented-architecture.md`](./07-implemented-architecture.md), the plan —
+[`10-plan-new-formats.md`](./10-plan-new-formats.md).
+
+What is already in the perimeter (as-built, see §11):
+
+| v2 element | State |
+|------------|-----------|
+| S3 (Garage) for artefacts, `sha256/<name>`, deduplication | ✅ (`deploy/v2/data`, `mlscan-data`) |
+| Ingest Gateway: streaming upload to S3 | ✅ (`deploy/v2/ingest`) |
+| PostgreSQL: metadata/findings/evidence, append-only triggers | ✅ (schema `deploy/v2/db/10-schema.yaml`) |
+| AuthN/Z + audit (API keys, UI users, roles, `audit_log`) | ✅ (`deploy/v2/auth`) |
+| Storage observability and backup (`/alerts`, `pg_dump` + check) | ✅ (`deploy/stage5`, `mlscan-pg-backup`) |
+| Retention/TTL and quarantine | ✅ (`deploy/v2/lifecycle`, `mlscan-lifecycle`) |
+| Format adapters and detectors (model-as-code, Keras, ONNX, HDF5, GGUF, archives, XXE, tokenizers, prompt-injection, agent/MCP) | ✅ (`deploy/v2/formats`) |
+| Localisation of the UI and messages RU/EN, global language setting | ✅ (`deploy/i18n`, [`12-i18n.md`](./12-i18n.md)) |
+| Multipart/presigned direct-to-S3, mmap profiles, object-lock quarantine, Keycloak/mTLS | ⏳ plan |
 
 ---
 
@@ -233,7 +250,7 @@ sequenceDiagram
 
 Corresponds to **Wave 0** of the plan ([`10-plan-new-formats.md`](./10-plan-new-formats.md) §2.5):
 
-1. **I1/I1b. Object storage (S3) on a fast disk** — ✅ implemented (`deploy/v2`): Garage + bucket
+1. **I1/I1b. Object storage (S3) on a fast disk** — ✅ implemented (`deploy/v2`): Garage + the bucket
    `mlscan-artifacts`, content-addressed, Ingest Gateway (streaming upload, dedup); **the testing
    service has been moved to S3** (the Artifact server `:8090` serves from S3). Abandoning the PVC
    `/artifacts`. Next: parallel multipart / presigned direct-to-S3.

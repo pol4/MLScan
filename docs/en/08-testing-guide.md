@@ -111,9 +111,24 @@ gw(){ curl -sS --noproxy '*' -H "Host: $1" "http://$GW$2"; }   # gw <host> <path
 ```bash
 gw analytics.mlscan.local /api/scans | python3 -m json.tool | head
 gw analytics.mlscan.local /api/evidence/verify
+gw analytics.mlscan.local /healthz | python3 -m json.tool | head   # language/languages
 SID=$(gw analytics.mlscan.local /api/scans | python3 -c 'import sys,json;print(json.load(sys.stdin)["scans"][0]["scan_id"])')
 gw analytics.mlscan.local "/reports/$SID.md"
 gw analytics.mlscan.local "/reports/$SID.sarif" | python3 -m json.tool | head
+```
+
+**UI and message language switch (RU/EN):**
+```bash
+# 1) via a request parameter (without changing the cookie)
+curl -sS --noproxy '*' -H 'Host: analytics.mlscan.local' "http://$GW/?lang=en" | grep -o 'Upload model'
+# 2) the switch in the UI header: "Language: RU | EN" -> cookie mlscan_lang (/lang?set=en&next=/)
+curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: analytics.mlscan.local' \
+  "http://$GW/lang?set=en&next=/" | grep -i '^set-cookie'
+# 3) reports and findings in the request language (including historical records)
+gw analytics.mlscan.local "/reports/$SID.md?lang=en" | head -3
+# 4) testing service: verdict reason and findings in the selected language
+curl -sS --noproxy '*' -H "Authorization: Bearer $KEY" "<testing-url>/scans/$SID?lang=en" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["reason"])'
 ```
 
 ### Uploading a model via the UI (including large files)
@@ -167,6 +182,12 @@ gw ops.mlscan.local /metrics | grep '^mlscan_' | head -20
 gw ops.mlscan.local /quality | python3 -m json.tool | head     # TPR/FPR on the golden set
 curl -sS --noproxy '*' -H 'Host: ops.mlscan.local' -X POST "http://$GW/retest"
 kubectl -n mlscan-ops get cronjob mlscan-retest                # continuous retest */30
+gw ops.mlscan.local /alerts | python3 -m json.tool | head      # PostgreSQL/Garage/evidence state
+# global system language (admin only); stored in the settings table
+curl -sS --noproxy '*' -H "Authorization: Bearer $KEY" -H 'Host: ops.mlscan.local' \
+  -X POST "http://$GW/settings/language?lang=en"
+gw ops.mlscan.local /settings | python3 -m json.tool           # language/startup_language
+kubectl -n mlscan-data get cronjob mlscan-lifecycle            # artifact retention/TTL
 ```
 
 ### End-to-end scenario

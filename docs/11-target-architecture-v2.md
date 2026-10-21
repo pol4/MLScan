@@ -5,7 +5,24 @@
 **очень большие модели**. План разработки — [`10-plan-new-formats.md`](./10-plan-new-formats.md),
 анализ форматов — [`09-formats-and-backdoors-analysis.md`](./09-formats-and-backdoors-analysis.md).
 
-Статус: проектный документ (to-be).
+Статус: **Волна 0 (S3/PostgreSQL/AuthN+audit/наблюдаемость+бэкап) и волны форматов 1–3
+реализованы**; ниже описана целевая архитектура и оставшиеся шаги. Фактическое состояние —
+[`07-implemented-architecture.md`](./07-implemented-architecture.md), план — 
+[`10-plan-new-formats.md`](./10-plan-new-formats.md).
+
+Что уже в контуре (as-built, см. §11):
+
+| Элемент v2 | Состояние |
+|------------|-----------|
+| S3 (Garage) для артефактов, `sha256/<name>`, дедупликация | ✅ (`deploy/v2/data`, `mlscan-data`) |
+| Ingest Gateway: потоковая загрузка в S3 | ✅ (`deploy/v2/ingest`) |
+| PostgreSQL: метаданные/находки/evidence, append-only триггеры | ✅ (схема `deploy/v2/db/10-schema.yaml`) |
+| AuthN/Z + audit (API-ключи, пользователи UI, роли, `audit_log`) | ✅ (`deploy/v2/auth`) |
+| Наблюдаемость хранилищ и бэкап (`/alerts`, `pg_dump` + проверка) | ✅ (`deploy/stage5`, `mlscan-pg-backup`) |
+| Retention/TTL и карантин | ✅ (`deploy/v2/lifecycle`, `mlscan-lifecycle`) |
+| Адаптеры форматов и детекторы (model-as-code, Keras, ONNX, HDF5, GGUF, архивы, XXE, токенизаторы, prompt-injection, agent/MCP) | ✅ (`deploy/v2/formats`) |
+| Локализация UI и сообщений RU/EN, глобальная настройка языка | ✅ (`deploy/i18n`, [`12-i18n.md`](./12-i18n.md)) |
+| Multipart/presigned direct-to-S3, mmap-профили, карантин object-lock, Keycloak/mTLS | ⏳ план |
 
 ---
 

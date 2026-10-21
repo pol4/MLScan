@@ -63,7 +63,8 @@ is an **expansion of the set of adapters and rules**, not a change of architectu
 ## Current description of the system (pickle format)
 
 **Implemented architecture (as-built):** [`docs/07-implemented-architecture.md`](./docs/en/07-implemented-architecture.md) —
-component composition (7 namespaces), network interaction diagram (Ingress/Egress), data flows.
+component composition (9 namespaces), network interaction diagram (Ingress/Egress), data flows,
+v2 storages (S3/PostgreSQL), authentication/authorization, RU/EN localisation.
 
 Additionally:
 - Concept and target architecture — [`Concept.md`](./Concept.en.md), [`docs/05-architecture.md`](./docs/en/05-architecture.md)

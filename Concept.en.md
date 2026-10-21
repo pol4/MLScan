@@ -36,7 +36,7 @@ coverage gives the verdict `Inconclusive`, and not `Safe`.
 
 ## Implementation status (as-built)
 
-Implemented and deployed in the cluster **<CLUSTER>** (MicroK8s, 7 namespaces):
+Implemented and deployed in the cluster **<CLUSTER>** (MicroK8s, 9 namespaces):
 - **Stage 0** — PoC (single-file analyzer: static analysis/dynamic analysis/behaviour).
 - **Stage 1** — hardened sandbox: **Kata** microVM, deception, sinkhole, NetworkPolicy, eBPF (Falco).
 - **Stage 2** — testing service: **streaming loading of models of any size**, Artifact server,
@@ -47,10 +47,22 @@ Implemented and deployed in the cluster **<CLUSTER>** (MicroK8s, 7 namespaces):
 - **Transition to Ingress/Egress:** a single entry point Istio Gateway + VirtualServices by hosts;
   platform egress — allowlist (deny-by-default); per-service NodePort disabled (`deploy/ingress/`).
 - **Stage 5** — operations: Prometheus metrics, quality (TPR/FPR), continuous retest, red-team, PDB, attestation.
+- **v2, Wave 0** — object storage **S3 (Garage)** for artefacts (deduplication by
+  `sha256/<name>`), **PostgreSQL** for metadata/findings/evidence/users/settings,
+  **AuthN/Z + audit** (API keys + UI users + roles + `audit_log`), observability and
+  backup, retention/TTL and quarantine (`mlscan-lifecycle`).
+- **v2, format waves 1–3** — adapters and detectors beyond pickle (model-as-code, Keras, ONNX, HDF5,
+  GGUF, archives, XXE/unsafe-YAML, tokenizers, prompt-injection, agent/MCP), dynamic analysis of
+  model-as-code; check ids `EXEC/INJ/AGT/BD/FMT/INT/STEG`/`D`.
+- **Localisation** — the UI and service messages in **RU/EN** with a global language setting
+  (`MLSCAN_LANG` at launch or a setting in the DB; see `docs/12-i18n.md`).
 
-The sandbox image `mlscan-sandbox` (Python 3.12 + PyTorch CPU + numpy/joblib/dill/cloudpickle) is built
-by **Kaniko** into the in-cluster registry. Dynamic analysis brings the payload to execution (including torch models and pickle
-in Python 2 style). Details and diagrams — `docs/07-implemented-architecture.md`, the test guide — `docs/08-testing-guide.md`.
+The sandbox image `mlscan-sandbox` (`:v2`; Python 3.12 + PyTorch CPU + numpy, safetensors,
+onnxruntime, h5py, gguf, joblib, dill, cloudpickle) is built by **Kaniko** into the in-cluster registry.
+Dynamic analysis brings the payload to execution (including torch models, numpy and pickle in Python 2 style).
+Verification of the system itself: the synthetic corpus `tests/vulnerabilities/` — 38 samples,
+**33/33 detected, 0 misses, 0 false positives**. Details and diagrams —
+`docs/07-implemented-architecture.md`, the test guide — `docs/08-testing-guide.md`.
 
 ---
 

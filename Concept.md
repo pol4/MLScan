@@ -1,5 +1,7 @@
 # Concept.md — Концепция системы автоматического анализа опасности ML-моделей (pickle)
 
+**Русский** | [English](./Concept.en.md)
+
 **Рабочее название:** MLScanner
 **Статус:** Архитектурная концепция (v1.0)
 **Область:** анализ безопасности ML-моделей, поставляемых в формате pickle и производных
@@ -34,7 +36,7 @@
 
 ## Статус реализации (as-built)
 
-Реализовано и развёрнуто в кластере **<CLUSTER>** (MicroK8s, 7 namespace):
+Реализовано и развёрнуто в кластере **<CLUSTER>** (MicroK8s, 9 namespace):
 - **Этап 0** — PoC (однофайловый анализатор: статика/динамика/поведение).
 - **Этап 1** — укреплённая песочница: микро-ВМ **Kata**, deception, sinkhole, NetworkPolicy, eBPF (Falco).
 - **Этап 2** — сервис тестирования: **потоковая загрузка моделей любого размера**, Artifact-сервер,
@@ -45,10 +47,22 @@
 - **Переход на Ingress/Egress:** единая точка входа Istio Gateway + VirtualServices по хостам;
   egress платформы — allowlist (deny-by-default); per-service NodePort отключены (`deploy/ingress/`).
 - **Этап 5** — эксплуатация: метрики Prometheus, качество (TPR/FPR), непрерывный retest, red-team, PDB, аттестация.
+- **v2, Волна 0** — объектное хранилище **S3 (Garage)** для артефактов (дедупликация по
+  `sha256/<name>`), **PostgreSQL** для метаданных/находок/evidence/пользователей/настроек,
+  **AuthN/Z + аудит** (API-ключи + пользователи UI + роли + `audit_log`), наблюдаемость и
+  резервное копирование, retention/TTL и карантин (`mlscan-lifecycle`).
+- **v2, волны форматов 1–3** — адаптеры и детекторы вне pickle (model-as-code, Keras, ONNX, HDF5,
+  GGUF, архивы, XXE/unsafe-YAML, токенизаторы, prompt-injection, agent/MCP), динамика
+  model-as-code; чек-иды `EXEC/INJ/AGT/BD/FMT/INT/STEG`/`D`.
+- **Локализация** — UI и сообщения сервисов на **RU/EN** с глобальной настройкой языка
+  (`MLSCAN_LANG` при запуске или настройка в БД; см. `docs/12-i18n.md`).
 
-Образ песочницы `mlscan-sandbox` (Python 3.12 + PyTorch CPU + numpy/joblib/dill/cloudpickle) собирается
-**Kaniko** в in-cluster registry. Динамика доводит payload до исполнения (в т.ч. torch-модели и pickle
-в стиле Python 2). Детали и схемы — `docs/07-implemented-architecture.md`, тест-гайд — `docs/08-testing-guide.md`.
+Образ песочницы `mlscan-sandbox` (`:v2`; Python 3.12 + PyTorch CPU + numpy, safetensors,
+onnxruntime, h5py, gguf, joblib, dill, cloudpickle) собирается **Kaniko** в in-cluster registry.
+Динамика доводит payload до исполнения (в т.ч. torch-модели, numpy и pickle в стиле Python 2).
+Проверка самой системы: синтетический корпус `tests/vulnerabilities/` — 38 образцов,
+**33/33 обнаружено, 0 пропусков, 0 ложных срабатываний**. Детали и схемы —
+`docs/07-implemented-architecture.md`, тест-гайд — `docs/08-testing-guide.md`.
 
 ---
 

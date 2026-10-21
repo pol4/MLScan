@@ -9,6 +9,14 @@ three mandatory components:
 2. **Testing Service** — submitting requests to the model and safe control of the results.
 3. **Analytics Engine + UI** — process management, information collection/analysis, conclusion.
 
+> **Implementation (as-built):** [`07-implemented-architecture.md`](./07-implemented-architecture.md) —
+> component composition, flows, storages (S3/Garage + PostgreSQL in v2), access and localisation.
+> The document below is the design architecture; differences of the actual implementation: a message
+> queue (RabbitMQ/Kafka/NATS) is not used — the testing service creates a Job synchronously, analytics
+> is synchronised by polling; **Metadata DB** and **Object Store** are implemented in v2
+> (PostgreSQL + Garage), and the UI and service messages are localised RU/EN
+> ([`12-i18n.md`](./12-i18n.md)).
+
 ---
 
 ## 1. Goals and boundaries

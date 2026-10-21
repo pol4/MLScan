@@ -4,27 +4,39 @@
 containerd, Calico, RuntimeClass `kata`) системы MLScan: компонентный состав, схема
 сетевого взаимодействия, потоки данных, границы доверия и ограничения.
 
-Источник: `deploy/stage1…stage5/` и `deploy/sandbox-image/`. Концепция — `../Concept.md`,
-проектная архитектура — `05-architecture.md`, план — `06-implementation-plan.md`,
-тест-гайд — `08-testing-guide.md`.
+Описание включает и базовую систему для pickle (Этапы 0–5), и **v2**: объектное хранилище,
+PostgreSQL, аутентификацию/авторизацию с аудитом и локализацию RU/EN.
+
+Источник: `deploy/stage1…stage5/`, `deploy/v2/`, `deploy/sandbox-image/`, `deploy/i18n/`,
+`deploy/ingress/`. Концепция — `../Concept.md`, проектная архитектура — `05-architecture.md`,
+план — `06-implementation-plan.md`, тест-гайд — `08-testing-guide.md`, целевая архитектура
+v2 — `11-target-architecture-v2.md`, локализация — `12-i18n.md`.
 
 ---
 
 ## 1. Обзор
 
-MLScan — система автоматического анализа опасности ML-моделей в формате pickle. Реализована
-как набор микросервисов в **семи namespace** (`mlscan-sandbox`, `mlscan-monitoring`,
-`mlscan-testing`, `mlscan-analytics`, `mlscan-integrations`, `mlscan-ops` и сборки образа
-`mlscan-build`). Все сервисы — на стандартной библиотеке Python (без внешних зависимостей),
-образ `python:3.12-slim` (Python 3.12.14); песочница использует отдельный образ
-`mlscan-sandbox` с torch/numpy.
+MLScan — система автоматического анализа опасности ML/AI-артефактов (ядро — pickle, далее
+адаптеры форматов). Реализована как набор микросервисов в **девяти namespace**:
+`mlscan-sandbox`, `mlscan-monitoring`, `mlscan-testing`, `mlscan-analytics`,
+`mlscan-integrations`, `mlscan-ops`, `mlscan-data` (v2: объектное хранилище, PostgreSQL,
+ingest, retention/backup), `mlscan-build` (сборка образа песочницы) и `mlscan-ingress`
+(Istio Gateway/VirtualServices и egress-политики). Все сервисы — на стандартной библиотеке
+Python (без внешних зависимостей), образ `python:3.12-slim` (Python 3.12.14); песочница
+использует отдельный образ `mlscan-sandbox` (torch CPU и библиотеки форматов).
 
 Ключевые принципы as-built:
 - артефакт **никогда не исполняется** в доверенной зоне — только в микро-ВМ Kata с сетевым
   запретом;
 - обмен между сервисами — по HTTP внутри кластера; внешний доступ — через единую точку входа
   Istio Ingress Gateway (маршрутизация по хостам);
-- состояние — на локальных PVC (single-node); Evidence Store — append-only с hash-цепочкой.
+- **два слоя хранения**: объектное хранилище **S3 (Garage)** для артефактов (ключ
+  `sha256/<name>`, дедупликация) и **PostgreSQL** для метаданных, находок, evidence,
+  пользователей/ключей, аудита и системных настроек; файловые PVC сохранены как локальный
+  hash-chain evidence и как fallback;
+- Evidence Store — append-only с hash-цепочкой (файл на PVC **и** зеркало в PostgreSQL);
+- UI и сообщения сервисов локализованы **RU/EN**; язык задаётся глобально (`MLSCAN_LANG` при
+  запуске либо настройкой в БД) — см. `12-i18n.md`.
 
 ### 1.1 Используемые продукты и версии
 
@@ -42,11 +54,14 @@ MLScan — система автоматического анализа опас
 | hostpath-provisioner | — | StorageClass (локальный том) |
 | Falco | driver `modern_ebpf` | eBPF runtime-мониторинг |
 | Python | **3.12.14** (образ `python:3.12-slim`) | рантайм всех сервисов и in-sandbox harness — **только стандартная библиотека** |
-| PyTorch (CPU) | **2.14.1+cpu** (образ песочницы `mlscan-sandbox`, `deploy/sandbox-image/`) + numpy 2.5.4, joblib, dill, cloudpickle | динамическая загрузка torch-моделей в песочнице |
+| PyTorch (CPU) | **2.14.1+cpu** (образ песочницы `mlscan-sandbox:v2`, `deploy/sandbox-image/`) + numpy 2.5.4, safetensors 0.8.0, onnxruntime 1.31.0, h5py 3.16.0, gguf, joblib, dill, cloudpickle | динамическая загрузка и исполнение моделей pickle/torch/numpy/model-as-code в песочнице |
+| Garage | **v1.0.1** (`dxflrs/garage:v1.0.1`) | S3-совместимое объектное хранилище артефактов (`sha256/<name>`, дедупликация) |
+| PostgreSQL | **16** (`postgres:16-alpine`) | метаданные, находки, evidence (hash-chain), пользователи, API-ключи, `audit_log`, настройки (`settings`) |
 | Kaniko | executor v1.23.2 | сборка образа песочницы в in-cluster registry |
 | `pickletools` / `zipfile` / `sys.addaudithook` | Python 3.12 stdlib | статический разбор (L1) и наблюдаемость (L2/L3) |
 | Helm | — | установка Falco |
-| Реестр образов (OCI) | — | приватный реестр; **хранит образ песочницы** `mlscan-sandbox:latest` |
+| Реестр образов (OCI) | — | приватный реестр; **хранит образ песочницы** `mlscan-sandbox:v2` |
+| Модуль локализации `deploy/i18n/i18n.py` | — | каталог RU/EN и правила локализации сообщений/находок (ConfigMap `mlscan-i18n` → `/opt/i18n`) |
 | Istio | — | **используется для Ingress** (Gateway + VirtualServices); sidecar-инъекция (mTLS/mesh) не включена; есть egress-gateway |
 
 Все сервисы MLScan — собственный код на Python stdlib поверх образа `python:3.12-slim`;
@@ -61,7 +76,7 @@ MLScan — система автоматического анализа опас
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
 | `sinkhole` (Deployment + ClusterIP Service) | :8080 HTTP, :4444/9001/1337 TCP | in-cluster «ловушка»: единственный разрешённый egress; логирует обращения |
-| sandbox Job (по запросу) | `runtimeClassName: kata` (Kata 3.32.0), образ `mlscan-sandbox` | запуск harness из PoC над артефактом (torch/numpy) |
+| sandbox Job (по запросу) | `runtimeClassName: kata` (Kata 3.32.0), образ `mlscan-sandbox:v2` | запуск harness из PoC над артефактом (pickle/torch/numpy/model-as-code) |
 | `mlscan-redteam` (Job) | kata | escape-тест изоляции (Этап 5) |
 | ConfigMap `mlscan-harness`, `mlscan-samples`, `mlscan-deception*`, `mlscan-sinkhole`, `mlscan-redteam` | — | код harness, демо-данные, honeypot-файлы, sinkhole-сервер, redteam-скрипт |
 | NetworkPolicy `default-deny-all`, `allow-dns-egress`, `sandbox-to-sinkhole`, `sinkhole-ingress`, `sandbox-to-testing-artifacts` | — | сетевая изоляция (Calico) |
@@ -81,19 +96,19 @@ Per-scan ConfigMap-транспорт больше не используется
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `mlscan-testing` (Deployment + ClusterIP Service :8080 + :8090) | stdlib HTTP | потоковый приём артефактов любого размера (PVC `/artifacts`), L1 (статика), запуск Job, Artifact-сервер (8090, отдача в песочницу по токену), сбор L2/L3, нормализация, вердикт, `/stats` |
+| `mlscan-testing` (Deployment + ClusterIP Service :8080 + :8090) | stdlib HTTP | потоковый приём артефактов любого размера, L1 (статика), запуск Job, Artifact-сервер (8090, отдача в песочницу по токену), сбор L2/L3, нормализация, вердикт, `/stats`; **запись артефакта в S3 (Garage)** по ключу `sha256/<name>` с проверкой дедупликации; дублирование метаданных и находок в **PostgreSQL**; сообщения на языке запроса (RU/EN) |
 | ServiceAccount `mlscan-testing` + Role/RoleBinding в `mlscan-sandbox` | RBAC | create/delete Jobs, get pods/logs в песочнице |
 | PVC `mlscan-testing-data` | hostpath 1Gi | записи сканов (`/data/scans/*.json`) |
 | PVC `mlscan-artifacts` | hostpath 20Gi | загруженные модели (`/artifacts/<scan_id>/<name>`) |
-| ConfigMap `mlscan-poc-lib`, `mlscan-testing-code` | — | общий анализ (PoC) + код сервиса |
+| ConfigMap `mlscan-poc-lib`, `mlscan-testing-code`, `mlscan-formats`, `mlscan-s3client`, `mlscan-pgclient`, `mlscan-authz`, `mlscan-i18n` | — | общий анализ (PoC), код сервиса, адаптеры форматов, S3- и PG-клиенты, аутентификация/авторизация, локализация |
 
 ### 2.4 `mlscan-analytics` — аналитический движок + UI (Компонента 3)
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `mlscan-analytics` (Deployment + ClusterIP Service :8080; внешне — Ingress `analytics.mlscan.local`) | stdlib HTTP | сбор результатов, скоринг, Policy Engine, evidence, отчёты, веб-UI |
+| `mlscan-analytics` (Deployment + ClusterIP Service :8080; внешне — Ingress `analytics.mlscan.local`) | stdlib HTTP | сбор результатов, скоринг, Policy Engine, evidence (файл + зеркало в PostgreSQL), отчёты, веб-UI с переключателем языка **RU/EN**, вход в UI (пользователи/API-ключи), страница `/settings` (глобальный язык; роль `admin`) |
 | PVC `mlscan-analytics-data` | hostpath 1Gi | `/data/evidence.jsonl` (hash-chain) |
-| ConfigMap `mlscan-analytics-code`, `mlscan-policy` | — | код движка + `policy.json` |
+| ConfigMap `mlscan-analytics-code`, `mlscan-policy`, `mlscan-authz`, `mlscan-pgclient`, `mlscan-i18n` | — | код движка, `policy.json`, аутентификация/авторизация, PG-клиент, локализация |
 
 ### 2.5 `mlscan-integrations` — интеграции (Этап 4)
 
@@ -101,26 +116,49 @@ Per-scan ConfigMap-транспорт больше не используется
 |--------|-----|-----------|
 | `mlscan-integrations` (Deployment + ClusterIP Service :8080; внешне — Ingress `integrations.mlscan.local`) | stdlib HTTP | Model Registry, CI/CD gate, SIEM-экспорт, threat-intel |
 | PVC `mlscan-integrations-data` | hostpath 512Mi | `registry.json`, `events.jsonl` |
-| ConfigMap `mlscan-integrations-code`, `mlscan-intel` | — | код сервиса + seed threat-intel |
+| ConfigMap `mlscan-integrations-code`, `mlscan-intel`, `mlscan-authz`, `mlscan-pgclient`, `mlscan-i18n` | — | код сервиса, seed threat-intel, аутентификация/авторизация, PG-клиент, локализация (PG подключён для вынесения реестра) |
 
 ### 2.6 `mlscan-ops` — эксплуатация (Этап 5)
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `mlscan-ops` (Deployment + ClusterIP Service :8080; внешне — Ingress `ops.mlscan.local`) | stdlib HTTP | метрики Prometheus, здоровье стека, качество (TPR/FPR), SLA, retest |
+| `mlscan-ops` (Deployment + ClusterIP Service :8080; внешне — Ingress `ops.mlscan.local`) | stdlib HTTP | метрики Prometheus, здоровье стека, качество (TPR/FPR), SLA, retest, алерты хранилищ (`/alerts`), настройки языка (`/settings`, `POST /settings/language`) |
 | CronJob `mlscan-retest` | `*/30 * * * *` | непрерывный retest golden-набора |
 | PDB `*-pdb` | — | PodDisruptionBudget для testing/analytics/integrations |
-| ConfigMap `mlscan-ops-code`, `mlscan-golden`, `mlscan-golden-samples` | — | код, golden-метки и образцы |
+| ConfigMap `mlscan-ops-code`, `mlscan-golden`, `mlscan-golden-samples`, `mlscan-authz`, `mlscan-pgclient`, `mlscan-i18n` | — | код, golden-метки и образцы, аутентификация/авторизация, PG-клиент, локализация |
+| Доступ к хранилищам | env `PGHOST…`, `GARAGE_ADMIN_URL/TOKEN` | чтение размеров БД и метрик Garage для алертов |
 
-### 2.8 `mlscan-build` — сборка образа песочницы
+### 2.7 `mlscan-data` — хранилища и служебные задачи (v2)
+
+| Объект | Тип | Назначение |
+|--------|-----|-----------|
+| `garage` (StatefulSet + Services :3900 API, :3903 admin; PVC `data-garage-0` 800Gi) | Garage v1.0.1 | **S3-совместимое объектное хранилище** артефактов; ключи `sha256/<name>`; admin-API для метрик и ключей |
+| `postgres` (StatefulSet + Service :5432; PVC `data-postgres-0` 20Gi, бэкапы в `mlscan-backups` 10Gi) | PostgreSQL 16 | реляционное хранилище (`artifacts`, `scans`, `findings`, `evidence`, `users`, `api_keys`, `audit_log`, `settings`, …); схема — `deploy/v2/db/10-schema.yaml`; триггеры append-only на `evidence` и `audit_log` |
+| `mlscan-ingest` (Deployment + Service :8080) | stdlib HTTP | шлюз потоковой загрузки в S3 с дедупликацией (для внешних поставщиков), контроль размера, аудит |
+| CronJob `mlscan-lifecycle` | `30 3 * * *` | **retention/TTL**: удаление просроченных артефактов из S3, tombstones, очистка карантина |
+| CronJob `mlscan-pg-backup` | `0 2 * * *` | резервное копирование PostgreSQL с проверкой восстановления |
+| Secret `mlscan-s3`, `garage-secrets`, `mlscan-pg` | — | доступы к S3, кластеру Garage и PostgreSQL |
+| ConfigMap `mlscan-s3client`, `mlscan-pgclient`, `mlscan-authz`, `mlscan-i18n`, `mlscan-pg-init`, `mlscan-lifecycle` | — | stdlib-клиенты (SigV4, SCRAM), авторизация, локализация, схема БД, задачи обслуживания |
+
+### 2.8 `mlscan-ingress` — внешняя точка входа (v2)
+
+| Объект | Тип | Назначение |
+|--------|-----|-----------|
+| `mlscan-gateway` (Gateway) + VirtualServices | Istio | маршрутизация по хостам `analytics|integrations|ops|api.mlscan.local` на ClusterIP-сервисы MLScan |
+| NetworkPolicy egress-allowlist | Calico | для платформенных namespace: DNS + кластерные CIDR; внешний egress запрещён |
+
+### 2.9 `mlscan-build` — сборка образа песочницы
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
 | `mlscan-sandbox-build` (Job, Kaniko) | executor v1.23.2 | сборка образа `mlscan-sandbox` и публикация в in-cluster registry |
 | ConfigMap `mlscan-sandbox-build` | — | `Dockerfile` контекста сборки |
 
-Образ: `python:3.12-slim` + **torch 2.14.1+cpu** + numpy/joblib/dill/cloudpickle. Сборка без
-Docker на хосте (Kaniko); результат — `localhost:32000/mlscan-sandbox:latest` (для kubelet).
+Образ: `python:3.12-slim` + **torch 2.14.1+cpu** + numpy, safetensors, onnxruntime, h5py,
+gguf, joblib, dill, cloudpickle. Сборка без Docker на хосте (Kaniko); результат —
+`localhost:32000/mlscan-sandbox:v2` (для kubelet). Тег задаётся аргументом
+(`bash deploy/sandbox-image/build.sh v2`) и передаётся сервису тестирования через
+`SANDBOX_IMAGE`.
 
 ---
 
@@ -160,6 +198,12 @@ flowchart TB
     KAN["Kaniko Job"]
     REG["registry :32000"]
   end
+  subgraph DATA["mlscan-data (v2)"]
+    GAR["Garage S3 :3900 / admin :3903"]
+    PG["PostgreSQL :5432"]
+    ING["mlscan-ingest :8080"]
+    LIF["lifecycle / pg-backup (CronJob)"]
+  end
   NET["Интернет"]
 
   BR -->|"Host analytics.mlscan.local"| GW
@@ -182,6 +226,13 @@ flowchart TB
   FALCO -.->|"host syscalls (runc); Kata guest invisible"| SBX
   KAN -->|"push image"| REG
   REG -.->|"image pull (kubelet)"| JOB
+  TEST -->|"put artifact sha256/<name> (dedup)"| GAR
+  TEST -->|"scans / findings (mirror)"| PG
+  ANAL -->|"scans / findings / evidence (mirror)"| PG
+  ING -->|"stream upload (gateway)"| GAR
+  OPSD -->|"db size / garage metrics"| PG
+  OPSD -->|"admin :3903 /metrics"| GAR
+  LIF -.->|"retention / TTL"| GAR
 ```
 
 **Направления и протоколы:**
@@ -195,6 +246,10 @@ flowchart TB
 - Образ песочницы собирается Kaniko в `mlscan-build` и публикуется в in-cluster registry;
   kubelet подтягивает его при создании Job.
 - **Egress платформы** — allowlist (deny-by-default + DNS + кластерные CIDR); внешний egress услуг запрещён.
+- **Артефакты** — `TEST → Garage S3` (`sha256/<name>`, дедупликация по наличию ключа), локальная
+  копия на PVC остаётся как fallback; **метаданные/находки/evidence** зеркалируются в PostgreSQL.
+- **Retention** — CronJob `mlscan-lifecycle` удаляет просроченные объекты S3, ведёт tombstones
+  и очищает карантин; `mlscan-pg-backup` делает резервную копию БД с проверкой восстановления.
 
 ---
 
@@ -250,12 +305,15 @@ sequenceDiagram
   participant TS as Testing Service
   participant K8S as K8s API
   participant SB as Sandbox Job (Kata)
+  participant DATA as mlscan-data (S3 Garage / PostgreSQL)
   participant AN as Analytics
   participant OP as Ops
 
   CI->>INT: POST /gate/scan (artifact)
   INT->>TS: POST /scans (artifact)
   TS->>TS: L1 static analysis
+  TS->>DATA: put artifact sha256/<name> (S3 Garage, dedup)
+  TS->>DATA: mirror scan/findings (PostgreSQL)
   TS->>K8S: create Job
   K8S->>SB: schedule (kata, restricted)
   SB->>TS: GET /a/<scan_id>/<token>/<name> (artifact, :8090)
@@ -267,7 +325,8 @@ sequenceDiagram
   INT-->>CI: decision allow | block | review
   AN->>TS: poll /scans (sync)
   AN->>AN: scoring + policy + evidence hash-chain
-  OP->>AN: /api/scans, /quality
+  AN->>DATA: mirror evidence/findings (PostgreSQL)
+  OP->>AN: /api/scans, /quality, /alerts
   OP->>INT: /registry, /events
   OP->>TS: POST /retest (CronJob */30)
 ```
@@ -276,57 +335,77 @@ sequenceDiagram
 
 ## 6. Хранилища, конфигурация, RBAC
 
-| Компонент | PVC | Файлы состояния |
-|-----------|-----|-----------------|
-| testing | `mlscan-testing-data` (1Gi), `mlscan-artifacts` (20Gi) | `/data/scans/<id>.json`; `/artifacts/<scan_id>/<name>` |
-| analytics | `mlscan-analytics-data` (1Gi) | `/data/evidence.jsonl` (hash-chain) |
-| integrations | `mlscan-integrations-data` (512Mi) | `/data/registry.json`, `/data/events.jsonl` |
+| Компонент | Хранилище | Что хранится |
+|-----------|-----------|--------------|
+| **S3 (Garage), ns `mlscan-data`** | объектное (`data-garage-0`, 800Gi), `sha256/<name>` | **артефакты** (тела моделей) для testing/ingest; дедупликация по ключу |
+| **PostgreSQL, ns `mlscan-data`** | StatefulSet + PVC (`data-postgres-0` 20Gi; бэкапы `mlscan-backups` 10Gi) | `artifacts`, `scans`, `findings`, `evidence`, `users`, `api_keys`, `audit_log`, `uploads`, `connections`, `settings` |
+| testing | PVC `mlscan-testing-data` (1Gi), `mlscan-artifacts` (20Gi) | `/data/scans/<id>.json`; локальные копии артефактов (fallback, если S3 недоступен) |
+| analytics | PVC `mlscan-analytics-data` (1Gi) | `/data/evidence.jsonl` (hash-chain) |
+| integrations | PVC `mlscan-integrations-data` (512Mi) | `/data/registry.json`, `/data/events.jsonl` |
 | ops | — (stateless) | состояние в памяти |
 
 Конфигурация — ConfigMap'ы (код сервисов, `policy.json`, `intel.json`, `golden.json`, harness,
-deception, sinkhole). Аттестация целостности evidence — `deploy/stage5/60-attest.sh` (HMAC-SHA256).
+deception, sinkhole, а также общие модули `mlscan-authz`, `mlscan-pgclient`, `mlscan-s3client`,
+`mlscan-i18n`). Аттестация целостности evidence — `deploy/stage5/60-attest.sh` (HMAC-SHA256).
 
-### 6.1 Как устроено хранилище аналитических данных
+### 6.1 Слой S3 (Garage) — артефакты
 
-**Отдельной СУБД нет.** Аналитическая информация хранится **файлами на PVC**
-(локальный том), загружается в память при старте и отдаётся по HTTP API. Ни SQL, ни
-индексов на диске, ни движка запросов не используется.
+**Объектное хранилище** `garage` (ns `mlscan-data`, S3 API `:3900`, admin `:3903`).
 
-| Хранилище | Файл(ы) | Формат / семантика |
-|-----------|---------|--------------------|
-| Сервис тестирования (`mlscan-testing`) | `/data/scans/<scan_id>.json` | один JSON на скан; функции `save_scan`/`load_scan`/`list_scans` |
-| Аналитический движок (`mlscan-analytics`) — **основное хранилище аналитики** | `/data/evidence.jsonl` | **append-only JSONL**; строка = `{"prev","hash","record"}`, где `hash = sha256(prev + json(record))` → **tamper-evident hash-цепочка** |
-| Интеграции (`mlscan-integrations`) | `/data/registry.json`, `/data/events.jsonl` | реестр `sha256 → entry` (dict) + append-only события gate/SIEM |
-| Ops (`mlscan-ops`) | — | stateless; читает остальные по API |
+- Ключ объекта — `sha256/<filename>`: content-addressed, поэтому повторная загрузка того же
+  файла **дедуплицируется** (проверка существования ключа до загрузки).
+- Пишут: сервис тестирования (`POST /scans/upload`) и шлюз `mlscan-ingest` (`POST /upload`,
+  для внешних поставщиков). Читают: сервис тестирования (отдача артефакта в песочницу по
+  одноразовому токену) и `mlscan-lifecycle` (удаление по TTL).
+- Клиент — stdlib `s3client.py` (SigV4, потоковая передача), доставка в песочницу — через
+  сервис тестирования (порт 8090), поэтому сетевой доступ песочницы не расширяется.
+- Retention: CronJob `mlscan-lifecycle` (`30 3 * * *`) удаляет просроченные объекты,
+  ведёт `artifact_deletions` (tombstones) и очищает карантин. Репликация между зонами
+  (RF) — эксплуатационный параметр Garage (в single-node RF=1).
 
-**Механика аналитического движка:**
-- при старте `_load_store()` проигрывает `evidence.jsonl` и строит **in-memory индекс**
-  `scan_id → record`;
-- запись — `_append()` под `threading.Lock`: считает `hash` от `prev + record`, дописывает
-  строку и обновляет `last_hash` (append-only, без изменения прошлых записей);
-- чтение — только через API: `/api/scans`, `/api/scans/<id>`, `/reports/<id>.json|.md|.sarif`;
-- контроль целостности — `GET /api/evidence/verify` (пересчёт всей цепочки);
-- запись `record` включает исходные данные скана (`static`, `sandbox` с трассой событий,
-  нормализованные `findings`, `score`, `policy`, `verdict`), поэтому файлы сканов могут
-  достигать десятков КБ.
+### 6.2 Слой PostgreSQL — метаданные, evidence, доступы
 
-**Фактическое состояние (пример):** `evidence.jsonl` ≈ 228 КБ (~102 записи), `/data/scans/` — 101 файл,
-`/artifacts` ≈ 618 МБ (загруженные модели), `registry.json` — 17 записей, `events.jsonl` — 5 строк.
+**СУБД нет в базовом контуре (Этапы 0–5); в v2 она добавлена** и используется сервисами
+как основное реляционное хранилище (схема — `deploy/v2/db/10-schema.yaml`, клиент —
+stdlib `pgclient.py` со SCRAM-аутентификацией).
 
-**Свойства и ограничения:**
-- **один писатель**: сервисы развёрнуты `replicas=1` с RWO-PVC; запись сериализуется
-  `threading.Lock` в пределах процесса; конкурентная запись из нескольких реплик не поддерживается;
-- покрытие/архивация/ретенция не реализованы; объём ограничен размером PVC;
-- нет произвольных запросов (только предопределённые API-выборки/фильтры в коде);
-- загруженные артефакты сохраняются на PVC `mlscan-artifacts` (`/artifacts/<scan_id>/<name>`);
-  per-scan ConfigMap-транспорт не используется; очистка старых артефактов — по ретенции (план);
-- **точки роста** (см. `05-architecture.md` §7): внешняя **PostgreSQL** (в кластере доступен
-  addon CloudNativePG), `sqlite/duckdb` для запросов, объектное хранилище (S3/MinIO) для
-  сырых evidence/трасс, ретенция и компактификация.
+| Таблица | Кто пишет | Содержимое |
+|---------|-----------|-----------|
+| `artifacts`, `artifact_fingerprints` | testing, analytics | дедуплицированные артефакты (sha256, размер, формат, `s3_key`), отпечатки |
+| `scans`, `findings` | testing (сразу), analytics (зеркало) | статус/стадии/вердикт/причина, нормализованные находки |
+| `evidence` | analytics | **append-only hash-chain**: `prev_hash`, `hash`, `payload` |
+| `users`, `api_keys` | управление доступом | пользователи UI (PBKDF2-хэши) и API-ключи (хэши), роли |
+| `audit_log`, `uploads`, `connections` | все сервисы (через `authz`) | аудит действий, журнал загрузок, журнал HTTP-подключений |
+| `settings` | admin (страница `/settings` / API) | системные настройки, в т.ч. **глобальный язык** (`language`) |
+| `policies`, `decisions` | — | схема готова; фактически политика задаётся `policy.json` (ConfigMap) |
 
-RBAC: единственная cross-namespace связка — SA `mlscan-testing` (ns `mlscan-testing`) с Role
-в `mlscan-sandbox` (Jobs/ConfigMaps create·delete·get, pods/logs get). Остальные сервисы
-работают без доступа к Kubernetes API.
+Целостность: на `evidence` и `audit_log` навешены триггеры, запрещающие `UPDATE/DELETE`
+(append-only «на уровне БД»), дополнительно к hash-цепочке. Резервное копирование —
+CronJob `mlscan-pg-backup` (`0 2 * * *`) с проверкой восстановления.
+
+### 6.3 Файловые хранилища (сохранены)
+
+- **Analytics:** `/data/evidence.jsonl` — append-only JSONL; строка = `{"prev","hash","record"}`,
+  где `hash = sha256(prev + json(record))` → **tamper-evident hash-цепочка** (читается при
+  старте в in-memory индекс `scan_id → record`; контроль — `GET /api/evidence/verify`).
+  В PostgreSQL тот же evidence зеркалируется (двойная запись).
+- **Testing:** `/data/scans/<id>.json` — карточка скана; `/artifacts/<scan_id>/<name>` —
+  локальная копия артефакта (fallback при недоступности S3).
+- **Integrations:** `/data/registry.json` (реестр `sha256 → entry`) и `/data/events.jsonl`
+  (append-only события gate/SIEM).
+
+**Фактическое состояние (на момент актуализации):** `scans=1442`, `findings=7399`,
+`evidence=1422`, `artifacts=70`, `audit_log=6302`, `users=2`, `settings=1` (язык);
+`/data/evidence.jsonl` ≈ 3.7 МБ.
+
+### 6.4 RBAC
+
+- Единственная cross-namespace связка — SA `mlscan-testing` (ns `mlscan-testing`) с Role в
+  `mlscan-sandbox` (Jobs/ConfigMaps create·delete·get, pods/logs get). Остальные сервисы
+  работают без доступа к Kubernetes API.
+- Доступ к API/UI — `authz` (`mlscan-authz`): статические API-ключи из Secret `mlscan-keys`
+  (роли `admin`/`ci-reader`/`service`) и пользователи UI из таблицы `users` (сессия в cookie);
+  проверки ролей на эндпоинтах, аудит в `audit_log`.
 
 ---
 
@@ -337,9 +416,12 @@ RBAC: единственная cross-namespace связка — SA `mlscan-testi
 | `mlscan-sandbox` (исполнение артефакта) | **недоверенная** | Kata 3.32.0 (микро-ВМ), PSA restricted, non-root 65532, read-only rootfs, drop ALL, seccomp, лимиты, default-deny egress, deception |
 | `mlscan-monitoring` | доверенная (мониторинг) | DaemonSet, modern eBPF |
 | `mlscan-testing` / `mlscan-analytics` / `mlscan-integrations` / `mlscan-ops` | доверенная | PSA restricted, non-root, read-only rootfs, drop ALL, без лишних прав |
+| `mlscan-data` (S3/Garage, PostgreSQL, ingest) | доверенная | PSA restricted, PVC StatefulSet, доступ по Secret; артефакт **не исполняется** |
+| `mlscan-ingress` (Gateway, VirtualServices, egress-политики) | доверенная (конфигурация) | объекты Istio/Calico; кода не исполняет |
 
-Артефакт передаётся в песочницу **без расшаренных каталогов** (ConfigMap + stdin), невидим
-для других namespace; секреты платформы (SA-токены и т.п.) в песочницу не монтируются.
+Артефакт передаётся в песочницу **без расшаренных каталогов и без содержимого в манифестах**:
+Job скачивает свой файл с Artifact-сервера сервиса тестирования (`:8090`) по одноразовому
+токену; секреты платформы (SA-токены, доступы к S3/БД) в песочницу не монтируются.
 
 ---
 
@@ -352,11 +434,20 @@ RBAC: единственная cross-namespace связка — SA `mlscan-testi
 | integrations | `mlscan-integrations.mlscan-integrations.svc.cluster.local` | 8080 |
 | ops | `mlscan-ops.mlscan-ops.svc.cluster.local` | 8080 |
 | sinkhole | `sinkhole.mlscan-sandbox.svc.cluster.local` | 8080, 4444, 9001, 1337 |
+| Garage (S3) | `garage.mlscan-data.svc.cluster.local` | 3900 (S3 API), 3903 (admin) |
+| PostgreSQL | `postgres.mlscan-data.svc.cluster.local` | 5432 |
+| ingest (шлюз S3) | `mlscan-ingest.mlscan-data.svc.cluster.local` | 8080 |
 
 Внешний доступ — Ingress: `analytics|integrations|ops|api.mlscan.local` через `:30217`.
-Основные эндпоинты: `/scans` (testing), `/api/scans|/reports|/policy` (analytics),
+Основные эндпоинты: `/scans`, `/scans/upload?lang=` (testing),
+`/`, `/artifact/<id>`, `/lang`, `/settings`, `/settings/language`, `/api/scans|/api/overview|
+/api/stats|/reports|/policy` (analytics),
 `/registry|/gate|/gate/scan|/events|/export/cef|/intel` (integrations),
-`/metrics|/health/stack|/quality|/sla|/retest` (ops).
+`/metrics|/health/stack|/quality|/sla|/alerts|/settings|/settings/language|/retest` (ops),
+`/upload` (ingest).
+
+Язык ответа выбирается так: `?lang=ru|en` → cookie `mlscan_lang` → `X-MLScan-Lang`/
+`Accept-Language` → глобальная настройка (таблица `settings`) → `MLSCAN_LANG` при запуске.
 
 ---
 
@@ -365,7 +456,8 @@ RBAC: единственная cross-namespace связка — SA `mlscan-testi
 - **В песочнице:** audit-hooks harness (L2/L3: файлы/процессы/сеть/ctypes, diff состояния) —
   работает и внутри Kata.
 - **Хост:** Falco (modern eBPF), правила `MLScan sandbox *` (exec/egress/write) для runc-подов.
-- **Стек:** `/metrics` (Prometheus `mlscan_*`), `/health/stack`, `/quality` (TPR/FPR), `/sla`.
+- **Стек:** `/metrics` (Prometheus `mlscan_*`), `/health/stack`, `/quality` (TPR/FPR), `/sla`,
+  `/alerts` (состояние PostgreSQL/Garage и целостности evidence — сообщения на языке запроса).
 
 Проверенные показатели: red-team — 7/7 PASS; quality — TPR=1.0, FPR=0.0 (tp=7, fp=0, tn=2, fn=0);
 evidence-chain — ok.
@@ -384,9 +476,19 @@ evidence-chain — ok.
 - Внешние SIEM/тикеты — через `/export/cef` и `/events` (интеграция на стороне потребителя).
 - **Динамика:** torch/numpy-модели и pickle в стиле Python 2 (`__builtin__`) теперь исполняются
   в песочнице (образ `mlscan-sandbox` + совместимость harness).
-- **Артефакты:** хранятся на PVC `mlscan-artifacts` (20Gi) без авто-ретенции — крупные модели
-  ограничены объёмом PVC. В плане (`10-plan-new-formats.md`, Волна 0): **S3 (Garage)**, **PostgreSQL** вместо файлов, **AuthN/Z + audit-журнал**.
+- **Хранилища (v2, реализовано):** артефакты — в **S3 (Garage)** с дедупликацией и
+  retention/TTL (CronJob `mlscan-lifecycle`); метаданные/находки/evidence — в **PostgreSQL**
+  (+ append-only триггеры, бэкап с проверкой восстановления). Локальные PVC сохранены как
+  fallback и как источник hash-chain evidence; файловое хранилище аналитики по-прежнему
+  **один писатель** (`replicas=1`), произвольных SQL-запросов из UI нет.
+- **Доступ (v2, реализовано):** аутентификация/авторизация (API-ключи из Secret + пользователи
+  UI в БД + сессия), роли `admin`/`ci-reader`/`service`, аудит в `audit_log`. Не реализованы
+  OIDC/Keycloak и mTLS (Istio sidecar не включён).
+- **Отказоустойчивость хранилищ:** single-node — Garage без репликации (RF=1), PostgreSQL без
+  реплики; DR/резервное копирование вынесено в CronJob и внешние процедуры.
 - **GPU** — по-прежнему недоступен (см. выше).
+- **Локализация:** локализуются UI, сообщения сервисов, находки и отчёты; канонические
+  идентификаторы (`verdict`, `severity`, `policy.action`, `check_id`) не переводятся.
 
 ---
 
@@ -399,4 +501,8 @@ evidence-chain — ok.
 - `09-formats-and-backdoors-analysis.md` — анализ других форматов ML/AI и видов закладок.
 - `10-plan-new-formats.md` — план доработок под новые форматы.
 - `11-target-architecture-v2.md` — целевая архитектура v2 (большие модели, S3/БД, скорость).
+- `12-i18n.md` — локализация UI и сообщений (RU/EN): уровни выбора языка, глобальная настройка.
+- `../deploy/v2/README.md` — v2 (S3/PostgreSQL/AuthN+audit/наблюдаемость/бэкап/lifecycle/детекторы).
+- `../deploy/i18n/README.md` — модуль локализации; `../deploy/ingress/README.md` — Ingress/Egress.
+- `../README.en.md`, `./en/` — англоязычные версии документации.
 - `../poc/README.md` — однофайловый PoC.
