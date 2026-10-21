@@ -286,6 +286,14 @@ curl -s http://<analytics>/healthz
 curl -X POST -H "Authorization: Bearer $ADMIN_KEY" "http://<ops>/settings/language?lang=en"
 ```
 
+## Пути доставки кода и служебные форматы «Волны 5» (реализовано)
+
+Поддержаны wheel с `.pth`-хуком (`EXEC-02` + `INT-04`), текстовые `.pth` (`EXEC-02`), нативные
+библиотеки `.so/.dll/.dylib` (`EXEC-08`, critical), Jinja-шаблоны промптов (`INJ-01`), одиночные
+`.pb` (SavedModel/frozen graph), индексы safetensors (`INT-03`) и реальные Keras/HDF5 с Lambda
+(`EXEC-05`). Сужены ложные срабатывания: `import ...` и `.py` в архиве без опасных вызовов дают
+только `info`; `.pth` — install-хук лишь при наличии кода (иначе веса torch).
+
 ## Форматы «Волны 4» (реализовано)
 
 Поддержаны ноутбуки (.ipynb), скрипты (.sh/.ps1/.bat), MLflow-модель (zip с `MLmodel`),

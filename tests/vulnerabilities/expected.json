@@ -422,10 +422,10 @@
   },
   "vuln_behavior_state.pkl": {
     "expect_checks": [
-      "A-01",
       "F-22",
       "F-24",
-      "F-32"
+      "F-27",
+      "A-01"
     ],
     "kind": "malicious",
     "note": "payload меняет import hooks/env/sys.path (поведенческие находки)"
@@ -487,5 +487,175 @@
     "expect_checks": [],
     "kind": "benign",
     "note": "Arrow IPC: обычная схема"
+  },
+  "vuln_behavior_subprocess.pkl": {
+    "expect_checks": [
+      "F-30",
+      "A-01"
+    ],
+    "kind": "malicious",
+    "note": "запуск процесса при загрузке"
+  },
+  "vuln_behavior_network.pkl": {
+    "expect_checks": [
+      "F-31",
+      "A-01"
+    ],
+    "kind": "malicious",
+    "note": "сетевое обращение при загрузке"
+  },
+  "vuln_behavior_files.pkl": {
+    "expect_checks": [
+      "F-33",
+      "A-01"
+    ],
+    "kind": "malicious",
+    "note": "запись файла при загрузке"
+  },
+  "vuln_behavior_builtins.pkl": {
+    "expect_checks": [
+      "F-20",
+      "F-21",
+      "A-01"
+    ],
+    "kind": "malicious",
+    "note": "подмена/удаление builtins при загрузке"
+  },
+  "vuln_behavior_cwd.pkl": {
+    "expect_checks": [
+      "F-25",
+      "F-23",
+      "A-01"
+    ],
+    "kind": "malicious",
+    "note": "смена cwd и sys.path при загрузке"
+  },
+  "vuln_behavior_probe_builtins.pkl": {
+    "expect_checks": [
+      "F-26"
+    ],
+    "kind": "malicious",
+    "note": "подмена builtins во время вызова модели (probe)"
+  },
+  "vuln_behavior_strings.pkl": {
+    "expect_checks": [
+      "F-27",
+      "A-20"
+    ],
+    "kind": "malicious",
+    "note": "подозрительные строки в загруженном объекте"
+  },
+  "vuln_zip_slip.zip": {
+    "expect_checks": [
+      "B-03"
+    ],
+    "kind": "malicious",
+    "note": "zip-slip: член с ../ в пути"
+  },
+  "vuln_zip_corrupt.zip": {
+    "expect_checks": [
+      "B-02"
+    ],
+    "kind": "malicious",
+    "note": "повреждённый сжатый поток члена"
+  },
+  "vuln_bad_pickle.pkl": {
+    "expect_checks": [
+      "A-00"
+    ],
+    "kind": "malicious",
+    "note": "некорректный pickle (неизвестный опкод)"
+  },
+  "vuln_wheel_pth.whl": {
+    "expect_checks": [
+      "EXEC-02",
+      "INT-04"
+    ],
+    "kind": "malicious",
+    "note": "wheel с .pth-хуком (код при старте интерпретатора)"
+  },
+  "vuln_pth_hook.pth": {
+    "expect_checks": [
+      "EXEC-02"
+    ],
+    "kind": "malicious",
+    "note": "текстовый .pth-хук (не веса torch)"
+  },
+  "vuln_native.so": {
+    "expect_checks": [
+      "EXEC-08"
+    ],
+    "kind": "malicious",
+    "note": "нативная библиотека (.so) в пакете"
+  },
+  "vuln_jinja_prompt.j2": {
+    "expect_checks": [
+      "INJ-01"
+    ],
+    "kind": "malicious",
+    "note": "SSTI в Jinja-шаблоне промпта"
+  },
+  "vuln_keras_lambda.h5": {
+    "expect_checks": [
+      "EXEC-05"
+    ],
+    "kind": "malicious",
+    "note": "HDF5/Keras с Lambda/eval в model_config"
+  },
+  "vuln_safetensors_index.json": {
+    "expect_checks": [
+      "INT-03"
+    ],
+    "kind": "malicious",
+    "note": "индекс safetensors со внешним URL"
+  },
+  "vuln_frozen_pb.pb": {
+    "expect_checks": [
+      "EXEC-01"
+    ],
+    "kind": "malicious",
+    "note": "frozen graph .pb со ссылкой на Python-код"
+  },
+  "safe_mar.mar": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "TorchServe .mar без handler-кода"
+  },
+  "safe_model_package.zip": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "пакет модели с чистым кодом"
+  },
+  "safe_wheel.whl": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "обычный wheel без .pth/setup.py"
+  },
+  "safe_jinja_prompt.j2": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "Jinja-шаблон без SSTI-конструкций"
+  },
+  "safe_safetensors_index.json": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "индекс safetensors без внешних URL"
+  },
+  "safe_keras_h5.h5": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "HDF5/Keras без Lambda"
+  },
+  "safe_frozen.pb": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "frozen graph .pb без Python-операций"
+  },
+  "vuln_zip_truncated.zip": {
+    "expect_checks": [
+      "B-01"
+    ],
+    "kind": "malicious",
+    "note": "обрезанный zip (нет каталога)"
   }
 }

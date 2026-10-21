@@ -107,9 +107,34 @@ ML-пайплайнах и редко проверяются сканерами:
 песочницы — нужны torch/onnx/h5py/pyarrow), безопасные — `gen_benign_formats.py`.
 Проверки: `EXEC-01..07`, `INT-03/04`, `INJ-03`, `F-22/F-24/F-32`, `FMT-09`.
 
+## «Волна 5»: поведение интерпретатора, битые контейнеры и пути доставки кода
+
+| Вектор | Вредоносный пример | Безопасный пример |
+|--------|--------------------|-------------------|
+| Запуск процесса при загрузке | `vuln_behavior_subprocess.pkl` (`F-30`) | — |
+| Сетевое обращение при загрузке | `vuln_behavior_network.pkl` (`F-31`) | — |
+| Запись файлов при загрузке | `vuln_behavior_files.pkl` (`F-33`) | — |
+| Подмена/удаление builtins | `vuln_behavior_builtins.pkl` (`F-20`, `F-21`) | — |
+| Подмена builtins во время вызова модели | `vuln_behavior_probe_builtins.pkl` (`F-26`) | — |
+| Смена cwd/sys.path | `vuln_behavior_cwd.pkl` (`F-23`, `F-25`) | — |
+| Подозрительные строки в объекте | `vuln_behavior_strings.pkl` (`F-27`) | — |
+| Wheel со site-packages-хуком | `vuln_wheel_pth.whl` (`EXEC-02`, `INT-04`) | `safe_wheel.whl` |
+| Текстовый `.pth`-хук | `vuln_pth_hook.pth` (`EXEC-02`) | — |
+| Нативная библиотека в пакете | `vuln_native.so` (`EXEC-08`) | — |
+| Jinja-шаблон промпта (SSTI) | `vuln_jinja_prompt.j2` (`INJ-01`) | `safe_jinja_prompt.j2` |
+| Keras/HDF5 с Lambda | `vuln_keras_lambda.h5` (`EXEC-05`) | `safe_keras_h5.h5` |
+| Индекс safetensors с внешним URL | `vuln_safetensors_index.json` (`INT-03`) | `safe_safetensors_index.json` |
+| Frozen graph `.pb` с Python-операциями | `vuln_frozen_pb.pb` (`EXEC-01`) | `safe_frozen.pb` |
+| Битые контейнеры | `vuln_zip_slip.zip` (`B-03`), `vuln_zip_corrupt.zip` (`B-02`), `vuln_zip_truncated.zip` (`B-01`), `vuln_bad_pickle.pkl` (`A-00`) | — |
+| Пакет модели с чистым кодом | — | `safe_model_package.zip`, `safe_mar.mar` |
+
+Важно: обычный `import ...` в Python-коде **не** считается находкой (список маркеров сужен до
+реально опасных вызовов); в архивах наличие `.py` без опасных вызовов даёт лишь `info`,
+а `.pth` считается install-хуком только если внутри есть код (иначе это веса torch).
+
 ## Доброкачественные примеры сложных форматов
 
-Кроме образцов с закладками корпус содержит **35 безопасных** примеров (`safe_*`) в 28 форматах, в том числе
+Кроме образцов с закладками корпус содержит **42 безопасных** примера (`safe_*`) в 35 форматах, в том числе
 реальные файлы сложных форматов: safetensors (f32/f16), numpy `.npz`, torch `.pt`, HDF5 `.h5`,
 ONNX (MatMul+Add, opset 13), GGUF, Keras `.keras` (zip: `config.json` + `weights.h5`),
 архивы `.zip`/`.tar.gz`, joblib/dill/cloudpickle, tokenizer.json, MCP-манифест, YAML/XML-конфиги,

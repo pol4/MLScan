@@ -350,6 +350,57 @@ def gen_extra_formats() -> None:
         add("safe_arrow.arrow", buf2.getvalue(), "Arrow IPC: обычная схема")
 
 
+
+def gen_wave5_benign() -> None:
+    """Волна 5: benign-версии новых векторов (wheel/model-package/.pth/Jinja/H5/индекс/.pb)."""
+    import pickle as _pkl
+
+    # TorchServe .mar без handler-кода
+    mar = io.BytesIO()
+    with zipfile.ZipFile(mar, "w") as z:
+        z.writestr("MAR-INF/MANIFEST.json",
+                   json.dumps({"model": {"serializedFile": "weights.pth"}}))
+        z.writestr("weights.pth", _pkl.dumps({"w": [1.0, 2.0]}))
+    add("safe_mar.mar", mar.getvalue(), "TorchServe .mar без handler-кода")
+
+    # пакет модели с чистым Python-кодом (проверка, что «import » не находка)
+    pkg = io.BytesIO()
+    with zipfile.ZipFile(pkg, "w") as z:
+        z.writestr("model.py", "import torch\n\nclass Model:\n"
+                               "    def __init__(self):\n        self.net = torch.nn.Linear(4, 2)\n"
+                               "    def predict(self, x):\n        return self.net(x)\n")
+        z.writestr("config.json", json.dumps({"hidden_size": 4}))
+    add("safe_model_package.zip", pkg.getvalue(), "пакет модели с чистым кодом")
+
+    # wheel без хуков
+    whl = io.BytesIO()
+    with zipfile.ZipFile(whl, "w") as z:
+        z.writestr("mypkg/__init__.py", "VERSION = '1.0'\n")
+        z.writestr("mypkg-1.0.dist-info/METADATA", "Metadata-Version: 2.1\nName: mypkg\n")
+        z.writestr("mypkg-1.0.dist-info/WHEEL", "Wheel-Version: 1.0\n")
+        z.writestr("mypkg-1.0.dist-info/RECORD", "mypkg/__init__.py,,\n")
+    add("safe_wheel.whl", whl.getvalue(), "обычный wheel без .pth/setup.py")
+
+    add("safe_jinja_prompt.j2",
+        b"System: You are a helpful assistant.\nUser: {{ question }}\nAnswer: {{ answer }}\n",
+        "Jinja-шаблон без SSTI-конструкций")
+    add("safe_safetensors_index.json",
+        json.dumps({"metadata": {"total_size": 16},
+                    "weight_map": {"w": "model-00001-of-00001.safetensors"}}).encode(),
+        "индекс safetensors без внешних URL")
+
+    h5py = _need("h5py")
+    if h5py is not None:
+        buf = io.BytesIO()
+        with h5py.File(buf, "w") as f:
+            f.attrs["model_config"] = ('{"class_name":"Sequential","config":{"layers":'
+                                       '[{"class_name":"Dense","config":{"units":4}}]}}')
+            f.create_dataset("dense/kernel", data=[[0.0] * 4] * 8, dtype="float32")
+        add("safe_keras_h5.h5", buf.getvalue(), "HDF5/Keras без Lambda")
+
+    add("safe_frozen.pb", b"\x1a\x08graphdef" + b"\x00" * 48, "frozen graph .pb без Python-операций")
+
+
 # --------------------------------------------------------------------------
 # Крупные корректные примеры (по умолчанию не сохраняются в репозиторий)
 # --------------------------------------------------------------------------
@@ -432,6 +483,7 @@ def main() -> int:
     gen_pickles()
     gen_texts()
     gen_extra_formats()
+    gen_wave5_benign()
     if args.large_mb:
         print("== крупные корректные примеры")
         gen_large(args.large_mb)

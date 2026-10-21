@@ -39,7 +39,10 @@ FMT_BY_EXT = {"pkl": "pickle", "pickle": "pickle", "p": "pickle",
               # «Волна 4»: ноутбуки, скрипты, MLflow/SavedModel/TFLite/CoreML/PMML, датасеты
               "ipynb": "notebook", "sh": "script", "bash": "script", "ps1": "script",
               "tflite": "tflite", "mlmodel": "coreml", "pmml": "pmml",
-              "parquet": "dataset", "arrow": "dataset", "feather": "dataset"}
+              "parquet": "dataset", "arrow": "dataset", "feather": "dataset",
+              # «Волна 5»: wheel/.pth, нативные библиотеки, Jinja, H5/Keras, frozen .pb
+              "whl": "zip", "pth": "torch", "so": "native", "dll": "native",
+              "j2": "jinja", "jinja": "jinja", "pb": "savedmodel"}
 
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))

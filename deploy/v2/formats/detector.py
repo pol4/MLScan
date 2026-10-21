@@ -16,7 +16,9 @@ from pathlib import Path
 MAGIC_HDF5 = b"\x89HDF\r\n\x1a\n"
 ZIP_MAGIC = b"PK\x03\x04"
 
-PY_CODE_HINTS = ("import ", "subprocess", "os.system", "eval(", "exec(", "__import__", "socket")
+PY_CODE_HINTS = ("subprocess", "os.system", "os.popen", "pty.spawn", "eval(", "exec(",
+                 "__import__", "socket.", "urlopen", "requests.get", "marshal.loads",
+                 "pickle.loads", "base64 -d", "commands.getoutput")
 JINJA_DANGER = ("__class__", "__mro__", "__globals__", "__subclasses__", "cycler", "lipsum",
                 "config", "request", "self.", "os.popen", "subprocess")
 
@@ -80,6 +82,38 @@ SCRIPT_EXEC = ("invoke-expression", "iex(", "downloadstring", "-encodedcommand",
                "bitsadmin", "chmod +x", "base64 -d", "python -c", "os.system", "subprocess",
                "eval ", "exec ", "rm -rf /")
 NOTEBOOK_SHELL = ("!pip", "!curl", "!wget", "!bash", "!sh ")
+
+
+def _scan_native(blob: bytes, label: str) -> list[dict]:
+    """Нативные библиотеки в пакете модели (.so/.dll/.dylib) — код вне модели."""
+    for magic, kind in NATIVE_MAGIC.items():
+        if blob.startswith(magic):
+            return [_f("EXEC-08", f"Нативная библиотека в артефакте ({label})", "critical", 0.85,
+                       f"{kind} binary: {len(blob)} B", cat="EXEC")]
+    return [_f("FMT-01", f"Нативная библиотека: неизвестный формат ({label})", "low", 0.3,
+               "no ELF/PE/Mach-O magic", cat="FMT")]
+
+
+def _scan_jinja(text: str, label: str) -> list[dict]:
+    """Jinja2-шаблоны (промпты/конфиги), поставляемые с моделью: SSTI."""
+    out: list[dict] = []
+    if not any(m in text for m in JINJA_MARK):
+        return out
+    hits = [h for h in JINJA_DANGER if h in text]
+    if hits:
+        out.append(_f("INJ-01", f"Опасные конструкции в Jinja-шаблоне ({label})", "high", 0.8,
+                      "hints: " + ", ".join(hits[:5]), cat="INJ"))
+    return out
+
+
+def _scan_sitepath(text: str, label: str) -> list[dict]:
+    """`.pth` файл из site-packages — код исполняется при старте интерпретатора."""
+    hits = [h for h in ("import ", "exec(", "eval(", "os.system", "subprocess", "__import__")
+            if h in text]
+    if hits:
+        return [_f("EXEC-02", f"Исполняемый .pth-хук ({label})", "critical", 0.9,
+                   "hints: " + ", ".join(hits[:4]), cat="EXEC")]
+    return []
 
 
 def _scan_script(text: str, label: str) -> list[dict]:
@@ -223,8 +257,30 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
     has_py = [n for n in names if Path(n).suffix.lower() in CODE_EXT
               and _norm_name(n) not in code_norm]      # TorchScript code/ разбирается отдельно
     if has_py and not ts_like:
-        out.append(_f("EXEC-02", f"Python-код внутри контейнера ({', '.join(has_py[:4])})",
-                      "high", 0.85, "files: " + ", ".join(has_py[:6])))
+        risky = []
+        for n in has_py[:20]:
+            try:
+                if any(h in _btext(zf.read(n)) for h in PY_CODE_HINTS):
+                    risky.append(n)
+            except Exception:  # noqa: BLE001
+                continue
+        if risky:
+            out.append(_f("EXEC-02", f"Опасный Python-код внутри контейнера ({', '.join(risky[:4])})",
+                          "high", 0.85, "files: " + ", ".join(risky[:6])))
+        else:
+            out.append(_f("EXEC-02", f"Python-код внутри контейнера ({', '.join(has_py[:4])})",
+                          "info", 0.5, "files: " + ", ".join(has_py[:6])))
+    for n in names:
+        if _norm_name(n).endswith(".pth"):
+            try:
+                text = _btext(zf.read(n))
+            except Exception:  # noqa: BLE001
+                continue
+            hits = _scan_sitepath(text, f"{path.name}:{n}")
+            if hits:
+                out.extend(hits)
+                out.append(_f("INT-04", f"Архив содержит install-хук ({n})", "high", 0.75,
+                              ".pth исполняется при старте интерпретатора", cat="INT"))
     if fmt == "torchserve-mar" and has_py:
         out.append(_f("EXEC-01", "TorchServe .mar с handler-кодом (исполнение при serve)",
                       "critical", 0.9, "MAR-INF + handler.py"))
@@ -417,7 +473,13 @@ def _scan_safetensors(blob: bytes, label: str, total_size: int | None = None) ->
 
 
 INSTALL_FILES = ("requirements.txt", "setup.py", "pyproject.toml", "conda.yaml",
-                 "environment.yml", "Makefile")
+                 "environment.yml", "Makefile", ".pth")
+NATIVE_MAGIC = {b"\x7fELF": "ELF", b"MZ": "PE", b"\xcf\xfa\xed\xfe": "Mach-O",
+                b"\xca\xfe\xba\xbe": "Mach-O (fat)", b"\xfe\xed\xfa\xcf": "Mach-O"}
+JINJA_MARK = ("{{", "{%")
+JINJA_DANGER = ("__class__", "__mro__", "__globals__", "__subclasses__", "__builtins__",
+                "cycler", "lipsum", "config", "request", "os.popen", "subprocess",
+                "self.__init__", "attr(")
 
 
 def _scan_zip_extra(path: Path) -> list[dict]:
@@ -665,6 +727,14 @@ def detect(path: Path, head: bytes) -> str:
         return "tflite"
     if ext in (".mlmodel", ".mlpackage"):
         return "coreml"
+    if ext in (".j2", ".jinja", ".jinja2"):
+        return "jinja"
+    if ext in (".so", ".dll", ".dylib", ".node", ".a", ".o"):
+        return "native"
+    if ext == ".pb":
+        return "savedmodel"
+    if ext == ".pth" and head.lstrip()[:7] in (b"import ", b"exec(", b"eval("):
+        return "sitepath"      # текстовый .pth-хук, а не веса torch
     if ext == ".pmml":
         return "pmml"
     if ext in (".xml", ".ovpn"):
@@ -699,7 +769,7 @@ def static_scan(path: Path) -> dict:
     findings: list[dict] = []
     try:
         if fmt in ("torchserve-mar", "keras", "torch-package", "torch-zip", "zip",
-                   "mlflow", "savedmodel"):
+                   "mlflow", "savedmodel") and zipfile.is_zipfile(path):
             findings.extend(_scan_zip_extra(path))
             f2, real = _scan_zip(path)
             findings.extend(f2)
@@ -758,6 +828,14 @@ def static_scan(path: Path) -> dict:
         elif fmt == "pmml":
             findings.extend(_scan_xml(_read_bounded(path), path.name))
             findings.extend(_scan_pmml(_btext(_read_bounded(path)), path.name))
+        elif fmt == "savedmodel":
+            findings.extend(_scan_savedmodel(_read_bounded(path), path.name))
+        elif fmt == "jinja":
+            findings.extend(_scan_jinja(_btext(_read_bounded(path)), path.name))
+        elif fmt == "native":
+            findings.extend(_scan_native(_read_bounded(path), path.name))
+        elif fmt == "sitepath":
+            findings.extend(_scan_sitepath(_btext(_read_bounded(path)), path.name))
         elif fmt == "image":
             findings.extend(_scan_image_polyglot(_read_bounded(path), path.name))
     except Exception as exc:  # noqa: BLE001

@@ -130,6 +130,16 @@ considered complete**:
 * the scan record stores a structured `coverage` field (`modules`, `failed`, `complete`) which is
   shown as a banner on the artifact card and included in the reports (JSON/Markdown).
 
+Wave 5 added code-delivery paths and service formats: **wheels** with site-packages hooks
+(`.pth`), **text `.pth`** files, **native libraries** (.so/.dll/.dylib, `EXEC-08`),
+**Jinja prompt templates** (SSTI, `INJ-01`), standalone **frozen graph `.pb`**, **safetensors
+indexes** and real **Keras/HDF5 with Lambda** (`EXEC-05`). Behaviour was tightened: a plain
+`import ...` and the mere presence of `.py` in an archive are no longer findings (markers are
+limited to real dangerous calls; an archive without dangerous code yields `info` only), and a
+`.pth` counts as an install hook only when it contains code. Behavioural checks are covered by
+samples (`F-20/F-21/F-23/F-25/F-26/F-27/F-30/F-31/F-33`) as are container errors
+(`B-01/B-02/B-03`, `A-00`, `FMT-01`).
+
 Wave 4 additionally supports **notebooks** (.ipynb), **scripts** (.sh/.ps1/.bat and others),
 **MLflow models** (a zip with `MLmodel`), **TensorFlow SavedModel** (`saved_model.pb`),
 **TFLite** (`TFL3`), **CoreML** (`.mlmodel`), **PMML**, **Parquet/Arrow/Feather datasets**

@@ -65,13 +65,17 @@ FORMAT_BY_EXT = {
     ".ps1": "script", ".bat": "script", ".cmd": "script",
     ".mlmodel": "coreml", ".mlpackage": "coreml",
     ".parquet": "dataset", ".arrow": "dataset", ".feather": "dataset",
+    ".j2": "jinja", ".jinja": "jinja", ".jinja2": "jinja",
+    ".so": "native", ".dll": "native", ".dylib": "native", ".node": "native",
+    ".pb": "savedmodel",
 }
 
 # Форматы, для которых pickle-десериализация неприменима: их разбирают адаптеры,
 # а динамика загружает профильными библиотеками (mmap/парсеры).
 NON_PICKLE_FORMATS = {"hdf5", "safetensors", "onnx", "gguf", "keras", "config", "card",
                       "tokenizer", "xml", "yaml", "json", "image", "tflite", "pmml",
-                      "notebook", "script", "coreml", "dataset", "mlflow", "savedmodel"}
+                      "notebook", "script", "coreml", "dataset", "mlflow", "savedmodel",
+                      "jinja", "native", "sitepath"}
 
 DANGEROUS_MODULES = {
     "os", "posix", "nt", "subprocess", "shutil", "pty", "platform",
@@ -319,6 +323,10 @@ def detect_format(path: Path) -> str:
         return "dataset"
     if head[:6] == b"ARROW1":
         return "dataset"
+    if head.startswith((b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")):
+        return "native"
+    if fmt in ("unknown", "torch") and head.lstrip()[:7] in (b"import ", b"exec(", b"eval("):
+        return "sitepath"      # текстовый .pth-хук (site-packages), а не веса torch
     if head.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8", b"GIF87a", b"GIF89a")):
         return "image"
     if head.startswith(MAGIC_ZIP) and fmt in ("unknown", "pickle", "torch", "joblib", "numpy"):
@@ -625,6 +633,10 @@ def _run_model_code(path, errors):
         except Exception as e:
             errors.append("model-as-code read: %s" % e)
     if code is None:
+        # Пакет без entry-кода (например TorchServe .mar только с весами) — это контейнер,
+        # а не ошибка загрузки: перечисляем содержимое.
+        if zipfile.is_zipfile(path):
+            return _load_archive(path, errors, "zip")
         errors.append("model-as-code: entry-код не найден")
         return None
     g = {"__name__": "__main__", "__file__": path}
@@ -828,7 +840,12 @@ def _load_flatbuffer(path, errors, kind="tflite"):
     if kind == "tflite" and data[:4] != b"TFL3":
         errors.append("tflite: неверная сигнатура контейнера")
         return None
-    return {"format": kind, "size": os.path.getsize(path), "magic": data[:4].decode("latin1")}
+    if kind == "native" and not data.startswith((b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe",
+                                                 b"\xca\xfe\xba\xbe")):
+        errors.append("native: неизвестная сигнатура бинарника")
+        return None
+    return {"format": kind, "size": os.path.getsize(path),
+            "magic": data[:4].decode("latin1", "replace")}
 
 
 def _load_text(path, errors):
@@ -858,8 +875,13 @@ def load_target(path, fmt, errors):
     if fmt in ("tar", "zip", "torch-package", "torch-zip"):
         return _load_archive(path, errors, "tar" if fmt == "tar" else "zip")
     if fmt in ("config", "card", "tokenizer", "xml", "json", "yaml", "pmml",
-               "notebook", "script", "savedmodel"):
+               "notebook", "script", "jinja", "sitepath"):
         return _load_text(path, errors)
+    if fmt == "savedmodel":
+        return _load_archive(path, errors, None) if zipfile.is_zipfile(path) else \
+            _load_flatbuffer(path, errors, "savedmodel")
+    if fmt == "native":
+        return _load_flatbuffer(path, errors, "native")
     if fmt == "image":
         return _load_image(path, errors)
     if fmt in ("tflite", "coreml"):
@@ -1178,7 +1200,8 @@ def prewarm(fmt):
             "tar": [], "zip": [], "config": [], "card": [], "tokenizer": [],
             "xml": [], "json": [], "yaml": [], "image": [], "pmml": [], "notebook": [],
             "script": [], "savedmodel": [], "coreml": [], "tflite": [],
-            "dataset": ["pyarrow"]}.get(fmt, [])
+            "dataset": ["pyarrow"], "jinja": [], "native": [],
+            "sitepath": [], "savedmodel": []}.get(fmt, [])
     for m in mods:
         try:
             __import__(m)
