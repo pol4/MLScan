@@ -110,6 +110,11 @@ Per-scan ConfigMap-транспорт больше не используется
 | PVC `mlscan-analytics-data` | hostpath 1Gi | `/data/evidence.jsonl` (hash-chain) |
 | ConfigMap `mlscan-analytics-code`, `mlscan-policy`, `mlscan-authz`, `mlscan-pgclient`, `mlscan-i18n` | — | код движка, `policy.json`, аутентификация/авторизация, PG-клиент, локализация |
 
+Производительность дашборда: выборки, обращающиеся к сервису тестирования (`/api/overview`,
+`/api/stats`), кэшируются в аналитике на 5 с (кэш сервиса тестирования — 30 с со сбросом при
+записи нового скана). UI рисует таблицу сразу после `/api/overview`, а карточки статистики —
+после отдельного `/api/stats`, поэтому список сканов отображается через ~0.2 с.
+
 ### 2.5 `mlscan-integrations` — интеграции (Этап 4)
 
 | Объект | Тип | Назначение |

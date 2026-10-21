@@ -112,6 +112,11 @@ one-time token. The per-scan ConfigMap transport is no longer used.
 | PVC `mlscan-analytics-data` | hostpath 1Gi | `/data/evidence.jsonl` (hash-chain) |
 | ConfigMap `mlscan-analytics-code`, `mlscan-policy`, `mlscan-authz`, `mlscan-pgclient`, `mlscan-i18n` | — | engine code, `policy.json`, authentication/authorization, PG client, localisation |
 
+Dashboard performance: queries that reach the testing service (`/api/overview`, `/api/stats`)
+are cached in analytics for 5 s (the testing service cache is 30 s and is invalidated when a new
+scan is written). The UI renders the table as soon as `/api/overview` returns and the statistic
+cards after the separate `/api/stats`, so the scan list appears in ~0.2 s.
+
 ### 2.5 `mlscan-integrations` — integrations (Stage 4)
 
 | Object | Type | Purpose |

@@ -96,6 +96,8 @@ CATALOG: dict[str, dict[str, str]] = {
     "dash.volume": {"ru": "Объём", "en": "Volume"},
     "dash.shown": {"ru": "Показано: {n} из {m}", "en": "Showing {n} of {m}"},
     "dash.upload_error": {"ru": "Ошибка загрузки", "en": "Upload error"},
+    "dash.loading": {"ru": "Загрузка…", "en": "Loading…"},
+    "dash.empty": {"ru": "Нет данных", "en": "No data"},
     # --- карточка артефакта
     "art.back": {"ru": "← к обзору", "en": "← back to overview"},
     "art.size": {"ru": "Размер", "en": "Size"},

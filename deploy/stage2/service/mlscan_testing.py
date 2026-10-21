@@ -126,6 +126,11 @@ _token = open(os.path.join(SA_DIR, "token")).read().strip()
 
 _lock = threading.Lock()
 
+# Кэш списка сканов: чтение тысяч JSON-файлов на каждый запрос дорого (дашборд опрашивает
+# /scans и /stats часто). TTL 5 с; сбрасывается при сохранении нового скана.
+_scans_cache: dict = {"ts": 0.0, "data": None}
+_SCANS_TTL = 30.0   # кэш списка сканов; сбрасывается при записи (save_scan)
+
 
 # ----------------------------------------------------------------------------
 # Kubernetes API
@@ -162,6 +167,7 @@ def save_scan(rec: dict) -> None:
     with open(tmp, "w") as fh:
         json.dump(rec, fh, ensure_ascii=False)
     os.replace(tmp, os.path.join(store_dir(), rec["scan_id"] + ".json"))
+    _invalidate_scans_cache()
 
 
 def load_scan(scan_id: str) -> dict | None:
@@ -186,7 +192,19 @@ def update(scan_id: str, **fields) -> None:
         save_scan(rec)
 
 
+def _invalidate_scans_cache() -> None:
+    with _lock:
+        _scans_cache["data"] = None
+        _scans_cache["ts"] = 0.0
+
+
 def list_scans() -> list[dict]:
+    now = time.time()
+    with _lock:
+        cached = _scans_cache["data"]
+        fresh = cached is not None and (now - _scans_cache["ts"]) < _SCANS_TTL
+    if fresh:
+        return cached
     out = []
     for fn in sorted(os.listdir(store_dir()), reverse=True):
         if not fn.endswith(".json"):
@@ -198,6 +216,9 @@ def list_scans() -> list[dict]:
             continue
         out.append({k: r.get(k) for k in ("scan_id", "name", "size", "sha256", "state",
                                           "stage", "progress", "verdict", "created", "updated")})
+    with _lock:
+        _scans_cache["data"] = out
+        _scans_cache["ts"] = time.time()
     return out
 
 

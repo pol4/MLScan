@@ -140,10 +140,17 @@ def progress_of(scan_id: str) -> dict | None:
 
 
 def testing_stats() -> dict:
+    now = time.time()
+    cached = _dash_cache["testing"]
+    if cached is not None and (now - _dash_cache["ts"]) < _DASH_TTL:
+        return cached
     try:
-        return http_get_json(TESTING_URL + "/stats", timeout=10)
+        st = http_get_json(TESTING_URL + "/stats", timeout=30)
     except Exception:  # noqa: BLE001
-        return {}
+        st = {}
+    _dash_cache["testing"] = st
+    _dash_cache["ts"] = time.time()
+    return st
 
 
 # ----------------------------------------------------------------------------
@@ -209,6 +216,12 @@ _lock = threading.Lock()
 _index: dict[str, dict] = {}
 _last_hash = "GENESIS"
 
+# Кэш данных дашборда: /api/overview и /api/stats обращаются к сервису тестирования
+# (чтение тысяч файлов сканов), поэтому результаты кэшируются на 5 с; инвалидация —
+# при записи нового скана в evidence и по TTL.
+_dash_cache: dict = {"ts": 0.0, "overview": None, "testing": None}
+_DASH_TTL = 5.0
+
 
 def _load_store() -> None:
     global _last_hash
@@ -251,6 +264,7 @@ def _append(record: dict) -> dict:
             fh.write(json.dumps({"prev": prev, "hash": h, "record": record}, ensure_ascii=False) + "\n")
         _last_hash = h
         _index[record["scan_id"]] = record
+        _dash_cache["overview"] = None
         _db_append(record, prev, h, payload)
         return {"prev": prev, "hash": h}
 
@@ -370,8 +384,12 @@ def poller() -> None:
 
 
 def overview() -> list[dict]:
+    now = time.time()
+    cached = _dash_cache["overview"]
+    if cached is not None and (now - _dash_cache["ts"]) < _DASH_TTL:
+        return cached
     try:
-        scans = http_get_json(TESTING_URL + "/scans").get("scans", [])
+        scans = http_get_json(TESTING_URL + "/scans", timeout=60).get("scans", [])
     except Exception:  # noqa: BLE001
         scans = []
     known = set()
@@ -391,17 +409,20 @@ def overview() -> list[dict]:
                         "risk_score": (rid.get("score") or {}).get("risk_score"),
                         "policy_action": (rid.get("policy") or {}).get("action"),
                         "created": rid.get("created")})
+    _dash_cache["overview"] = out
+    _dash_cache["ts"] = time.time()
     return out
 
 
 def stats() -> dict:
+    ov = overview()                      # один вызов вместо трёх
     verdicts: dict[str, int] = {}
     total = 0
-    for s in overview():
+    for s in ov:
         if s.get("verdict"):
             verdicts[s["verdict"]] = verdicts.get(s["verdict"], 0) + 1
         total += int(s.get("size") or 0)
-    return {"scans": len(overview()), "by_verdict": verdicts,
+    return {"scans": len(ov), "by_verdict": verdicts,
             "total_bytes": total, "testing": testing_stats()}
 
 
@@ -521,22 +542,34 @@ def _page(title: str, body: str, script: str = "", lang: str = "ru",
 
 
 def _js(lang: str) -> str:
+    """Клиентский скрипт дашборда: таблица рисуется сразу после /api/overview,
+    статистика — отдельным (параллельным) запросом /api/stats."""
     labels = {
         "total": T("dash.total", lang),
         "volume": T("dash.volume", lang),
         "shown": T("dash.shown", lang, n="{n}", m="{m}"),
+        "empty": T("dash.empty", lang),
         "upload_error": T("dash.upload_error", lang),
+        "verdicts": ["Malicious", "Dangerous", "Needs review", "Safe", "Inconclusive"],
     }
     return """<script>
 const L = __LABELS__;
+let OV=[];
 function fmtBytes(b){b=+b||0;const u=['B','KiB','MiB','GiB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++;}return b.toFixed(b<10&&i>0?1:0)+' '+u[i];}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function shortDate(s){if(!s)return '—';s=String(s).replace('T',' ');return s.slice(0,16);}
-function currentRows(ov){
+function renderCards(st){
+  document.getElementById('cards').innerHTML =
+    L.verdicts.map(v=>
+      `<div class="card"><div class="n v-${v.replace(' ','')}">${(st.by_verdict||{})[v]||0}</div><div class="l">${v}</div></div>`).join('')
+    + `<div class="card"><div class="n">${st.scans||0}</div><div class="l">${esc(L.total)}</div></div>`
+    + `<div class="card"><div class="n">${fmtBytes(st.total_bytes)}</div><div class="l">${esc(L.volume)}</div></div>`;
+}
+function currentRows(){
   const q=(document.getElementById('q').value||'').trim().toLowerCase();
   const vf=document.getElementById('vf').value;
   const sort=document.getElementById('sort').value;
-  let rows=ov.filter(r=>{
+  let rows=OV.filter(r=>{
     if(q && !String(r.name||'').toLowerCase().includes(q)) return false;
     if(vf){const v=r.verdict||'';if(vf==='__none__'){if(v!=='')return false;}else if(v!==vf)return false;}
     return true;
@@ -546,27 +579,34 @@ function currentRows(ov){
   else rows.sort((a,b)=>String(a.created||a.updated||'').localeCompare(String(b.created||b.updated||''))*dir);
   return rows;
 }
-async function refresh(){
-  const ov=(await (await fetch('/api/overview')).json()).scans||[];
-  const st=await (await fetch('/api/stats')).json();
-  document.getElementById('cards').innerHTML =
-    ['Malicious','Dangerous','Needs review','Safe','Inconclusive'].map(v=>
-      `<div class="card"><div class="n v-${v.replace(' ','')}">${(st.by_verdict||{})[v]||0}</div><div class="l">${v}</div></div>`).join('')
-    + `<div class="card"><div class="n">${st.scans||0}</div><div class="l">${esc(L.total)}</div></div>`
-    + `<div class="card"><div class="n">${fmtBytes(st.total_bytes)}</div><div class="l">${esc(L.volume)}</div></div>`;
-  const shown=currentRows(ov);
-  const rows=shown.map(r=>{
-    const v=r.verdict||'';
-    return `<tr><td><a href="/artifact/${r.scan_id}">${esc(r.name)}</a></td>`
-      +`<td>${shortDate(r.created||r.updated)}</td>`
-      +`<td>${fmtBytes(r.size)}</td><td><code>${(r.sha256||'').slice(0,12)}…</code></td>`
-      +`<td>${esc(r.state)}${r.stage&&r.stage!=='done'?' / '+esc(r.stage):''}<div class="pbar"><span style="width:${r.progress||0}%"></span></div></td>`
-      +`<td class="v-${String(v).replace(' ','')}">${esc(v||'—')}</td>`
-      +`<td>${r.risk_score!=null?r.risk_score:'—'}</td><td>${esc(r.policy_action||'—')}</td></tr>`;}).join('');
-  document.getElementById('rows').innerHTML=rows;
-  document.getElementById('count').textContent=L.shown.replace('{n}',shown.length).replace('{m}',ov.length);
+function renderRows(){
+  const shown=currentRows();
+  document.getElementById('rows').innerHTML = shown.length
+    ? shown.map(r=>{
+        const v=r.verdict||'';
+        return `<tr><td><a href="/artifact/${r.scan_id}">${esc(r.name)}</a></td>`
+          +`<td>${shortDate(r.created||r.updated)}</td>`
+          +`<td>${fmtBytes(r.size)}</td><td><code>${(r.sha256||'').slice(0,12)}…</code></td>`
+          +`<td>${esc(r.state)}${r.stage&&r.stage!=='done'?' / '+esc(r.stage):''}<div class="pbar"><span style="width:${r.progress||0}%"></span></div></td>`
+          +`<td class="v-${String(v).replace(' ','')}">${esc(v||'—')}</td>`
+          +`<td>${r.risk_score!=null?r.risk_score:'—'}</td><td>${esc(r.policy_action||'—')}</td></tr>`;}).join('')
+    : `<tr><td colspan="8" style="color:#9aa4b2">${esc(L.empty)}</td></tr>`;
+  document.getElementById('count').textContent=L.shown.replace('{n}',shown.length).replace('{m}',OV.length);
 }
-['q','vf','sort'].forEach(id=>{const e=document.getElementById(id);e.addEventListener('input',refresh);e.addEventListener('change',refresh);});
+async function refresh(){
+  // 1) список сканов -> сразу отрисовываем таблицу
+  try{
+    const r=await fetch('/api/overview',{cache:'no-store'});
+    if(r.ok){ OV=(await r.json()).scans||[]; renderRows(); }
+  }catch(e){}
+  // 2) агрегаты -> отдельно обновляем карточки
+  try{
+    const r2=await fetch('/api/stats',{cache:'no-store'});
+    if(r2.ok) renderCards(await r2.json());
+  }catch(e){}
+}
+['q','vf','sort'].forEach(id=>{const e=document.getElementById(id);
+  e.addEventListener('input',renderRows);e.addEventListener('change',renderRows);});
 document.getElementById('f').addEventListener('submit',e=>{
   e.preventDefault();const file=document.querySelector('input[type=file]').files[0];if(!file)return;
   const ext=(file.name.split('.').pop()||'').toLowerCase();
@@ -582,7 +622,8 @@ document.getElementById('f').addEventListener('submit',e=>{
   xhr.onerror=()=>{alert(L.upload_error);};
   xhr.send(file);
 });
-refresh();setInterval(refresh,3000);
+async function loop(){ await refresh(); setTimeout(loop,5000); }
+loop();
 </script>""".replace("__LABELS__", json.dumps(labels, ensure_ascii=False))
 
 
@@ -632,7 +673,8 @@ def ui_index(lang: str = "ru", roles: list | None = None) -> bytes:
             f"<th>{T('dash.col.date', lang)}</th><th>{T('dash.col.size', lang)}</th><th>SHA-256</th>"
             f"<th>{T('dash.col.progress', lang)}</th><th>{T('dash.col.verdict', lang)}</th>"
             f"<th>{T('dash.col.score', lang)}</th><th>{T('dash.col.action', lang)}</th></tr></thead>"
-            "<tbody id='rows'></tbody></table>")
+            f"<tbody id='rows'><tr><td colspan='8' style='color:#9aa4b2'>"
+            f"{T('dash.loading', lang)}</td></tr></tbody></table>")
     return _page(T("ui.overview", lang), body, _js(lang), lang=lang, roles=roles)
 
 
