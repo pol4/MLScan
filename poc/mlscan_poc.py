@@ -66,6 +66,7 @@ FORMAT_BY_EXT = {
     ".mlmodel": "coreml", ".mlpackage": "coreml",
     ".parquet": "dataset", ".arrow": "dataset", ".feather": "dataset",
     ".j2": "jinja", ".jinja": "jinja", ".jinja2": "jinja",
+    ".html": "html", ".htm": "html", ".svg": "html", ".dockerfile": "dockerfile",
     ".so": "native", ".dll": "native", ".dylib": "native", ".node": "native",
     ".pb": "savedmodel",
 }
@@ -75,7 +76,7 @@ FORMAT_BY_EXT = {
 NON_PICKLE_FORMATS = {"hdf5", "safetensors", "onnx", "gguf", "keras", "config", "card",
                       "tokenizer", "xml", "yaml", "json", "image", "tflite", "pmml",
                       "notebook", "script", "coreml", "dataset", "mlflow", "savedmodel",
-                      "jinja", "native", "sitepath"}
+                      "jinja", "native", "sitepath", "html", "dockerfile"}
 
 DANGEROUS_MODULES = {
     "os", "posix", "nt", "subprocess", "shutil", "pty", "platform",
@@ -246,6 +247,42 @@ def _npy_payload(blob: bytes) -> bytes:
     return blob[off + hlen:]
 
 
+def _scan_nested_bytes(data: bytes, prefix: str = "") -> tuple[list[Finding], list[str]]:
+    """Разбор вложенного архива (zip в zip) — payload не должен прятаться в глубине."""
+    findings: list[Finding] = []
+    members: list[str] = []
+    try:
+        zf = zipfile.ZipFile(_bytes_path(data))
+    except Exception:  # noqa: BLE001
+        return findings, members
+    for info in zf.infolist():
+        nm = info.filename
+        low = nm.lower()
+        if info.file_size > 8 * 1024 * 1024:
+            continue
+        try:
+            blob = zf.read(info)
+        except Exception:  # noqa: BLE001
+            continue
+        if low.endswith((".zip", ".whl", ".jar", ".tar", ".tar.gz", ".tgz", ".mar")):
+            sub, _ = _scan_nested_bytes(blob, prefix + nm + "!")
+            findings.extend(sub)
+            continue
+        if any(mark in low for mark in (".pth", ".py", "setup.py", "requirements.txt")):
+            text = blob.decode("utf-8", "replace")
+            hits = [h for h in ("os.system", "subprocess", "exec(", "eval(", "__import__",
+                                "curl ", "wget ", "| bash", "extra-index-url") if h in text]
+            if hits:
+                findings.append(Finding("EXEC-02", "EXEC",
+                                        f"Исполняемый код во вложенном архиве ({prefix}{nm})",
+                                        "high", 0.8, "hints: " + ", ".join(hits[:4])))
+        if low.endswith((".pkl", ".pickle", ".pt", ".bin")) or blob[:2] == b"\x80\x04":
+            sub, _ops, _g, _e = static_scan_pickle(blob, f"{prefix}{nm}")
+            findings.extend(sub)
+        members.append(prefix + nm)
+    return findings, members
+
+
 def scan_zip_container(path: Path, data: bytes) -> tuple[list[Finding], list[str]]:
     findings: list[Finding] = []
     members_scanned: list[str] = []
@@ -271,6 +308,15 @@ def scan_zip_container(path: Path, data: bytes) -> tuple[list[Finding], list[str
             findings.append(Finding("B-03", "B", f"Подозрительный путь в архиве: {name}",
                                     "high", 0.8, "zip-slip/path traversal"))
         nm = norm(name)
+        if nm.endswith((".zip", ".whl", ".jar", ".tar", ".tar.gz", ".tgz", ".mar")):
+            try:
+                inner = zf.read(info)
+            except Exception:  # noqa: BLE001
+                inner = b""
+            if 0 < len(inner) <= 16 * 1024 * 1024:
+                sub_inner, _m = _scan_nested_bytes(inner, f"{name}!")
+                findings.extend(sub_inner)
+            continue
         if ts_like and nm.startswith("code/"):
             continue
         by_name = nm.endswith((".pkl", ".pickle", ".joblib", ".dill", ".cloudpickle",
@@ -325,6 +371,10 @@ def detect_format(path: Path) -> str:
         return "dataset"
     if head.startswith((b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")):
         return "native"
+    low_head = head.lstrip().lower()
+    if low_head.startswith((b"<!doctype html", b"<html", b"<svg", b"<?xml")) and b"<" in low_head:
+        if b"<svg" in low_head or path.suffix.lower() == ".svg":
+            return "html"
     if fmt in ("unknown", "torch") and head.lstrip()[:7] in (b"import ", b"exec(", b"eval("):
         return "sitepath"      # текстовый .pth-хук (site-packages), а не веса torch
     if head.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8", b"GIF87a", b"GIF89a")):
@@ -875,7 +925,7 @@ def load_target(path, fmt, errors):
     if fmt in ("tar", "zip", "torch-package", "torch-zip"):
         return _load_archive(path, errors, "tar" if fmt == "tar" else "zip")
     if fmt in ("config", "card", "tokenizer", "xml", "json", "yaml", "pmml",
-               "notebook", "script", "jinja", "sitepath"):
+               "notebook", "script", "jinja", "sitepath", "html", "dockerfile"):
         return _load_text(path, errors)
     if fmt == "savedmodel":
         return _load_archive(path, errors, None) if zipfile.is_zipfile(path) else \
@@ -1201,7 +1251,7 @@ def prewarm(fmt):
             "xml": [], "json": [], "yaml": [], "image": [], "pmml": [], "notebook": [],
             "script": [], "savedmodel": [], "coreml": [], "tflite": [],
             "dataset": ["pyarrow"], "jinja": [], "native": [],
-            "sitepath": [], "savedmodel": []}.get(fmt, [])
+            "sitepath": [], "savedmodel": [], "html": [], "dockerfile": []}.get(fmt, [])
     for m in mods:
         try:
             __import__(m)

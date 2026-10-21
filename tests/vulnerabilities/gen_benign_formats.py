@@ -401,6 +401,57 @@ def gen_wave5_benign() -> None:
     add("safe_frozen.pb", b"\x1a\x08graphdef" + b"\x00" * 48, "frozen graph .pb без Python-операций")
 
 
+
+def gen_wave6_benign() -> None:
+    """Волна 6: benign-версии protocol-0 pickle, Dockerfile, HTML/SVG, GGUF-шаблона, вложенного zip."""
+    import pickle as _pkl
+
+    add("safe_pickle_proto0.pkl", _pkl.dumps({"weights": [1.0, 2.0], "meta": "demo"}, protocol=0),
+        "текстовый pickle protocol 0 (обычный dict)")
+    add("safe_dockerfile.dockerfile",
+        b"FROM python:3.12-slim\nWORKDIR /app\nCOPY requirements.txt .\n"
+        b"RUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\n"
+        b"CMD [\"python\", \"serve.py\"]\n",
+        "Dockerfile без загрузок и URL")
+    add("safe_card.html",
+        b"<!doctype html><html><body><h1>Demo model</h1>"
+        b"<p>A small image classifier for documentation.</p></body></html>",
+        "HTML-карточка без скриптов")
+    add("safe_asset.svg",
+        b"<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'>"
+        b"<rect width='32' height='32' fill='#123456'/></svg>",
+        "SVG без обработчиков и скриптов")
+
+    gguf = _need("gguf")
+    if gguf is not None:
+        import numpy as np
+        from gguf import GGUFWriter
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".gguf", delete=False) as tf:
+            tmp = tf.name
+        w = GGUFWriter(tmp, "mlscan-synthetic-safe")
+        w.add_name("safe-template")
+        w.add_string("tokenizer.chat_template",
+                     "{% for m in messages %}{{ m['role'] }}: {{ m['content'] }}\n{% endfor %}")
+        w.add_tensor("token_embd.weight", np.zeros((16, 4), dtype="float32"))
+        w.write_header_to_file()
+        w.write_kv_data_to_file()
+        w.write_tensors_to_file()
+        w.close()
+        data = open(tmp, "rb").read()
+        os.unlink(tmp)
+        add("safe_gguf_template.gguf", data, "GGUF с безопасным chat_template")
+
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as z:
+        z.writestr("weights.json", json.dumps({"w": [1.0, 2.0]}).encode())
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w") as z:
+        z.writestr("model/config.json", json.dumps({"hidden_size": 4}))
+        z.writestr("model/inner.zip", inner.getvalue())
+    add("safe_nested_zip.zip", outer.getvalue(), "zip в zip без payload")
+
+
 # --------------------------------------------------------------------------
 # Крупные корректные примеры (по умолчанию не сохраняются в репозиторий)
 # --------------------------------------------------------------------------
@@ -484,6 +535,7 @@ def main() -> int:
     gen_texts()
     gen_extra_formats()
     gen_wave5_benign()
+    gen_wave6_benign()
     if args.large_mb:
         print("== крупные корректные примеры")
         gen_large(args.large_mb)

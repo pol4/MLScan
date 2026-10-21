@@ -132,9 +132,25 @@ ML-пайплайнах и редко проверяются сканерами:
 реально опасных вызовов); в архивах наличие `.py` без опасных вызовов даёт лишь `info`,
 а `.pth` считается install-хуком только если внутри есть код (иначе это веса torch).
 
+## «Волна 6»: документы, Dockerfile, шаблоны GGUF, вложенные и битые контейнеры
+
+| Вектор | Вредоносный пример | Безопасный пример |
+|--------|--------------------|-------------------|
+| Текстовый pickle (protocol 0) | `vuln_pickle_proto0.pkl` (`A-01`) | `safe_pickle_proto0.pkl` |
+| Dockerfile с загрузкой и запуском кода | `vuln_dockerfile.dockerfile` (`EXEC-02`, `INT-03`) | `safe_dockerfile.dockerfile` |
+| HTML-карточка со скриптом (XSS) | `vuln_card_xss.html` (`INJ-05`, `INT-03`) | `safe_card.html` |
+| SVG с обработчиком | `vuln_asset.svg` (`INJ-05`) | `safe_asset.svg` |
+| GGUF с опасным Jinja chat_template | `vuln_gguf_template.gguf` (`INJ-01`) | `safe_gguf_template.gguf` (`INJ-02` — на разбор) |
+| Вложенный архив (zip в zip) | `vuln_nested_zip.zip` (`EXEC-02`, `INT-04`) | `safe_nested_zip.zip` |
+| Битые контейнеры | `vuln_bad_safetensors.safetensors`, `vuln_bad_tar.tar`, `vuln_bad_notebook.ipynb` (`FMT-01`) | — |
+| ONNX с кастомной операцией | `vuln_onnx_customops.onnx` (`EXEC-06`) | — |
+
+Вложенные архивы разбираются рекурсивно (до 2 уровней), поэтому payload не может спрятаться
+«на втором дне» zip. Namespace-декларации `www.w3.org` не считаются внешними источниками.
+
 ## Доброкачественные примеры сложных форматов
 
-Кроме образцов с закладками корпус содержит **42 безопасных** примера (`safe_*`) в 35 форматах, в том числе
+Кроме образцов с закладками корпус содержит **48 безопасных** примеров (`safe_*`) в 39 форматах, в том числе
 реальные файлы сложных форматов: safetensors (f32/f16), numpy `.npz`, torch `.pt`, HDF5 `.h5`,
 ONNX (MatMul+Add, opset 13), GGUF, Keras `.keras` (zip: `config.json` + `weights.h5`),
 архивы `.zip`/`.tar.gz`, joblib/dill/cloudpickle, tokenizer.json, MCP-манифест, YAML/XML-конфиги,

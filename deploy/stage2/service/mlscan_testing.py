@@ -461,7 +461,8 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
         elif af in ("safetensors", "onnx", "hdf5", "keras", "gguf", "tar", "zip",
                     "config", "card", "xml", "yaml", "tokenizer", "image", "pmml",
                     "notebook", "script", "dataset", "tflite", "coreml",
-                    "mlflow", "savedmodel", "jinja", "native", "sitepath"):
+                    "mlflow", "savedmodel", "jinja", "native", "sitepath",
+                    "html", "dockerfile"):
             sandbox_fmt = af
         elif af in ("torch-package", "torch-zip"):
             sandbox_fmt = "zip"

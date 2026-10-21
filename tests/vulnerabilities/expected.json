@@ -212,7 +212,9 @@
     "kind": "benign"
   },
   "safe_safetensors.safetensors": {
-    "expect_checks": [],
+    "expect_checks": [
+      "D-10"
+    ],
     "kind": "benign"
   },
   "safe_card.md": {
@@ -657,5 +659,108 @@
     ],
     "kind": "malicious",
     "note": "обрезанный zip (нет каталога)"
+  },
+  "vuln_pickle_proto0.pkl": {
+    "expect_checks": [
+      "A-01"
+    ],
+    "kind": "malicious",
+    "note": "текстовый pickle protocol 0 с os.system"
+  },
+  "vuln_dockerfile.dockerfile": {
+    "expect_checks": [
+      "EXEC-02",
+      "INT-03"
+    ],
+    "kind": "malicious",
+    "note": "Dockerfile скачивает и исполняет код"
+  },
+  "vuln_card_xss.html": {
+    "expect_checks": [
+      "INJ-05",
+      "INT-03"
+    ],
+    "kind": "malicious",
+    "note": "HTML-карточка модели со скриптом (XSS)"
+  },
+  "vuln_asset.svg": {
+    "expect_checks": [
+      "INJ-05"
+    ],
+    "kind": "malicious",
+    "note": "SVG с обработчиком onload/javascript:"
+  },
+  "vuln_gguf_template.gguf": {
+    "expect_checks": [
+      "INJ-01"
+    ],
+    "kind": "malicious",
+    "note": "GGUF с опасным chat_template (SSTI)"
+  },
+  "vuln_nested_zip.zip": {
+    "expect_checks": [
+      "EXEC-02",
+      "INT-04"
+    ],
+    "kind": "malicious",
+    "note": "zip в zip: .pth-хук и опасный код во вложенном архиве"
+  },
+  "vuln_bad_safetensors.safetensors": {
+    "expect_checks": [
+      "FMT-01"
+    ],
+    "kind": "malicious",
+    "note": "safetensors с некорректной длиной заголовка"
+  },
+  "vuln_bad_tar.tar": {
+    "expect_checks": [
+      "FMT-01"
+    ],
+    "kind": "malicious",
+    "note": "повреждённый tar-архив"
+  },
+  "vuln_bad_notebook.ipynb": {
+    "expect_checks": [
+      "FMT-01"
+    ],
+    "kind": "malicious",
+    "note": "notebook с нечитаемым JSON"
+  },
+  "vuln_onnx_customops.onnx": {
+    "expect_checks": [
+      "EXEC-06"
+    ],
+    "kind": "malicious",
+    "note": "ONNX с кастомной операцией (ai.onnx.contrib)"
+  },
+  "safe_pickle_proto0.pkl": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "текстовый pickle protocol 0 (обычный dict)"
+  },
+  "safe_dockerfile.dockerfile": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "Dockerfile без загрузок и URL"
+  },
+  "safe_card.html": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "HTML-карточка без скриптов"
+  },
+  "safe_asset.svg": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "SVG без обработчиков и скриптов"
+  },
+  "safe_gguf_template.gguf": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "GGUF с безопасным chat_template"
+  },
+  "safe_nested_zip.zip": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "zip в zip без payload"
   }
 }

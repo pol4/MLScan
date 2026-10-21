@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import io
 import json
 import re
 import zipfile
@@ -82,6 +83,81 @@ SCRIPT_EXEC = ("invoke-expression", "iex(", "downloadstring", "-encodedcommand",
                "bitsadmin", "chmod +x", "base64 -d", "python -c", "os.system", "subprocess",
                "eval ", "exec ", "rm -rf /")
 NOTEBOOK_SHELL = ("!pip", "!curl", "!wget", "!bash", "!sh ")
+
+
+ARCHIVE_EXT = (".zip", ".whl", ".jar", ".tar", ".tar.gz", ".tgz", ".mar")
+
+
+def _scan_html(blob: bytes, label: str) -> list[dict]:
+    """HTML/SVG в пакете модели: скрипты и обработчики (XSS при рендере карточки)."""
+    out: list[dict] = []
+    text = _btext(blob)
+    low = text.lower()
+    xss = [m for m in ("<script", "onerror=", "onload=", "javascript:", "<iframe",
+                       "document.cookie", "xmlhttprequest", "fetch(") if m in low]
+    if xss:
+        out.append(_f("INJ-05", f"HTML/JS в документе ({label}) — XSS при рендере", "high", 0.75,
+                      "markers: " + ", ".join(xss[:5]), cat="INJ"))
+    # namespace-декларации (www.w3.org) — не внешние источники
+    rest = low.replace("http://www.w3.org", "").replace("https://www.w3.org", "")
+    if "http://" in rest or "https://" in rest:
+        out.append(_f("INT-03", f"Внешние URL в документе ({label})", "low", 0.4,
+                      "внешний источник", cat="INT"))
+    return out
+
+
+def _scan_dockerfile(text: str, label: str) -> list[dict]:
+    """Dockerfile рядом с моделью: загрузка и запуск кода при сборке образа."""
+    out: list[dict] = []
+    low = text.lower()
+    if PIPE_TO_SHELL.search(text) or "add http" in low:
+        out.append(_f("EXEC-02", f"Dockerfile скачивает и исполняет код ({label})", "high", 0.8,
+                      "curl|bash / ADD http", cat="EXEC"))
+    else:
+        hits = [h for h in ("run curl", "run wget", "&& curl", "&& wget", "chmod +x",
+                            "chown root", "setcap", "pip install git+http") if h in low]
+        if hits:
+            out.append(_f("EXEC-02", f"Dockerfile: загрузка/исполнение кода ({label})", "medium", 0.55,
+                          "hints: " + ", ".join(hits[:4]), cat="EXEC"))
+    if "http://" in low or "https://" in low:
+        out.append(_f("INT-03", f"Внешние URL в Dockerfile ({label})", "medium", 0.5,
+                      "внешний источник", cat="INT"))
+    return out
+
+
+def _scan_nested_archive(data: bytes, label: str, depth: int = 0) -> list[dict]:
+    """Вложенные архивы (zip в zip): install-хуки, код и pickle-потоки внутри."""
+    out: list[dict] = []
+    if depth > 2:
+        return out
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except Exception:  # noqa: BLE001
+        return out
+    for info in zf.infolist():
+        nm = _norm_name(info.filename)
+        if info.file_size > 8 * 1024 * 1024:
+            continue
+        try:
+            blob = zf.read(info)
+        except Exception:  # noqa: BLE001
+            continue
+        if nm.endswith(ARCHIVE_EXT):
+            out.extend(_scan_nested_archive(blob, f"{label}:{info.filename}", depth + 1))
+        elif nm.endswith(".pth"):
+            hits = _scan_sitepath(_btext(blob), f"{label}:{info.filename}")
+            if hits:
+                out.extend(hits)
+                out.append(_f("INT-04", f"Вложенный архив содержит install-хук ({info.filename})",
+                              "high", 0.75, ".pth во вложенном архиве", cat="INT"))
+        elif nm.endswith(".py"):
+            if any(h in _btext(blob) for h in PY_CODE_HINTS):
+                out.append(_f("EXEC-02", f"Опасный Python-код во вложенном архиве ({info.filename})",
+                              "high", 0.8, f"{label}:{info.filename}", cat="EXEC"))
+        elif any(Path(nm).name == f for f in INSTALL_FILES):
+            out.append(_f("INT-04", f"Вложенный архив содержит install-файлы ({info.filename})",
+                          "high", 0.7, f"{label}:{info.filename}", cat="INT"))
+    return out
 
 
 def _scan_native(blob: bytes, label: str) -> list[dict]:
@@ -270,6 +346,14 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
         else:
             out.append(_f("EXEC-02", f"Python-код внутри контейнера ({', '.join(has_py[:4])})",
                           "info", 0.5, "files: " + ", ".join(has_py[:6])))
+    for n in names:
+        if _norm_name(n).endswith(ARCHIVE_EXT):
+            try:
+                inner = zf.read(n)
+            except Exception:  # noqa: BLE001
+                continue
+            if len(inner) <= 16 * 1024 * 1024:
+                out.extend(_scan_nested_archive(inner, f"{path.name}:{n}"))
     for n in names:
         if _norm_name(n).endswith(".pth"):
             try:
@@ -727,6 +811,10 @@ def detect(path: Path, head: bytes) -> str:
         return "tflite"
     if ext in (".mlmodel", ".mlpackage"):
         return "coreml"
+    if ext in (".html", ".htm", ".svg"):
+        return "html"
+    if path.name.lower() in ("dockerfile", "containerfile") or ext == ".dockerfile":
+        return "dockerfile"
     if ext in (".j2", ".jinja", ".jinja2"):
         return "jinja"
     if ext in (".so", ".dll", ".dylib", ".node", ".a", ".o"):
@@ -832,6 +920,10 @@ def static_scan(path: Path) -> dict:
             findings.extend(_scan_savedmodel(_read_bounded(path), path.name))
         elif fmt == "jinja":
             findings.extend(_scan_jinja(_btext(_read_bounded(path)), path.name))
+        elif fmt == "html":
+            findings.extend(_scan_html(_read_bounded(path), path.name))
+        elif fmt == "dockerfile":
+            findings.extend(_scan_dockerfile(_btext(_read_bounded(path)), path.name))
         elif fmt == "native":
             findings.extend(_scan_native(_read_bounded(path), path.name))
         elif fmt == "sitepath":

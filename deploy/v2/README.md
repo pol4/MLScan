@@ -286,6 +286,14 @@ curl -s http://<analytics>/healthz
 curl -X POST -H "Authorization: Bearer $ADMIN_KEY" "http://<ops>/settings/language?lang=en"
 ```
 
+## Документы, сборочные артефакты и вложенные архивы «Волны 6» (реализовано)
+
+Поддержаны HTML/SVG в пакете модели (`INJ-05`, XSS при рендере; namespace `www.w3.org` не
+считается внешним источником), Dockerfile/Containerfile (`EXEC-02` — curl|bash/ADD http при
+сборке), GGUF с Jinja chat_template (`INJ-01`/`INJ-02`), **вложенные архивы** (zip в zip —
+рекурсивный разбор до 2 уровней: `EXEC-02`, `INT-04`), текстовый pickle protocol 0 (`A-01`)
+и битые контейнеры (`FMT-01`).
+
 ## Пути доставки кода и служебные форматы «Волны 5» (реализовано)
 
 Поддержаны wheel с `.pth`-хуком (`EXEC-02` + `INT-04`), текстовые `.pth` (`EXEC-02`), нативные

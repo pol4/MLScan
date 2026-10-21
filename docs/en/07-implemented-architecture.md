@@ -130,6 +130,14 @@ considered complete**:
 * the scan record stores a structured `coverage` field (`modules`, `failed`, `complete`) which is
   shown as a banner on the artifact card and included in the reports (JSON/Markdown).
 
+Wave 6 added documents and build artifacts: **HTML/SVG** inside a model package (`INJ-05` —
+XSS on card render; the `www.w3.org` namespace is not treated as an external source),
+**Dockerfile/Containerfile** (`EXEC-02` — download-and-execute at image build time), **GGUF with a
+Jinja chat_template** (`INJ-01` — SSTI, `INJ-02` — review required), **nested archives** (zip in zip
+are traversed recursively up to 2 levels — `EXEC-02`/`INT-04`), **text protocol-0 pickles** and
+**broken containers** (`FMT-01`: invalid safetensors header, corrupted tar, unreadable notebook
+JSON), plus real **ONNX with custom operators** (`EXEC-06`).
+
 Wave 5 added code-delivery paths and service formats: **wheels** with site-packages hooks
 (`.pth`), **text `.pth`** files, **native libraries** (.so/.dll/.dylib, `EXEC-08`),
 **Jinja prompt templates** (SSTI, `INJ-01`), standalone **frozen graph `.pb`**, **safetensors

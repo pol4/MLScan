@@ -42,7 +42,9 @@ FMT_BY_EXT = {"pkl": "pickle", "pickle": "pickle", "p": "pickle",
               "parquet": "dataset", "arrow": "dataset", "feather": "dataset",
               # «Волна 5»: wheel/.pth, нативные библиотеки, Jinja, H5/Keras, frozen .pb
               "whl": "zip", "pth": "torch", "so": "native", "dll": "native",
-              "j2": "jinja", "jinja": "jinja", "pb": "savedmodel"}
+              "j2": "jinja", "jinja": "jinja", "pb": "savedmodel",
+              # «Волна 6»: HTML/SVG, Dockerfile
+              "html": "html", "htm": "html", "svg": "html", "dockerfile": "dockerfile"}
 
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
