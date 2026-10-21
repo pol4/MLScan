@@ -61,6 +61,10 @@ SHA-256, размер, тайминги, риск-скор, policy-решени�
 | [`deploy/ingress/`](./deploy/ingress) | Ingress (Istio Gateway + VirtualServices) и egress-allowlist вместо NodePort |
 | [`deploy/v2/`](./deploy/v2) | **Реализация v2 (Волна 0):** S3 (Garage) + Ingest (I1/I1b), PostgreSQL (I2) |
 
+### Тестирование
+
+- [`tests/vulnerabilities/`](./tests/vulnerabilities) — **синтетический корпус уязвимостей** (генератор, 38 образцов, прогонщик), процедура проверки и отчёт о детекции.
+
 ### Документация
 
 - [`docs/01-threat-checklist.md`](./docs/01-threat-checklist.md) — полный чеклист опасностей (A–I).

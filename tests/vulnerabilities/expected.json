@@ -1,0 +1,226 @@
+{
+  "vuln_pickle_os_system.pkl": {
+    "expect_checks": [
+      "A-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_pickle_subprocess.pkl": {
+    "expect_checks": [
+      "A-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_pickle_eval.pkl": {
+    "expect_checks": [
+      "A-01",
+      "A-05"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_pickle_builtins_tamper.pkl": {
+    "expect_checks": [
+      "A-01",
+      "A-05"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_pickle_network.pkl": {
+    "expect_checks": [
+      "A-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_pickle_obfuscated.pkl": {
+    "expect_checks": [
+      "A-05",
+      "A-20"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_torch_zip.pkl": {
+    "expect_checks": [
+      "A-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_numpy_object.npy": {
+    "expect_checks": [
+      "A-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_joblib.joblib": {
+    "expect_checks": [
+      "A-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_mar.mar": {
+    "expect_checks": [
+      "EXEC-01",
+      "EXEC-02"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_auto_map.json": {
+    "expect_checks": [
+      "EXEC-04"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_keras.keras": {
+    "expect_checks": [
+      "EXEC-05"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_onnx.onnx": {
+    "expect_checks": [
+      "EXEC-06",
+      "FMT-09"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_hdf5.h5": {
+    "expect_checks": [
+      "EXEC-05",
+      "EXEC-07"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_gguf.gguf": {
+    "expect_checks": [
+      "INJ-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_tokenizer_config.json": {
+    "expect_checks": [
+      "INJ-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_tokenizer_override.json": {
+    "expect_checks": [
+      "BD-02"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_zip_bomb.zip": {
+    "expect_checks": [
+      "FMT-04"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_tar_traversal.tar": {
+    "expect_checks": [
+      "FMT-03"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_tar_symlink.tar": {
+    "expect_checks": [
+      "FMT-05"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_xxe.xml": {
+    "expect_checks": [
+      "FMT-06"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_unsafe_yaml.yaml": {
+    "expect_checks": [
+      "FMT-06"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_safetensors_overlap.safetensors": {
+    "expect_checks": [
+      "FMT-02"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_safetensors_trailing.safetensors": {
+    "expect_checks": [
+      "FMT-11"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_safetensors_nan.safetensors": {
+    "expect_checks": [
+      "BD-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_install_hooks.zip": {
+    "expect_checks": [
+      "INT-04"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_steg_trailing.zip": {
+    "expect_checks": [
+      "STEG-01"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_steg_blob.json": {
+    "expect_checks": [
+      "STEG-02"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_steg_polyglot.png": {
+    "expect_checks": [
+      "STEG-03"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_url_config.json": {
+    "expect_checks": [
+      "INT-03"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_prompt_card.md": {
+    "expect_checks": [
+      "INJ-03"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_tools.json": {
+    "expect_checks": [
+      "INJ-04"
+    ],
+    "kind": "malicious"
+  },
+  "vuln_mcp.json": {
+    "expect_checks": [
+      "AGT-01"
+    ],
+    "kind": "malicious"
+  },
+  "safe_pickle_state.pkl": {
+    "expect_checks": [],
+    "kind": "benign"
+  },
+  "safe_config.json": {
+    "expect_checks": [],
+    "kind": "benign"
+  },
+  "safe_safetensors.safetensors": {
+    "expect_checks": [],
+    "kind": "benign"
+  },
+  "safe_card.md": {
+    "expect_checks": [],
+    "kind": "benign"
+  },
+  "safe_image.png": {
+    "expect_checks": [],
+    "kind": "benign"
+  }
+}
