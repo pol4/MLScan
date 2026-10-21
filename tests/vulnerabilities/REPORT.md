@@ -1,27 +1,47 @@
 # Отчёт: проверка системы на синтетическом корпусе уязвимостей
 
-- Дата: 2026-10-21 18:56:56
-- Образцов: 38 (malicious=33, benign=5)
+- Дата: 2026-10-21 20:07:41
+- Образцов: 58 (malicious=33, benign=25)
 - **Обнаружено (malicious): 33/33**
 - **Пропущено: 0**
-- **Ложных срабатываний на benign: 0/5**
+- **Ложных срабатываний на benign: 0/25**
 
 | Образец | Тип | Ожидаемые чек-иды | Результат | Вердикт (сервис) | Policy | State | Найдено |
 |---------|-----|-------------------|-----------|------------------|--------|-------|---------|
-| safe_card.md | benign | — | OK | Inconclusive | Safe/allow | done | A-00 |
-| safe_config.json | benign | — | OK | Inconclusive | Safe/allow | done | A-00 |
-| safe_image.png | benign | — | OK | Inconclusive | Safe/allow | done | A-00 |
+| safe_card.md | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_card_clean.md | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_config.json | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_config.xml | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_config.yaml | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_image.png | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_mcp_manifest.json | benign | — | OK | Needs review | Needs review/quarantine | done | D-10, INT-03 |
 | safe_pickle_state.pkl | benign | — | OK | Safe | Safe/allow | done | — |
-| safe_safetensors.safetensors | benign | — | OK | Inconclusive | Safe/allow | done | D-10 |
-| vuln_auto_map.json | malicious | EXEC-04 | OK | Dangerous | Malicious/block | done | A-00, EXEC-04 |
-| vuln_gguf.gguf | malicious | INJ-01 | OK | Dangerous | Malicious/block | done | A-00, INJ-01 |
+| safe_real.cloudpickle | benign | — | OK | Safe | Safe/allow | done | — |
+| safe_real.dill | benign | — | OK | Safe | Safe/allow | done | — |
+| safe_real.joblib | benign | — | OK | Safe | Safe/allow | done | — |
+| safe_real_archive.tar.gz | benign | — | OK | Safe | Safe/allow | done | B-11 |
+| safe_real_archive.zip | benign | — | OK | Safe | Safe/allow | done | B-11 |
+| safe_real_gguf.gguf | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_real_hdf5.h5 | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_real_image.png | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_real_keras.keras | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_real_numpy.npz | benign | — | OK | Safe | Safe/allow | done | B-11 |
+| safe_real_onnx.onnx | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_real_pickle.pkl | benign | — | OK | Safe | Safe/allow | done | — |
+| safe_real_safetensors.safetensors | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_real_safetensors_f16.safetensors | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_real_torch.pt | benign | — | OK | Safe | Safe/allow | done | A-02 |
+| safe_safetensors.safetensors | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_tokenizer_bpe.json | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| vuln_auto_map.json | malicious | EXEC-04 | OK | Dangerous | Malicious/block | done | D-10, EXEC-04 |
+| vuln_gguf.gguf | malicious | INJ-01 | OK | Dangerous | Malicious/block | done | D-10, INJ-01 |
 | vuln_hdf5.h5 | malicious | EXEC-05, EXEC-07 | OK | Dangerous | Malicious/block | done | D-10, EXEC-05, EXEC-07 |
 | vuln_install_hooks.zip | malicious | INT-04 | OK | Dangerous | Malicious/block | done | B-11, EXEC-02, INT-04 |
 | vuln_joblib.joblib | malicious | A-01 | OK | Malicious | Malicious/block | done | A-01, A-02, F-30 |
-| vuln_keras.keras | malicious | EXEC-05 | OK | Dangerous | Malicious/block | done | B-11, EXEC-05 |
+| vuln_keras.keras | malicious | EXEC-05 | OK | Dangerous | Malicious/block | done | D-10, EXEC-05 |
 | vuln_mar.mar | malicious | EXEC-01, EXEC-02 | OK | Malicious | Malicious/block | done | B-11, EXEC-01, EXEC-02, F-30 |
-| vuln_mcp.json | malicious | AGT-01 | OK | Dangerous | Malicious/block | done | A-00, AGT-01 |
-| vuln_numpy_object.npy | malicious | A-01 | OK | Malicious | Malicious/block | done | A-01, A-02, F-30 |
+| vuln_mcp.json | malicious | AGT-01 | OK | Dangerous | Malicious/block | done | AGT-01, D-10 |
+| vuln_numpy_object.npy | malicious | A-01 | OK | Dangerous | Malicious/block | done | A-01, A-02 |
 | vuln_onnx.onnx | malicious | EXEC-06, FMT-09 | OK | Dangerous | Malicious/block | done | D-10, EXEC-06, FMT-09 |
 | vuln_pickle_builtins_tamper.pkl | malicious | A-01, A-05 | OK | Malicious | Malicious/block | done | A-01, A-02, F-20, F-32 |
 | vuln_pickle_eval.pkl | malicious | A-01, A-05 | OK | Malicious | Malicious/block | done | A-01, A-02, F-32 |
@@ -29,20 +49,40 @@
 | vuln_pickle_obfuscated.pkl | malicious | A-05, A-20 | OK | Malicious | Malicious/block | done | A-01, A-02, A-20, F-30, F-32 |
 | vuln_pickle_os_system.pkl | malicious | A-01 | OK | Malicious | Malicious/block | done | A-01, A-02, F-30 |
 | vuln_pickle_subprocess.pkl | malicious | A-01 | OK | Malicious | Malicious/block | done | A-01, A-02, A-20, F-30, F-32 |
-| vuln_prompt_card.md | malicious | INJ-03 | OK | Dangerous | Malicious/block | done | A-00, A-20, INJ-03 |
+| vuln_prompt_card.md | malicious | INJ-03 | OK | Dangerous | Malicious/block | done | D-10, INJ-03 |
 | vuln_safetensors_nan.safetensors | malicious | BD-01 | OK | Dangerous | Needs review/quarantine | done | BD-01, D-10 |
 | vuln_safetensors_overlap.safetensors | malicious | FMT-02 | OK | Dangerous | Needs review/quarantine | done | D-10, FMT-02 |
 | vuln_safetensors_trailing.safetensors | malicious | FMT-11 | OK | Inconclusive | Needs review/quarantine | done | D-10, FMT-11 |
-| vuln_steg_blob.json | malicious | STEG-02 | OK | Inconclusive | Needs review/quarantine | done | A-00, STEG-02 |
-| vuln_steg_polyglot.png | malicious | STEG-03 | OK | Dangerous | Malicious/block | done | A-00, A-20, STEG-03 |
+| vuln_steg_blob.json | malicious | STEG-02 | OK | Needs review | Needs review/quarantine | done | D-10, STEG-02 |
+| vuln_steg_polyglot.png | malicious | STEG-03 | OK | Dangerous | Malicious/block | done | D-10, STEG-03 |
 | vuln_steg_trailing.zip | malicious | STEG-01 | OK | Needs review | Needs review/quarantine | done | A-00, STEG-01 |
-| vuln_tar_symlink.tar | malicious | FMT-05 | OK | Dangerous | Malicious/block | done | A-00, FMT-05 |
-| vuln_tar_traversal.tar | malicious | FMT-03 | OK | Dangerous | Malicious/block | done | FMT-03 |
-| vuln_tokenizer_config.json | malicious | INJ-01 | OK | Dangerous | Malicious/block | done | A-00, INJ-01 |
-| vuln_tokenizer_override.json | malicious | BD-02 | OK | Dangerous | Malicious/block | done | A-00, BD-02 |
-| vuln_tools.json | malicious | INJ-04 | OK | Dangerous | Malicious/block | done | A-00, INJ-04 |
+| vuln_tar_symlink.tar | malicious | FMT-05 | OK | Dangerous | Malicious/block | done | B-11, FMT-05 |
+| vuln_tar_traversal.tar | malicious | FMT-03 | OK | Dangerous | Malicious/block | done | B-11, FMT-03 |
+| vuln_tokenizer_config.json | malicious | INJ-01 | OK | Dangerous | Malicious/block | done | D-10, F-27, INJ-01 |
+| vuln_tokenizer_override.json | malicious | BD-02 | OK | Dangerous | Malicious/block | done | BD-02, D-10 |
+| vuln_tools.json | malicious | INJ-04 | OK | Dangerous | Malicious/block | done | D-10, INJ-04 |
 | vuln_torch_zip.pkl | malicious | A-01 | OK | Malicious | Malicious/block | done | A-01, A-02, F-30 |
-| vuln_unsafe_yaml.yaml | malicious | FMT-06 | OK | Dangerous | Malicious/block | done | A-00, A-20, FMT-06 |
-| vuln_url_config.json | malicious | INT-03 | OK | Inconclusive | Needs review/quarantine | done | A-00, A-20, INT-03 |
-| vuln_xxe.xml | malicious | FMT-06 | OK | Dangerous | Malicious/block | done | A-00, FMT-06 |
+| vuln_unsafe_yaml.yaml | malicious | FMT-06 | OK | Dangerous | Malicious/block | done | D-10, FMT-06 |
+| vuln_url_config.json | malicious | INT-03 | OK | Needs review | Needs review/quarantine | done | D-10, F-27, INT-03 |
+| vuln_xxe.xml | malicious | FMT-06 | OK | Dangerous | Malicious/block | done | D-10, FMT-06 |
 | vuln_zip_bomb.zip | malicious | FMT-04 | OK | Dangerous | Needs review/quarantine | done | A-00, FMT-04 |
+
+
+---
+
+## Крупные безопасные образцы (сложные форматы, ~198 МБ каждый)
+
+Генерируются на лету (`gen_benign_formats.py --large-mb 192`) и загружаются прямо в сервис
+тестирования — в репозиторий не кладутся. Проверено (`--upload ... --verify`):
+
+| Образец | Размер | Вердикт | Покрытие | static_s | sandbox_s | Загрузка динамикой |
+|---------|--------|---------|----------|----------|-----------|--------------------|
+| `safe_large_safetensors.safetensors` | 198 246 496 B | Safe | полное | 0.31 | 18.07 | `safetensors` (mmap) |
+| `safe_large_numpy.npz` | 198 246 664 B | Safe | полное | 0.35 | 16.9 | `numpy` |
+| `safe_large_hdf5.h5` | 198 390 096 B | Safe | полное | 3.70 | 16.03 | `h5py` |
+| `safe_large_torch.pt` | 198 248 041 B | Safe | полное | 0.47 | 14.37 | `torch` |
+| `safe_large_onnx.onnx` | 198 246 509 B | Safe | полное | 0.33 | 14.40 | `onnxruntime` |
+
+Итог: **5/5 крупных безопасных моделей — `Safe`, без находок, покрытие полное**.
+Статика читает ограниченный префикс (64 МБ), поэтому время статического этапа < 4 с;
+тело модели загружает динамика (mmap/профильные библиотеки).

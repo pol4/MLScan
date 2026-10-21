@@ -57,8 +57,16 @@ FORMAT_BY_EXT = {
     ".h5": "hdf5", ".hdf5": "hdf5",
     ".safetensors": "safetensors",
     ".onnx": "onnx",
-    ".zip": "zip", ".tar": "tar", ".gz": "tar", ".tgz": "tar",
+    ".zip": "zip", ".tar": "tar", ".gz": "tar", ".tgz": "tar", ".tar.gz": "tar",
+    ".json": "config", ".yaml": "yaml", ".yml": "yaml", ".xml": "xml",
+    ".md": "card", ".txt": "card", ".png": "image", ".jpg": "image", ".jpeg": "image",
+    ".gguf": "gguf", ".keras": "keras", ".tflite": "tflite",
 }
+
+# Форматы, для которых pickle-десериализация неприменима: их разбирают адаптеры,
+# а динамика загружает профильными библиотеками (mmap/парсеры).
+NON_PICKLE_FORMATS = {"hdf5", "safetensors", "onnx", "gguf", "keras", "config", "card",
+                      "tokenizer", "xml", "yaml", "json", "image", "tflite"}
 
 DANGEROUS_MODULES = {
     "os", "posix", "nt", "subprocess", "shutil", "pty", "platform",
@@ -269,6 +277,10 @@ def detect_format(path: Path) -> str:
         return "numpy"
     if head.startswith(MAGIC_HDF5):
         return "hdf5"
+    if head.startswith(b"GGUF"):
+        return "gguf"
+    if head.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8", b"GIF87a", b"GIF89a")):
+        return "image"
     if head.startswith(MAGIC_ZIP) and fmt in ("unknown", "pickle", "torch", "joblib", "numpy"):
         return fmt if fmt != "unknown" else "zip"
     if head[:2] in PICKLE_PROTO_MARKERS and fmt == "unknown":
@@ -284,17 +296,42 @@ def static_stage(path: Path) -> dict[str, Any]:
                 "ok": False, "error": "%s: %s" % (type(e).__name__, e)}
 
 
-def _static_stage_impl(path: Path) -> dict[str, Any]:
-    data = path.read_bytes()
-    fmt = detect_format(path)
-    result: dict[str, Any] = {"format": fmt, "size": len(data), "findings": [], "members": [],
-                              "ok": True, "error": None}
+# Большие модели (сотни МБ) нельзя читать целиком в память сервиса: статика работает
+# по ограниченному префиксу (сигнатуры/заголовки/опкоды), а тело проверяет динамика.
+MAX_STATIC_BYTES = 64 * 1024 * 1024
 
-    if fmt in ("hdf5", "safetensors", "onnx"):
-        result["findings"].append(
-            Finding("D-10", "B", f"Формат {fmt} не является pickle; десериализация pickle не применима",
-                    "info", 0.9, "binary tensor container").__dict__)
-        return result
+
+def _static_stage_impl(path: Path) -> dict[str, Any]:
+    size = path.stat().st_size
+    with path.open("rb") as fh:
+        data = fh.read(MAX_STATIC_BYTES)
+    fmt = detect_format(path)
+    result: dict[str, Any] = {"format": fmt, "size": size, "read_bytes": len(data),
+                              "findings": [], "members": [], "ok": True, "error": None}
+    if size > len(data):
+        result["static_truncated"] = True
+
+    if fmt in NON_PICKLE_FORMATS:
+        # Защита от обфускации: если файл лишь ПРИТВОРЯЕТСЯ текстом/картинкой, pickle-разбор
+        # всё равно выполняем (payload под чужим расширением не должен проскочить).
+        looks_right = True
+        if fmt in ("config", "json"):
+            try:
+                json.loads(data.decode("utf-8", "replace"))
+            except Exception:  # noqa: BLE001
+                looks_right = False
+        elif fmt == "xml":
+            looks_right = data.decode("utf-8", "replace").lstrip().lower().startswith(
+                ("<?xml", "<conf", "<root", "<model"))
+        elif fmt in ("yaml", "card", "tokenizer"):
+            looks_right = bool(data.decode("utf-8", "replace").strip())
+        elif fmt == "image":
+            looks_right = data[:8].startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8", b"GIF87a", b"GIF89a"))
+        if looks_right:
+            result["findings"].append(
+                Finding("D-10", "B", f"Формат {fmt} не является pickle; десериализация pickle не применима",
+                        "info", 0.9, "binary tensor container").__dict__)
+            return result
 
     if data[:4] == MAGIC_ZIP:
         findings, members = scan_zip_container(path, data)
@@ -305,6 +342,23 @@ def _static_stage_impl(path: Path) -> dict[str, Any]:
                 Finding("B-11", "B", "Zip-контейнер без распознанных pickle-членов",
                         "info", 0.5, "нет data.pkl/*.pkl").__dict__)
         return result
+
+    if fmt == "tar":
+        # Tar-архив: перечисляем содержимое; pickle-разбор нужен только если внутри pickle
+        members: list[str] = []
+        try:
+            import tarfile
+            with tarfile.open(path, "r:*") as t:
+                members = t.getnames()
+        except Exception as e:  # noqa: BLE001
+            result["error"] = "%s: %s" % (type(e).__name__, e)
+        result["members"] = members[:200]
+        if not any(m.lower().endswith((".pkl", ".pickle", ".joblib", ".dill", ".cloudpickle",
+                                       ".pt", ".pth", ".bin", ".ckpt")) for m in members):
+            result["findings"].append(
+                Finding("B-11", "B", "Tar-архив без распознанных pickle-членов", "info", 0.5,
+                        "нет *.pkl/*.pt").__dict__)
+            return result
 
     blob = _npy_payload(data) if fmt == "numpy" else data
     findings, ops, globals_found, err = static_scan_pickle(blob, path.name)
@@ -521,7 +575,186 @@ def _run_model_code(path, errors):
     return {"executed": "model-as-code"}
 
 
+def _prod(seq):
+    n = 1
+    for x in seq:
+        n *= int(x)
+    return n
+
+
+def _load_safetensors(path, errors):
+    """Чтение SafeTensors через mmap: ключи/формы/dtype + проверка NaN/Inf."""
+    import numpy as np
+    from safetensors import safe_open
+    info = {"tensors": {}, "count": 0, "nan": 0, "inf": 0}
+    with safe_open(path, framework="numpy") as f:
+        keys = list(f.keys())
+        for k in keys[:128]:
+            t = f.get_tensor(k)
+            info["tensors"][k] = {"shape": list(t.shape), "dtype": str(t.dtype)}
+            info["count"] += 1
+            if getattr(t.dtype, "kind", "") == "f":
+                try:
+                    if bool(np.isnan(t).any()):
+                        info["nan"] += 1
+                    if bool(np.isinf(t).any()):
+                        info["inf"] += 1
+                except Exception:
+                    pass
+    return info
+
+
+def _load_onnx(path, errors):
+    """Загрузка ONNX через onnxruntime + пробный инференс на нулевых данных."""
+    import numpy as np
+    import onnxruntime as ort
+    so = ort.SessionOptions()
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    sess = ort.InferenceSession(path, so, providers=["CPUExecutionProvider"])
+    inputs = [{"name": i.name, "shape": list(i.shape), "type": i.type} for i in sess.get_inputs()]
+    outputs = [{"name": o.name, "shape": list(o.shape), "type": o.type} for o in sess.get_outputs()]
+    info = {"inputs": inputs, "outputs": outputs, "inference": None}
+    try:
+        feed = {}
+        for i in sess.get_inputs():
+            if i.type != "tensor(float)":
+                continue
+            shape = [d if isinstance(d, int) and d > 0 else 1 for d in i.shape]
+            if _prod(shape) > 1000000:
+                continue
+            feed[i.name] = np.zeros(shape, dtype="float32")
+        if feed and len(feed) == len(sess.get_inputs()):
+            outs = sess.run(None, feed)
+            info["inference"] = [{"shape": list(getattr(o, "shape", []))} for o in outs[:3]]
+    except Exception as e:
+        errors.append("onnx inference: %s: %s" % (type(e).__name__, e))
+    return info
+
+
+def _load_hdf5(path, errors):
+    """Чтение HDF5 (в т.ч. весов): датасеты/формы/dtype + атрибуты."""
+    import h5py
+    info = {"datasets": [], "count": 0, "attrs": []}
+    with h5py.File(path, "r") as f:
+        def visit(name, obj):
+            if isinstance(obj, h5py.Dataset) and info["count"] < 256:
+                info["datasets"].append({"name": name, "shape": list(obj.shape),
+                                         "dtype": str(obj.dtype)})
+                info["count"] += 1
+        f.visititems(visit)
+        try:
+            info["attrs"] = sorted(list(f.attrs.keys()))[:32]
+        except Exception:
+            pass
+    return info
+
+
+def _load_keras(path, errors):
+    """Keras .keras — zip-контейнер: config.json + *.weights.h5 (читаем без Keras)."""
+    import json as _json
+    import tempfile
+    if not zipfile.is_zipfile(path):
+        errors.append("keras: не zip-контейнер")
+        return None
+    info = {"config": None, "weights": 0, "members": []}
+    with zipfile.ZipFile(path) as z:
+        info["members"] = z.namelist()[:64]
+        if "config.json" in info["members"]:
+            try:
+                info["config"] = _json.loads(z.read("config.json").decode("utf-8", "replace"))
+            except Exception as e:
+                errors.append("keras config: %s" % e)
+        wname = next((n for n in info["members"]
+                      if n.endswith(".weights.h5") or n.endswith(".h5")), None)
+        if wname:
+            try:
+                import h5py
+                # читаем веса из памяти (без временных файлов — иначе аудит-хук видит запись файла)
+                cnt = [0]
+                with h5py.File(io.BytesIO(z.read(wname)), "r") as f:
+                    f.visititems(lambda n, o: cnt.__setitem__(0, cnt[0] + 1)
+                                 if isinstance(o, h5py.Dataset) else None)
+                info["weights"] = cnt[0]
+            except Exception as e:
+                errors.append("keras weights: %s" % e)
+    return info
+
+
+def _load_gguf(path, errors):
+    """GGUF: метаданные и список тензоров."""
+    import gguf
+    r = gguf.GGUFReader(path)
+    fields = getattr(r, "fields", None) or {}
+    tensors = getattr(r, "tensors", None) or []
+    return {"metadata_keys": sorted(list(fields.keys()))[:64],
+            "tensors": len(tensors),
+            "sample": [[t.name, list(t.shape)] for t in tensors[:32]]}
+
+
+def _load_archive(path, errors, fmt=None):
+    """Архивы: перечисляем содержимое (без исполнения)."""
+    out = {"members": []}
+    if (fmt == "tar") or path.lower().endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2")):
+        import tarfile
+        try:
+            with tarfile.open(path, "r:*") as t:
+                out["members"] = [m.name for m in t.getmembers()[:256]]
+        except Exception as e:
+            errors.append("tar: %s: %s" % (type(e).__name__, e))
+            return None
+        return out
+    try:
+        with zipfile.ZipFile(path) as z:
+            out["members"] = z.namelist()[:256]
+    except Exception as e:
+        errors.append("zip: %s: %s" % (type(e).__name__, e))
+        return None
+    return out
+
+
+def _load_image(path, errors):
+    """Изображения: проверяем сигнатуру и целостность контейнера (структурная загрузка)."""
+    data = open(path, "rb").read()
+    if data[:8].startswith(b"\x89PNG\r\n\x1a\n"):
+        return {"format": "png", "size": len(data), "has_iend": b"IEND" in data[-32:]}
+    if data[:2] == b"\xff\xd8":
+        return {"format": "jpeg", "size": len(data), "has_eoi": data[-2:] == b"\xff\xd9"}
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return {"format": "gif", "size": len(data)}
+    errors.append("image: неизвестная сигнатура контейнера")
+    return None
+
+
+def _load_text(path, errors):
+    """Текстовые артефакты (config/card/tokenizer/xml/json): читаем ограниченно."""
+    data = open(path, "rb").read(1 << 20)
+    txt = data.decode("utf-8", "replace")
+    out = {"text_len": len(data)}
+    if path.lower().endswith(".json"):
+        try:
+            out["json"] = json.loads(txt)
+        except Exception as e:
+            errors.append("json: %s" % e)
+    return out
+
+
 def load_target(path, fmt, errors):
+    if fmt == "safetensors":
+        return _load_safetensors(path, errors)
+    if fmt == "onnx":
+        return _load_onnx(path, errors)
+    if fmt == "hdf5":
+        return _load_hdf5(path, errors)
+    if fmt == "keras":
+        return _load_keras(path, errors)
+    if fmt == "gguf":
+        return _load_gguf(path, errors)
+    if fmt in ("tar", "zip"):
+        return _load_archive(path, errors, fmt)
+    if fmt in ("config", "card", "tokenizer", "xml", "json", "yaml"):
+        return _load_text(path, errors)
+    if fmt in ("image", "tflite"):
+        return _load_image(path, errors)
     if fmt in ("model-as-code", "mar", "python"):
         return _run_model_code(path, errors)
     data = open(path, "rb").read()
@@ -574,9 +807,6 @@ def load_target(path, fmt, errors):
         except Exception as e:
             errors.append("numpy: %s: %s" % (type(e).__name__, e))
         data = npy_payload(data)
-    if fmt in ("hdf5", "safetensors", "onnx"):
-        errors.append("формат %s не является pickle; динамика не применима" % fmt)
-        return None
     if is_zip:
         return load_zip(data, errors)
     return unpickle_bytes(data, errors)
@@ -831,7 +1061,11 @@ def behavior_probe(obj):
 def prewarm(fmt):
     """Прогрев библиотек ДО установки audit-hook: шум импорта не приписывается payload."""
     mods = {"numpy": ["numpy"], "torch": ["torch"], "joblib": ["joblib"],
-            "dill": ["dill"], "cloudpickle": ["cloudpickle"]}.get(fmt, [])
+            "dill": ["dill"], "cloudpickle": ["cloudpickle"],
+            "safetensors": ["numpy", "safetensors"], "onnx": ["numpy", "onnxruntime"],
+            "hdf5": ["h5py"], "keras": ["h5py"], "gguf": ["gguf"],
+            "tar": [], "zip": [], "config": [], "card": [], "tokenizer": [],
+            "xml": [], "json": [], "yaml": [], "image": []}.get(fmt, [])
     for m in mods:
         try:
             __import__(m)

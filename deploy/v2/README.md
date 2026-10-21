@@ -286,6 +286,16 @@ curl -s http://<analytics>/healthz
 curl -X POST -H "Authorization: Bearer $ADMIN_KEY" "http://<ops>/settings/language?lang=en"
 ```
 
+## Загрузка сложных форматов в песочнице (реализовано)
+
+Harness динамики читает форматы профильными библиотеками: safetensors (mmap), ONNX
+(onnxruntime + пробный инференс), HDF5 (h5py), Keras `.keras` (zip: `config.json` +
+`weights.h5` из памяти), GGUF, архивы .zip/.tar*, текстовые артефакты и изображения.
+Формат передаётся из адаптера (`sandbox_fmt`), библиотеки — в образе `mlscan-sandbox:v3`.
+Статика крупных файлов (>64 МБ) разбирает префикс (защита от OOM), лимиты: testing 3Gi,
+sandbox-Job 3Gi. Уточнён детектор `AGT-01`: критично только реальное порождение процессов
+(`command`/`args` в `mcpServers`), простой URL/transport — нет.
+
 ## Полнота покрытия модулей (реализовано)
 
 Вердикт учитывает, какие модули реально отработали (статика/динамика/поведение). Если динамика

@@ -453,9 +453,15 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
         artifact_url = f"{ARTIFACT_BASE}/a/{scan_id}/{rec.get('artifact_token','')}/{urllib.parse.quote(name)}"
         sandbox_fmt = fmt
         af = (static or {}).get("adapter_format")
+        # Формат песочницы = формат адаптера: harness умеет загружать не только pickle,
+        # но и safetensors/onnx/hdf5/keras/gguf/архивы/текстовые артефакты (mmap/парсеры),
+        # поэтому динамика не «не применима», а реально проверяется.
         if af in ("torchserve-mar", "model-as-code", "python"):
             sandbox_fmt = "model-as-code"
-        elif af in ("keras", "onnx", "hdf5", "gguf", "safetensors", "config", "tar", "xml", "card"):
+        elif af in ("safetensors", "onnx", "hdf5", "keras", "gguf", "tar", "zip",
+                    "config", "card", "xml", "yaml", "tokenizer", "image"):
+            sandbox_fmt = af
+        elif af in ("torch-package", "torch-zip", "unknown", None):
             sandbox_fmt = "raw"
         update(scan_id, stage="submitted", progress=25, sandbox_fmt=sandbox_fmt)
         t = time.time()

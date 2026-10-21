@@ -11,18 +11,19 @@
 - `safetensors`, `onnxruntime` (CPU), `h5py`, `gguf`;
 - `joblib`, `dill`, `cloudpickle`.
 
-Тег по умолчанию: **`:v2`** (см. `--image`/`SANDBOX_IMAGE`).
+Тег по умолчанию: **`:v3`** (см. `--image`/`SANDBOX_IMAGE`); в `:v3` добавлены `onnx`
+и `PyYAML`, чтобы статика и генераторы работали с ONNX/конфигами официальными библиотеками.
 
 ## Сборка (Kaniko, без Docker на хосте)
 
 ```bash
-bash deploy/sandbox-image/build.sh v2       # соберёт и опубликует :v2
+bash deploy/sandbox-image/build.sh v3       # соберёт и опубликует :v3
 kubectl -n mlscan-build logs -f job/mlscan-sandbox-build
 ```
 
 Kaniko собирает образ и публикует его в **in-cluster registry**:
-`registry.container-registry.svc.cluster.local:5000/mlscan-sandbox:v2`,
-что соответствует для kubelet `localhost:32000/mlscan-sandbox:v2`
+`registry.container-registry.svc.cluster.local:5000/mlscan-sandbox:v3`,
+что соответствует для kubelet `localhost:32000/mlscan-sandbox:v3`
 (registry addon MicroK8s).
 
 ## Использование
@@ -31,7 +32,7 @@ Kaniko собирает образ и публикует его в **in-cluster 
 `SANDBOX_IMAGE` (см. `deploy/stage2/30-service.yaml`):
 
 ```
-SANDBOX_IMAGE = localhost:32000/mlscan-sandbox:v2
+SANDBOX_IMAGE = localhost:32000/mlscan-sandbox:v3
 ```
 
 После сборки образа достаточно, чтобы `SANDBOX_IMAGE` указывал на него (уже настроено);

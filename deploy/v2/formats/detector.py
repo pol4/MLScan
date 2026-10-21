@@ -151,13 +151,14 @@ def _scan_gguf(blob: bytes, label: str) -> list[dict]:
     return out
 
 
-def _scan_safetensors(blob: bytes, label: str) -> list[dict]:
+def _scan_safetensors(blob: bytes, label: str, total_size: int | None = None) -> list[dict]:
     import struct
     out: list[dict] = []
+    size = total_size or len(blob)   # при чтении префиксом границы считаем по реальному размеру
     if len(blob) < 8:
         return [_f("FMT-01", f"SafeTensors: файл слишком мал ({label})", "medium", 0.5, "len<8", cat="FMT")]
     (hlen,) = struct.unpack("<Q", blob[:8])
-    if hlen <= 0 or hlen > len(blob) - 8:
+    if hlen <= 0 or hlen + 8 > size:
         return [_f("FMT-01", f"SafeTensors: некорректная длина заголовка ({label})",
                    "high", 0.8, f"header_len={hlen}", cat="FMT")]
     try:
@@ -165,7 +166,7 @@ def _scan_safetensors(blob: bytes, label: str) -> list[dict]:
     except Exception as exc:  # noqa: BLE001
         return [_f("FMT-01", f"SafeTensors: нечитаемый заголовок ({label})", "high", 0.8, str(exc), cat="FMT")]
     data_start = 8 + hlen
-    data_len = len(blob) - data_start
+    data_len = size - data_start
     ranges = []
     for name, info in header.items():
         if name == "__metadata__":
@@ -350,7 +351,14 @@ def _scan_card(text: str, label: str) -> list[dict]:
 def _scan_tools(data: dict, label: str) -> list[dict]:
     out: list[dict] = []
     blob = json.dumps(data, ensure_ascii=False).lower()
-    if "mcpservers" in blob or ('"command"' in blob and '"args"' in blob):
+    servers = data.get("mcpServers")
+    spawns = []
+    if isinstance(servers, dict):
+        for srv, cfg in servers.items():
+            if isinstance(cfg, dict) and ("command" in cfg or "args" in cfg):
+                spawns.append(srv)
+    # критично только реальное порождение процессов (command/args); простой URL/transport — нет
+    if spawns or ('"command"' in blob and '"args"' in blob):
         out.append(_f("AGT-01", f"MCP/agent-манифест с запуском команд ({label})", "critical", 0.8,
                       "mcpServers/command", cat="AGT"))
     if '"tools"' in blob:
@@ -438,6 +446,14 @@ def detect(path: Path, head: bytes) -> str:
     return "unknown"
 
 
+MAX_STATIC_BYTES = 64 * 1024 * 1024   # крупные файлы читаем префиксом (тело проверяет динамика)
+
+
+def _read_bounded(path: Path, limit: int = MAX_STATIC_BYTES) -> bytes:
+    with path.open("rb") as fh:
+        return fh.read(limit)
+
+
 def static_scan(path: Path) -> dict:
     """Адаптер: вернуть {format, findings, details} для не-pickle форматов."""
     try:
@@ -454,26 +470,26 @@ def static_scan(path: Path) -> dict:
             findings.extend(f2)
             fmt = real if real != "zip" else fmt
         elif fmt == "python":
-            findings.extend(_scan_python(_btext(path.read_bytes()), path.name))
+            findings.extend(_scan_python(_btext(_read_bounded(path)), path.name))
         elif fmt == "model-as-code":
-            text = _btext(path.read_bytes())
+            text = _btext(_read_bounded(path))
             findings.append(_f("EXEC-01", f"Model-as-code артефакт ({path.name})", "high", 0.9,
                                "исполняемый артефакт"))
             findings.extend(_scan_python(text, path.name))
         elif fmt == "onnx":
-            findings.extend(_scan_onnx(path.read_bytes(), path.name))
+            findings.extend(_scan_onnx(_read_bounded(path), path.name))
         elif fmt == "hdf5":
-            findings.extend(_scan_hdf5(path.read_bytes(), path.name))
+            findings.extend(_scan_hdf5(_read_bounded(path), path.name))
         elif fmt == "gguf":
-            findings.extend(_scan_gguf(path.read_bytes(), path.name))
+            findings.extend(_scan_gguf(_read_bounded(path), path.name))
         elif fmt == "safetensors":
-            findings.extend(_scan_safetensors(path.read_bytes(), path.name))
+            findings.extend(_scan_safetensors(_read_bounded(path), path.name, path.stat().st_size))
         elif fmt == "tar":
             findings.extend(_scan_tar(path))
         elif fmt == "xml":
-            findings.extend(_scan_xml(path.read_bytes(), path.name))
+            findings.extend(_scan_xml(_read_bounded(path), path.name))
         elif fmt == "config":
-            blob = path.read_bytes()
+            blob = _read_bounded(path)
             text = _btext(blob)
             findings.extend(_scan_json(text, path.name))
             if path.suffix.lower() in (".yaml", ".yml"):
@@ -489,9 +505,9 @@ def static_scan(path: Path) -> dict:
                         findings.extend(_scan_tokenizer(data, path.name))
                     findings.extend(_scan_tools(data, path.name))
         elif fmt == "card":
-            findings.extend(_scan_card(_btext(path.read_bytes()), path.name))
+            findings.extend(_scan_card(_btext(_read_bounded(path)), path.name))
         elif fmt == "image":
-            findings.extend(_scan_image_polyglot(path.read_bytes(), path.name))
+            findings.extend(_scan_image_polyglot(_read_bounded(path), path.name))
     except Exception as exc:  # noqa: BLE001
         findings.append(_f("FMT-01", f"Ошибка разбора {fmt}", "low", 0.3, str(exc), cat="FMT"))
     # проверка несоответствия расширения реальному формату

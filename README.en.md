@@ -182,9 +182,12 @@ records) and reports. Russian documentation — [`README.md`](./README.md) / [`d
 
 ### Self-testing
 
-A synthetic vulnerability corpus — [`tests/vulnerabilities/`](./tests/vulnerabilities):
-38 samples (33 malicious + 5 benign), a generator, a runner and a report. **Result: 33/33
-detected, 0 misses, 0 false positives**; per-format quality metrics TPR=1.0, FPR=0.0.
+A synthetic corpus — [`tests/vulnerabilities/`](./tests/vulnerabilities): **58 samples**
+(33 malicious + 25 benign), a generator, a runner and a report. The benign part contains real
+files of complex formats (safetensors, ONNX, HDF5, GGUF, Keras, torch, numpy, archives, tokenizers,
+manifests) plus **five ~198 MB samples** generated on demand and uploaded straight to the testing
+service. **Result: 33/33 detected, 0 misses, 0/25 false positives**; the large models are `Safe`
+with complete coverage; per-format quality metrics TPR=1.0, FPR=0.0.
 
 ---
 

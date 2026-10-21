@@ -81,3 +81,30 @@ python3 tests/vulnerabilities/run_tests.py \
   аналитики (колонка `Policy`).
 - Динамическое подтверждение ограничено: pickle/torch/numpy/model-as-code — да;
   Keras/TF/ONNX — только статика (нет фреймворк-образов).
+
+
+## Доброкачественные примеры сложных форматов
+
+Кроме образцов с закладками корпус содержит **25 безопасных** примеров (`safe_*`), в том числе
+реальные файлы сложных форматов: safetensors (f32/f16), numpy `.npz`, torch `.pt`, HDF5 `.h5`,
+ONNX (MatMul+Add, opset 13), GGUF, Keras `.keras` (zip: `config.json` + `weights.h5`),
+архивы `.zip`/`.tar.gz`, joblib/dill/cloudpickle, tokenizer.json, MCP-манифест, YAML/XML-конфиги,
+PNG и карточка модели. Они проверяют, что на корректных моделях **нет находок** и динамика
+**реально загружает** модель (иначе скан честно помечается как неполный).
+
+Генератор: [`gen_benign_formats.py`](./gen_benign_formats.py) (нужны torch/onnx/h5py/gguf —
+запускать в образе песочницы).
+
+```bash
+# небольшие примеры -> в репозиторий (samples/)
+kubectl -n mlscan-data run gen-benign --rm -i --restart=Never \
+  --image=localhost:32000/mlscan-sandbox:v3 --command -- \
+  python3 - --out /tmp/benign < tests/vulnerabilities/gen_benign_formats.py
+
+# крупные (≈198 МБ) — генерируются и сразу загружаются в сервис тестирования
+kubectl -n mlscan-data exec gen-benign -- python3 /tmp/gen/gen_benign_formats.py \
+  --out /tmp/large --large-mb 192 --upload http://<testing>:8080 --key <API_KEY> --verify
+```
+
+Крупные примеры (>64 МБ) статика разбирает по префиксу (защита от OOM), а тело загружает
+динамика профильными библиотеками (mmap safetensors, onnxruntime, h5py, torch, numpy).

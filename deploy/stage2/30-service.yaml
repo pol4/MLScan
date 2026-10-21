@@ -35,10 +35,10 @@ spec:
         - {name: ARTIFACT_PORT, value: "8090"}
         - {name: ARTIFACT_BASE, value: "http://mlscan-testing.mlscan-testing.svc.cluster.local:8090"}
         - {name: JOB_TIMEOUT, value: "600"}
-        - {name: JOB_MEMORY, value: "2Gi"}
+        - {name: JOB_MEMORY, value: "3Gi"}
         - {name: JOB_EPHEMERAL, value: "8Gi"}
         - {name: TMP_SIZE, value: "6Gi"}
-        - {name: SANDBOX_IMAGE, value: "localhost:32000/mlscan-sandbox:v2"}
+        - {name: SANDBOX_IMAGE, value: "localhost:32000/mlscan-sandbox:v3"}
         - {name: DATA_TMP, value: /var/tmp}
         - name: S3_ENDPOINT
           valueFrom: {secretKeyRef: {name: mlscan-s3, key: ENDPOINT}}
@@ -79,8 +79,8 @@ spec:
           initialDelaySeconds: 10
           periodSeconds: 20
         resources:
-          requests: {cpu: "100m", memory: "128Mi", ephemeral-storage: "1Gi"}
-          limits: {cpu: "2", memory: "1Gi", ephemeral-storage: "150Gi"}
+          requests: {cpu: "100m", memory: "256Mi", ephemeral-storage: "1Gi"}
+          limits: {cpu: "2", memory: "3Gi", ephemeral-storage: "150Gi"}
         volumeMounts:
         - {name: poc-lib, mountPath: /opt/mlscan, readOnly: true}
         - {name: svc-code, mountPath: /opt/svc, readOnly: true}

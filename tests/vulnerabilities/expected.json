@@ -222,5 +222,105 @@
   "safe_image.png": {
     "expect_checks": [],
     "kind": "benign"
+  },
+  "safe_real_safetensors.safetensors": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "safetensors: 2 тензора, mmap-загрузка"
+  },
+  "safe_real_safetensors_f16.safetensors": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "safetensors f16"
+  },
+  "safe_real_numpy.npz": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "numpy npz: 3 массива"
+  },
+  "safe_real_torch.pt": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "torch: state_dict + метаданные"
+  },
+  "safe_real_hdf5.h5": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "HDF5: 2 датасета + атрибуты"
+  },
+  "safe_real_onnx.onnx": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "ONNX: MatMul+Add, opset 13, реальный инференс"
+  },
+  "safe_real_gguf.gguf": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "GGUF: метаданные + тензор"
+  },
+  "safe_real_keras.keras": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "Keras .keras: config + weights.h5"
+  },
+  "safe_real_archive.zip": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "zip: onnx + config + tokenizer + card"
+  },
+  "safe_real_archive.tar.gz": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "tar.gz: onnx + config + card"
+  },
+  "safe_real_pickle.pkl": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "pickle: обычный dict"
+  },
+  "safe_real.joblib": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "joblib: безопасный объект"
+  },
+  "safe_real.dill": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "dill: безопасный объект"
+  },
+  "safe_real.cloudpickle": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "cloudpickle: безопасный объект"
+  },
+  "safe_tokenizer_bpe.json": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "tokenizer: корректный BPE без переопределений/ReDoS"
+  },
+  "safe_mcp_manifest.json": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "MCP-манифест без запуска команд"
+  },
+  "safe_config.yaml": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "YAML-конфиг без unsafe-тегов"
+  },
+  "safe_config.xml": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "XML без DOCTYPE/ENTITY"
+  },
+  "safe_card_clean.md": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "карточка без prompt-injection"
+  },
+  "safe_real_image.png": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "PNG-картинка без trailing-данных"
   }
 }

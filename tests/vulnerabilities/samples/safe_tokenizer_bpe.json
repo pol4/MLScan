@@ -1,0 +1,1 @@
+{"model": {"type": "BPE", "vocab": {"hello": 0, "world": 1, "\u0120": 2}}, "normalizer": {"type": "Lowercase"}, "added_tokens": [{"id": 0, "content": "<s>", "special": true}]}

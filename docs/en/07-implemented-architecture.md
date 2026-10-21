@@ -130,6 +130,18 @@ considered complete**:
 * the scan record stores a structured `coverage` field (`modules`, `failed`, `complete`) which is
   shown as a banner on the artifact card and included in the reports (JSON/Markdown).
 
+The dynamic stage loads more than pickle: the harness can read **safetensors** (mmap), **ONNX**
+(onnxruntime plus a trial inference), **HDF5** (h5py), **Keras `.keras`** (zip: `config.json` and
+`weights.h5` in memory — no temporary files), **GGUF**, `.zip`/`.tar*` archives, text artifacts
+and images (signature/integrity checks). So "dynamic analysis is not applicable" is no longer
+reported as an error — the module really inspects the container. The format is passed to the
+sandbox by the adapter (`sandbox_fmt`), and the libraries ship in the `mlscan-sandbox:v3` image.
+
+**Large files.** Static analysis reads a 64 MB prefix (`MAX_STATIC_BYTES`); otherwise analysing a
+200 MB model exhausted the service memory (`OOMKilled` at `limits.memory=1Gi`). Limits: testing
+service — **3Gi**, sandbox Job — **3Gi** (`JOB_MEMORY`). The full body is read by the dynamic
+stage (mmap where the library supports it).
+
 The per-module reason comes from the sandbox: e.g.
 `pickle.loads: ModuleNotFoundError: No module named 'mymod'` (model not loaded) or
 `формат safetensors не является pickle; динамика не применима`. The logic lives in

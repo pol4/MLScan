@@ -30,7 +30,12 @@ EXPECTED = os.path.join(HERE, "expected.json")
 FMT_BY_EXT = {"pkl": "pickle", "pickle": "pickle", "p": "pickle",
               "joblib": "joblib", "jl": "joblib", "dill": "dill",
               "cloudpickle": "cloudpickle", "npy": "numpy", "npz": "numpy",
-              "pt": "torch", "pth": "torch", "bin": "torch", "ckpt": "torch"}
+              "pt": "torch", "pth": "torch", "bin": "torch", "ckpt": "torch",
+              # сложные форматы (проверяются и статикой, и динамикой в песочнице)
+              "safetensors": "safetensors", "onnx": "onnx", "h5": "hdf5", "hdf5": "hdf5",
+              "keras": "keras", "gguf": "gguf", "zip": "zip", "tar": "tar", "gz": "tar",
+              "tgz": "tar", "xml": "xml", "yaml": "config", "yml": "config",
+              "md": "card", "png": "image", "jpg": "image"}
 
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))

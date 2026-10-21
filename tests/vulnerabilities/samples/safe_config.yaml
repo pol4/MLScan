@@ -1,0 +1,5 @@
+model:
+  hidden_size: 8
+  layers: 2
+training:
+  lr: 0.001
