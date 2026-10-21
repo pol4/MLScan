@@ -1,0 +1,3 @@
+id,value
+1,=cmd|'/C calc'!A1
+2,@SUM(1+1)*cmd|'/C powershell'!A0

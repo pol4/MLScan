@@ -34,7 +34,7 @@ flowchart LR
   P["PoC<br/>1 format, 1 file"] --> S["Pickle system<br/>3 components (Stages 0-5)"]
   S --> V0["v2 Wave 0<br/>S3, PostgreSQL, AuthN/Z, audit"]
   V0 --> V1["v2 Waves 1-3<br/>format adapters, detectors, lifecycle"]
-  V1 --> T["Synthetic corpus<br/>76/76 detected, 0 FP"]
+  V1 --> T["Synthetic corpus<br/>87/87 detected, 0 FP"]
 ```
 
 ---
@@ -182,13 +182,13 @@ records) and reports. Russian documentation — [`README.md`](./README.md) / [`d
 
 ### Self-testing
 
-A synthetic corpus — [`tests/vulnerabilities/`](./tests/vulnerabilities): **124 samples**
-(76 malicious + 48 benign), generators, a runner and a report. Besides the pickle family it covers
+A synthetic corpus — [`tests/vulnerabilities/`](./tests/vulnerabilities): **141 samples**
+(87 malicious + 54 benign), generators, a runner and a report. Besides the pickle family it covers
 notebooks, scripts, TorchScript/torch.package, MLflow, TF SavedModel, TFLite, CoreML, PMML,
 Parquet/Arrow datasets, ONNX `external_data`, HDF5 external links and safetensors metadata. The
 benign part contains real files of complex formats (safetensors, ONNX, HDF5, GGUF, Keras, torch,
 numpy, archives, tokenizers, manifests) plus **five ~198 MB samples** generated on demand and
-uploaded straight to the testing service. **Result: 76/76 detected, 0 misses, 0/48 false
+uploaded straight to the testing service. **Result: 87/87 detected, 0 misses, 0/54 false
 positives**; the large models are `Safe` with complete coverage; per-format quality metrics
 TPR=1.0, FPR=0.0.
 
@@ -324,7 +324,7 @@ python3 tests/vulnerabilities/run_tests.py --url <testing-url> --analytics-url <
 Implemented and verified: the PoC, the pickle system (Stages 0–5), the v2 target architecture
 (Wave 0: S3/PostgreSQL/AuthN+audit/observability+backup; format waves 1–3: adapters and detectors,
 model-as-code dynamics; retention/TTL and quarantine), per-format quality metrics (TPR=1.0,
-FPR=0.0) and the synthetic corpus (76/76, 0 FP). The UI and service messages are
+FPR=0.0) and the synthetic corpus (87/87, 0 FP). The UI and service messages are
 localised RU/EN with a global language setting.
 
 Context: [`deploy/v2/README.md`](./deploy/v2/README.md), plan — [`docs/en/10-plan-new-formats.md`](./docs/en/10-plan-new-formats.md),

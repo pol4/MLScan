@@ -44,7 +44,11 @@ FMT_BY_EXT = {"pkl": "pickle", "pickle": "pickle", "p": "pickle",
               "whl": "zip", "pth": "torch", "so": "native", "dll": "native",
               "j2": "jinja", "jinja": "jinja", "pb": "savedmodel",
               # «Волна 6»: HTML/SVG, Dockerfile
-              "html": "html", "htm": "html", "svg": "html", "dockerfile": "dockerfile"}
+              "html": "html", "htm": "html", "svg": "html", "dockerfile": "dockerfile",
+              # «Волна 7»: датасеты, сжатые payload'ы, msgpack, неподдерживаемые контейнеры
+              "jsonl": "jsonl", "ndjson": "jsonl", "csv": "csv", "tsv": "csv",
+              "msgpack": "msgpack", "bz2": "compressed", "xz": "compressed",
+              "7z": "unsupported", "rar": "unsupported"}
 
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -73,8 +77,12 @@ def main() -> int:
         path = os.path.join(SAMPLES, name)
         if not os.path.isfile(path):
             continue
-        ext = name.rsplit(".", 1)[-1].lower()
-        fmt = FMT_BY_EXT.get(ext, "raw")
+        low = name.lower()
+        if low.endswith(".tar.gz") or low.endswith(".tar.bz2") or low.endswith(".tar.xz"):
+            fmt = "tar"
+        else:
+            ext = name.rsplit(".", 1)[-1].lower()
+            fmt = FMT_BY_EXT.get(ext, "raw")
         data = open(path, "rb").read()
         try:
             r = req(f"{base}/scans/upload?name={urllib.parse.quote(name)}&fmt={fmt}", args.key,

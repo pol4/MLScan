@@ -67,6 +67,9 @@ FORMAT_BY_EXT = {
     ".parquet": "dataset", ".arrow": "dataset", ".feather": "dataset",
     ".j2": "jinja", ".jinja": "jinja", ".jinja2": "jinja",
     ".html": "html", ".htm": "html", ".svg": "html", ".dockerfile": "dockerfile",
+    ".jsonl": "jsonl", ".ndjson": "jsonl", ".csv": "csv", ".tsv": "csv",
+    ".msgpack": "msgpack", ".mpk": "msgpack",
+    ".bz2": "compressed", ".xz": "compressed", ".7z": "unsupported", ".rar": "unsupported",
     ".so": "native", ".dll": "native", ".dylib": "native", ".node": "native",
     ".pb": "savedmodel",
 }
@@ -76,7 +79,8 @@ FORMAT_BY_EXT = {
 NON_PICKLE_FORMATS = {"hdf5", "safetensors", "onnx", "gguf", "keras", "config", "card",
                       "tokenizer", "xml", "yaml", "json", "image", "tflite", "pmml",
                       "notebook", "script", "coreml", "dataset", "mlflow", "savedmodel",
-                      "jinja", "native", "sitepath", "html", "dockerfile"}
+                      "jinja", "native", "sitepath", "html", "dockerfile", "jsonl",
+                      "csv", "msgpack", "compressed", "unsupported"}
 
 DANGEROUS_MODULES = {
     "os", "posix", "nt", "subprocess", "shutil", "pty", "platform",
@@ -367,6 +371,8 @@ def detect_format(path: Path) -> str:
         return "tflite"
     if head[:4] == b"PAR1":
         return "dataset"
+    if head.startswith((b"7z\xbc\xaf\x27\x1c", b"Rar!\x1a\x07", b"\x28\xb5\x2f\xfd")):
+        return "unsupported"
     if head[:6] == b"ARROW1":
         return "dataset"
     if head.startswith((b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")):
@@ -496,6 +502,7 @@ HARNESS_SRC = r'''# -*- coding: utf-8 -*-
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -884,6 +891,49 @@ def _load_image(path, errors):
     return None
 
 
+def _looks_like_pickle(data: bytes) -> bool:
+    """pickle по сигнатуре или по текстовым опкодам protocol 0."""
+    if data[:2] in (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05"):
+        return True
+    head = data[:64]
+    if re.match(rb"^c[\w.]+\n[\w.]+\n", head):      # GLOBAL (cos\nsystem\n)
+        return True
+    return head.startswith((b"(lp", b"(dp", b"(d", b"(l", b"}q", b"]q", b"(c"))
+
+
+def _load_compressed(path, errors):
+    """Сжатый payload (.gz/.bz2/.xz): распаковка и загрузка вложенного содержимого.
+
+    Если внутри pickle — он действительно десериализуется под аудит-хуком (payload
+    должен достичь исполнения, иначе динамика бессмысленна).
+    """
+    import bz2
+    import gzip
+    import lzma
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(64 * 1024 * 1024)
+        sfx = os.path.splitext(path)[1].lower()
+        data = (gzip.decompress(raw) if sfx == ".gz"
+                else bz2.decompress(raw) if sfx == ".bz2" else lzma.decompress(raw))
+    except Exception as exc:  # noqa: BLE001
+        errors.append("compressed: %s: %s" % (type(exc).__name__, exc))
+        return None
+    head = data[:8]
+    if head[:4] == b"PK\x03\x04":
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                return {"format": "compressed+zip", "size": len(data),
+                        "members": z.namelist()[:128]}
+        except Exception as exc:  # noqa: BLE001
+            errors.append("compressed zip: %s" % exc)
+            return None
+    if _looks_like_pickle(data):
+        return unpickle_bytes(data, errors)
+    return {"format": "compressed", "size": len(data),
+            "inner_magic": head[:4].decode("latin1", "replace")}
+
+
 def _load_flatbuffer(path, errors, kind="tflite"):
     """TFLite/CoreML: структурная проверка контейнера (magic/размер)."""
     data = open(path, "rb").read(64)
@@ -925,8 +975,14 @@ def load_target(path, fmt, errors):
     if fmt in ("tar", "zip", "torch-package", "torch-zip"):
         return _load_archive(path, errors, "tar" if fmt == "tar" else "zip")
     if fmt in ("config", "card", "tokenizer", "xml", "json", "yaml", "pmml",
-               "notebook", "script", "jinja", "sitepath", "html", "dockerfile"):
+               "notebook", "script", "jinja", "sitepath", "html", "dockerfile",
+               "jsonl", "csv", "msgpack"):
         return _load_text(path, errors)
+    if fmt == "compressed":
+        return _load_compressed(path, errors)
+    if fmt == "unsupported":
+        errors.append("контейнер не поддерживается для проверки (7z/rar/zstd)")
+        return None
     if fmt == "savedmodel":
         return _load_archive(path, errors, None) if zipfile.is_zipfile(path) else \
             _load_flatbuffer(path, errors, "savedmodel")

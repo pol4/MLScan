@@ -86,6 +86,121 @@ NOTEBOOK_SHELL = ("!pip", "!curl", "!wget", "!bash", "!sh ")
 
 
 ARCHIVE_EXT = (".zip", ".whl", ".jar", ".tar", ".tar.gz", ".tgz", ".mar")
+COMPRESSED_EXT = (".gz", ".bz2", ".xz")
+UNSUPPORTED_MAGIC = {b"7z\xbc\xaf\x27\x1c": "7z", b"Rar!\x1a\x07": "rar",
+                     b"\x28\xb5\x2f\xfd": "zstd"}
+# Секреты в артефакте: ключи, токены, приватные ключи (утечка через репозиторий модели)
+SECRET_PATTERNS = (
+    ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("huggingface_token", re.compile(r"hf_[A-Za-z0-9]{20,}")),
+    ("github_token", re.compile(r"ghp_[A-Za-z0-9]{30,}")),
+    ("slack_token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}")),
+    ("openai_key", re.compile(r"sk-[A-Za-z0-9]{20,}")),
+    ("generic_secret", re.compile(r"(?i)(api[_-]?key|secret|password)\s*[:=]\s*['\"][^'\"]{12,}['\"]")),
+)
+
+
+def _scan_secrets(text: str, label: str) -> list[dict]:
+    """Поиск секретов/токенов: утечка ключей вместе с моделью."""
+    hits = [name for name, rx in SECRET_PATTERNS if rx.search(text)]
+    if hits:
+        return [_f("SEC-01", f"Секреты/токены в артефакте ({label})", "high", 0.8,
+                   "найдено: " + ", ".join(sorted(set(hits))), cat="SEC")]
+    return []
+
+
+def _scan_jsonl(blob: bytes, label: str) -> list[dict]:
+    """JSONL-датасеты (инструкции/промпты): инъекции в тексте и внешние ссылки."""
+    out: list[dict] = []
+    text = _btext(blob)
+    out.extend(_scan_card(text, label))
+    out.extend(_scan_secrets(text, label))
+    if "http://" in text or "https://" in text:
+        out.append(_f("INT-03", f"Внешние URL в датасете ({label})", "low", 0.4,
+                      "внешний источник", cat="INT"))
+    return out
+
+
+CSV_FORMULA = re.compile(r"(^|[,\t;])\s*[=+@][^,\n]{0,80}?"
+                         r"(cmd|powershell|rundll32|HYPERLINK|DDE|/c |\\c)",
+                         re.IGNORECASE)
+
+
+def _scan_csv(blob: bytes, label: str) -> list[dict]:
+    """CSV/TSV-датасеты: формульные инъекции (исполнение при открытии в таблицах)."""
+    out: list[dict] = []
+    text = _btext(blob)
+    if CSV_FORMULA.search(text):
+        out.append(_f("INJ-06", f"Формульная инъекция в датасете ({label})", "high", 0.7,
+                      "=cmd|.../HYPERLINK/DDE", cat="INJ"))
+    out.extend(_scan_secrets(text, label))
+    if "http://" in text or "https://" in text:
+        out.append(_f("INT-03", f"Внешние URL в датасете ({label})", "low", 0.4,
+                      "внешний источник", cat="INT"))
+    return out
+
+
+def _scan_msgpack(blob: bytes, label: str) -> list[dict]:
+    """MessagePack (MLflow и др.): внутри может лежать pickle-поток."""
+    out: list[dict] = []
+    marks = [g for g in (b"posix", b"os.system", b"subprocess", b"__reduce__", b"builtins")
+             if g in blob]
+    if any(m in blob for m in (b"\x80\x04", b"\x80\x05")) and marks:
+        out.append(_f("EXEC-02", f"Pickle-поток внутри MessagePack ({label})", "high", 0.7,
+                      "pickle + " + ", ".join(m.decode() for m in marks[:3]), cat="EXEC"))
+    return out
+
+
+def _scan_compressed_pickle(blob: bytes, label: str) -> list[dict]:
+    """Разбор pickle внутри сжатого потока: опасные глобалы без исполнения."""
+    import pickletools
+    out: list[dict] = []
+    try:
+        text = blob.decode("latin1")
+    except Exception:  # noqa: BLE001
+        text = ""
+    globals_found: list[str] = []
+    try:
+        for op, _arg, _pos in pickletools.genops(io.BytesIO(blob)):
+            if op.name in ("GLOBAL", "STACK_GLOBAL"):
+                mod, name = str(_arg).split(" ", 1) if _arg else ("", "")
+                globals_found.append(f"{mod} {name}")
+    except Exception:  # noqa: BLE001
+        pass
+    hits = [g for g in globals_found if g.split()[0] in (
+        "posix", "nt", "os", "subprocess", "builtins", "__builtin__", "sys", "socket",
+        "shutil", "urllib", "requests", "ctypes", "runpy")]
+    if hits:
+        out.append(_f("A-01", f"Опасный глобал в сжатом pickle ({label})", "critical", 0.9,
+                      "globals: " + ", ".join(sorted(set(hits))[:5]), cat="A"))
+    elif globals_found:
+        out.append(_f("A-19", f"Неизвестные глобалы в сжатом pickle ({label})", "low", 0.4,
+                      ", ".join(sorted(set(globals_found))[:4]), cat="A"))
+    if not out and any(m in blob for m in (b"os.system", b"subprocess", b"eval(")):
+        out.append(_f("A-20", f"Подозрительные строки в сжатом pickle ({label})", "medium", 0.5,
+                      "substrings", cat="A"))
+    _ = text
+    return out
+
+
+def _decompress(path: Path, limit: int = 64 * 1024 * 1024) -> bytes | None:
+    """Распаковка .gz/.bz2/.xz с ограничением (payload может быть сжатым)."""
+    import bz2
+    import gzip
+    import lzma
+    try:
+        with path.open("rb") as fh:
+            raw = fh.read(limit)
+        if path.suffix.lower() == ".gz":
+            return gzip.decompress(raw)[:limit]
+        if path.suffix.lower() == ".bz2":
+            return bz2.decompress(raw)[:limit]
+        if path.suffix.lower() == ".xz":
+            return lzma.decompress(raw)[:limit]
+    except Exception:  # noqa: BLE001
+        return None
+    return None
 
 
 def _scan_html(blob: bytes, label: str) -> list[dict]:
@@ -477,6 +592,9 @@ def _scan_safetensors(blob: bytes, label: str, total_size: int | None = None) ->
     import struct
     out: list[dict] = []
     size = total_size or len(blob)   # при чтении префиксом границы считаем по реальному размеру
+    if blob[:2] in (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05"):
+        return [_f("FMT-02", f"Несоответствие расширения и формата: .safetensors -> pickle ({label})",
+                   "high", 0.8, "pickle magic под расширением safetensors", cat="FMT")]
     if len(blob) < 8:
         return [_f("FMT-01", f"SafeTensors: файл слишком мал ({label})", "medium", 0.5, "len<8", cat="FMT")]
     (hlen,) = struct.unpack("<Q", blob[:8])
@@ -592,6 +710,13 @@ def _scan_zip_extra(path: Path) -> list[dict]:
                               "medium", 0.6, "trailing after zip end", cat="STEG"))
     except Exception:  # noqa: BLE001
         pass
+    seen_names: dict[str, int] = {}
+    for n in names_low:
+        seen_names[n] = seen_names.get(n, 0) + 1
+    dups = sorted(n for n, c in seen_names.items() if c > 1)
+    if dups:
+        out.append(_f("FMT-12", f"Дубликаты записей в архиве ({', '.join(dups[:3])})", "high", 0.7,
+                      "parser differential: разные загрузчики читают разные копии", cat="FMT"))
     total_c = total_u = 0
     for i in zf.infolist():
         total_c += i.compress_size
@@ -610,39 +735,53 @@ def _scan_tar(path: Path) -> list[dict]:
     import tarfile
     out: list[dict] = []
     try:
-        tf = tarfile.open(path)
+        tf = tarfile.open(path, errorlevel=0)
     except Exception:  # noqa: BLE001
         return [_f("FMT-01", "Повреждённый tar-архив", "low", 0.3, str(path.name), cat="FMT")]
     total_u = 0
-    text_members = (".sh", ".bash", ".ps1", ".bat", ".cmd", ".py", ".json", ".yaml", ".yml",
-                    ".txt", ".cfg", ".toml")
-    for m in tf.getmembers():
-        low = m.name.lower()
-        if m.isfile() and low.endswith(text_members) and m.size <= 2 * 1024 * 1024:
+    bomb = False
+    try:
+        member = tf.next()
+        while member is not None:
+            if member.name.startswith("/") or ".." in Path(member.name).parts:
+                out.append(_f("FMT-03", f"Tar: подозрительный путь ({member.name})", "high", 0.8,
+                              "path traversal/absolute", cat="FMT"))
+            if member.issym() or member.islnk():
+                out.append(_f("FMT-05", f"Tar: ссылка/жёсткая ссылка ({member.name})", "high", 0.7,
+                              "symlink/hardlink", cat="FMT"))
+            # текстовые члены архива (скрипты/код/конфиги) — тоже проверяем
+            low = member.name.lower()
+            if member.isfile() and low.endswith((".sh", ".bash", ".ps1", ".bat", ".cmd", ".py",
+                                                 ".json", ".yaml", ".yml", ".txt")) \
+                    and 0 < member.size <= 2 * 1024 * 1024:
+                try:
+                    fh = tf.extractfile(member)
+                    text = _btext(fh.read()) if fh else ""
+                except Exception:  # noqa: BLE001
+                    text = ""
+                if text:
+                    if low.endswith((".sh", ".bash", ".ps1", ".bat", ".cmd")):
+                        out.extend(_scan_script(text, f"{path.name}:{member.name}"))
+                    elif low.endswith(".py"):
+                        out.extend(_scan_python(text, f"{path.name}:{member.name}"))
+                    elif low.endswith(".json"):
+                        out.extend(_scan_json(text, f"{path.name}:{member.name}"))
+                        out.extend(_scan_secrets(text, f"{path.name}:{member.name}"))
+                    else:
+                        out.extend(_scan_secrets(text, f"{path.name}:{member.name}"))
+            total_u += member.size
+            if total_u > 10 * 1024 ** 3:
+                bomb = True
+                break
             try:
-                fh = tf.extractfile(m)
-                text = _btext(fh.read()) if fh else ""
+                member = tf.next()
             except Exception:  # noqa: BLE001
-                text = ""
-            if not text:
-                continue
-            if low.endswith((".sh", ".bash", ".ps1", ".bat", ".cmd")):
-                out.extend(_scan_script(text, f"{path.name}:{m.name}"))
-            elif low.endswith(".py"):
-                out.extend(_scan_python(text, f"{path.name}:{m.name}"))
-            elif low.endswith((".json", ".yaml", ".yml")):
-                if low.endswith(".json"):
-                    out.extend(_scan_json(text, f"{path.name}:{m.name}"))
-        if m.name.startswith("/") or ".." in Path(m.name).parts:
-            out.append(_f("FMT-03", f"Tar: подозрительный путь ({m.name})", "high", 0.8,
-                          "path traversal/absolute", cat="FMT"))
-        if m.issym() or m.islnk():
-            out.append(_f("FMT-05", f"Tar: ссылка/жёсткая ссылка ({m.name})", "high", 0.7,
-                          "symlink/hardlink", cat="FMT"))
-        total_u += m.size
-    if total_u > 10 * 1024 * 1024 * 1024:
+                break            # усечённый архив: заголовки дальше недоступны
+    except Exception:  # noqa: BLE001
+        pass
+    if bomb:
         out.append(_f("FMT-04", "Tar: чрезмерный суммарный размер (bomb)", "medium", 0.5,
-                      f"size={total_u}", cat="FMT"))
+                      f"declared={total_u}", cat="FMT"))
     return out
 
 
@@ -651,6 +790,11 @@ def _scan_xml(blob: bytes, label: str) -> list[dict]:
         return [_f("FMT-06", f"XML: DOCTYPE/ENTITY (XXE) в {label}", "high", 0.75,
                    "doctype/entity", cat="FMT")]
     return []
+
+
+def _scan_json_ext(text: str, label: str) -> list[dict]:
+    """Дополнительно к JSON: утечки секретов и trust_remote_code."""
+    return _scan_secrets(text, label)
 
 
 def _scan_yaml(text: str, label: str) -> list[dict]:
@@ -776,8 +920,8 @@ def detect(path: Path, head: bytes) -> str:
             names = []
         if any(n.endswith("mar-inf/manifest.json") for n in names):
             return "torchserve-mar"
-        if ext == ".keras" or any(n.endswith("config.json") for n in names):
-            return "keras"
+        if ext == ".keras" or any(n.endswith(".weights.h5") for n in names):
+            return "keras"      # Keras 3: config.json + metadata.json + *.weights.h5
         if any(n.startswith("code/") for n in names):
             return "torch-package"
         if any(n == "data.pkl" for n in names):
@@ -799,7 +943,7 @@ def detect(path: Path, head: bytes) -> str:
         return "gguf"
     if ext == ".safetensors":
         return "safetensors"
-    if ext in (".tar", ".tgz", ".gz"):
+    if ext in (".tar", ".tgz") or path.name.lower().endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
         return "tar"
     if ext in CODE_EXT or ext in NOTEBOOK_EXT:
         return "python" if ext not in NOTEBOOK_EXT else "notebook"
@@ -811,6 +955,18 @@ def detect(path: Path, head: bytes) -> str:
         return "tflite"
     if ext in (".mlmodel", ".mlpackage"):
         return "coreml"
+    for magic, kind in UNSUPPORTED_MAGIC.items():
+        if head.startswith(magic):
+            return "unsupported"
+    if ext in (".jsonl", ".ndjson"):
+        return "jsonl"
+    if ext in (".csv", ".tsv"):
+        return "csv"
+    if ext in (".msgpack", ".mpk"):
+        return "msgpack"
+    if ext in COMPRESSED_EXT:
+        # .tar.gz уже отдан в tar выше; всё остальное — сжатый payload
+        return "compressed" if not ext.endswith("tar.gz") else "tar"
     if ext in (".html", ".htm", ".svg"):
         return "html"
     if path.name.lower() in ("dockerfile", "containerfile") or ext == ".dockerfile":
@@ -889,6 +1045,7 @@ def static_scan(path: Path) -> dict:
             blob = _read_bounded(path)
             text = _btext(blob)
             findings.extend(_scan_json(text, path.name))
+            findings.extend(_scan_secrets(text, path.name))
             if path.suffix.lower() in (".yaml", ".yml"):
                 findings.extend(_scan_yaml(text, path.name))
             if path.suffix.lower() == ".json":
@@ -902,7 +1059,9 @@ def static_scan(path: Path) -> dict:
                         findings.extend(_scan_tokenizer(data, path.name))
                     findings.extend(_scan_tools(data, path.name))
         elif fmt == "card":
-            findings.extend(_scan_card(_btext(_read_bounded(path)), path.name))
+            card_text = _btext(_read_bounded(path))
+            findings.extend(_scan_card(card_text, path.name))
+            findings.extend(_scan_secrets(card_text, path.name))
         elif fmt == "notebook":
             findings.extend(_scan_notebook(_read_bounded(path), path.name))
         elif fmt == "script":
@@ -915,11 +1074,36 @@ def static_scan(path: Path) -> dict:
             findings.extend(_scan_flatbuffer_ops(_read_bounded(path), path.name, "CoreML"))
         elif fmt == "pmml":
             findings.extend(_scan_xml(_read_bounded(path), path.name))
+            findings.extend(_scan_secrets(_btext(_read_bounded(path)), path.name))
             findings.extend(_scan_pmml(_btext(_read_bounded(path)), path.name))
         elif fmt == "savedmodel":
             findings.extend(_scan_savedmodel(_read_bounded(path), path.name))
         elif fmt == "jinja":
             findings.extend(_scan_jinja(_btext(_read_bounded(path)), path.name))
+        elif fmt == "jsonl":
+            findings.extend(_scan_jsonl(_read_bounded(path), path.name))
+        elif fmt == "csv":
+            findings.extend(_scan_csv(_read_bounded(path), path.name))
+        elif fmt == "msgpack":
+            findings.extend(_scan_msgpack(_read_bounded(path), path.name))
+        elif fmt == "compressed":
+            inner = _decompress(path)
+            if inner is None:
+                findings.append(_f("FMT-01", f"Не удалось распаковать {path.suffix} ({path.name})",
+                                   "low", 0.4, "decompress error", cat="FMT"))
+            else:
+                import io as _io
+                inner_fmt = detect(Path(path.name[:-len(path.suffix)]), inner[:4096])
+                if inner[:2] in (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05") or \
+                        inner_fmt in ("pickle", "torch", "joblib", "numpy", "unknown"):
+                    findings.extend(_scan_compressed_pickle(inner, path.name))
+                elif inner[:4] == b"PK\x03\x04":
+                    findings.extend(_scan_nested_archive(inner, path.name))
+                else:
+                    findings.extend(_scan_python(_btext(inner), path.name))
+        elif fmt == "unsupported":
+            findings.append(_f("FMT-01", f"Контейнер не поддерживается для разбора ({path.name})",
+                               "low", 0.3, "7z/rar/zstd: разбор невозможен", cat="FMT"))
         elif fmt == "html":
             findings.extend(_scan_html(_read_bounded(path), path.name))
         elif fmt == "dockerfile":

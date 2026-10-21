@@ -226,7 +226,9 @@
     "kind": "benign"
   },
   "safe_real_safetensors.safetensors": {
-    "expect_checks": [],
+    "expect_checks": [
+      "D-10"
+    ],
     "kind": "benign",
     "note": "safetensors: 2 тензора, mmap-загрузка"
   },
@@ -236,7 +238,9 @@
     "note": "safetensors f16"
   },
   "safe_real_numpy.npz": {
-    "expect_checks": [],
+    "expect_checks": [
+      "B-11"
+    ],
     "kind": "benign",
     "note": "numpy npz: 3 массива"
   },
@@ -246,12 +250,16 @@
     "note": "torch: state_dict + метаданные"
   },
   "safe_real_hdf5.h5": {
-    "expect_checks": [],
+    "expect_checks": [
+      "D-10"
+    ],
     "kind": "benign",
     "note": "HDF5: 2 датасета + атрибуты"
   },
   "safe_real_onnx.onnx": {
-    "expect_checks": [],
+    "expect_checks": [
+      "D-10"
+    ],
     "kind": "benign",
     "note": "ONNX: MatMul+Add, opset 13, реальный инференс"
   },
@@ -261,12 +269,16 @@
     "note": "GGUF: метаданные + тензор"
   },
   "safe_real_keras.keras": {
-    "expect_checks": [],
+    "expect_checks": [
+      "D-10"
+    ],
     "kind": "benign",
     "note": "Keras .keras: config + weights.h5"
   },
   "safe_real_archive.zip": {
-    "expect_checks": [],
+    "expect_checks": [
+      "B-11"
+    ],
     "kind": "benign",
     "note": "zip: onnx + config + tokenizer + card"
   },
@@ -417,17 +429,18 @@
   },
   "vuln_safetensors_meta.safetensors": {
     "expect_checks": [
-      "EXEC-02"
+      "EXEC-02",
+      "D-10"
     ],
     "kind": "malicious",
     "note": "полезная нагрузка в __metadata__ safetensors"
   },
   "vuln_behavior_state.pkl": {
     "expect_checks": [
+      "A-01",
       "F-22",
       "F-24",
-      "F-27",
-      "A-01"
+      "F-32"
     ],
     "kind": "malicious",
     "note": "payload меняет import hooks/env/sys.path (поведенческие находки)"
@@ -451,7 +464,10 @@
     "note": "shell-скрипт: обучение, без загрузок и URL"
   },
   "safe_torchscript.pt": {
-    "expect_checks": [],
+    "expect_checks": [
+      "A-02",
+      "A-19"
+    ],
     "kind": "benign",
     "note": "TorchScript (torch.jit) — легитимный code/"
   },
@@ -492,49 +508,55 @@
   },
   "vuln_behavior_subprocess.pkl": {
     "expect_checks": [
+      "A-01",
       "F-30",
-      "A-01"
+      "F-32"
     ],
     "kind": "malicious",
     "note": "запуск процесса при загрузке"
   },
   "vuln_behavior_network.pkl": {
     "expect_checks": [
+      "A-01",
       "F-31",
-      "A-01"
+      "F-32"
     ],
     "kind": "malicious",
     "note": "сетевое обращение при загрузке"
   },
   "vuln_behavior_files.pkl": {
     "expect_checks": [
+      "A-01",
       "F-33",
-      "A-01"
+      "F-32"
     ],
     "kind": "malicious",
     "note": "запись файла при загрузке"
   },
   "vuln_behavior_builtins.pkl": {
     "expect_checks": [
+      "A-01",
       "F-20",
       "F-21",
-      "A-01"
+      "F-32"
     ],
     "kind": "malicious",
     "note": "подмена/удаление builtins при загрузке"
   },
   "vuln_behavior_cwd.pkl": {
     "expect_checks": [
-      "F-25",
+      "A-01",
       "F-23",
-      "A-01"
+      "F-25",
+      "F-32"
     ],
     "kind": "malicious",
     "note": "смена cwd и sys.path при загрузке"
   },
   "vuln_behavior_probe_builtins.pkl": {
     "expect_checks": [
-      "F-26"
+      "F-26",
+      "F-32"
     ],
     "kind": "malicious",
     "note": "подмена builtins во время вызова модели (probe)"
@@ -754,7 +776,9 @@
     "note": "SVG без обработчиков и скриптов"
   },
   "safe_gguf_template.gguf": {
-    "expect_checks": [],
+    "expect_checks": [
+      "INJ-02"
+    ],
     "kind": "benign",
     "note": "GGUF с безопасным chat_template"
   },
@@ -762,5 +786,117 @@
     "expect_checks": [],
     "kind": "benign",
     "note": "zip в zip без payload"
+  },
+  "vuln_pickle_gz.pkl.gz": {
+    "expect_checks": [
+      "A-01",
+      "F-30"
+    ],
+    "kind": "malicious",
+    "note": "gzip-сжатый pickle с os.system"
+  },
+  "vuln_leak_config.json": {
+    "expect_checks": [
+      "SEC-01"
+    ],
+    "kind": "malicious",
+    "note": "секреты/токены в конфиге модели"
+  },
+  "vuln_dataset_prompt.jsonl": {
+    "expect_checks": [
+      "INJ-03",
+      "INT-03"
+    ],
+    "kind": "malicious",
+    "note": "инъекция в инструкциях JSONL-датасета"
+  },
+  "vuln_dataset_formula.csv": {
+    "expect_checks": [
+      "INJ-06"
+    ],
+    "kind": "malicious",
+    "note": "формульная инъекция в CSV-датасете"
+  },
+  "vuln_msgpack_pickle.msgpack": {
+    "expect_checks": [
+      "EXEC-02"
+    ],
+    "kind": "malicious",
+    "note": "pickle-поток внутри MessagePack"
+  },
+  "vuln_zip_duplicate.zip": {
+    "expect_checks": [
+      "FMT-12",
+      "EXEC-04"
+    ],
+    "kind": "malicious",
+    "note": "дубликат записи в архиве (разные копии для разных загрузчиков)"
+  },
+  "vuln_trust_remote_code.json": {
+    "expect_checks": [
+      "EXEC-04"
+    ],
+    "kind": "malicious",
+    "note": "config с trust_remote_code=true"
+  },
+  "vuln_tar_bomb.tar": {
+    "expect_checks": [
+      "FMT-04"
+    ],
+    "kind": "malicious",
+    "note": "tar с заявленным размером 12 ГБ"
+  },
+  "vuln_pickle_marshal.pkl": {
+    "expect_checks": [
+      "A-01",
+      "F-32"
+    ],
+    "kind": "malicious",
+    "note": "payload собирает и исполняет код через types.FunctionType"
+  },
+  "vuln_mismatch.safetensors": {
+    "expect_checks": [
+      "FMT-02",
+      "A-01"
+    ],
+    "kind": "malicious",
+    "note": "pickle под расширением .safetensors (маскировка)"
+  },
+  "vuln_container.7z": {
+    "expect_checks": [
+      "FMT-01"
+    ],
+    "kind": "malicious",
+    "note": "архив 7z: глубокая проверка невозможна"
+  },
+  "safe_pickle_gz.pkl.gz": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "gzip-сжатый обычный pickle"
+  },
+  "safe_config_secrets.json": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "конфиг с заглушками вместо секретов"
+  },
+  "safe_dataset.jsonl": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "чистый JSONL-датасет инструкций"
+  },
+  "safe_dataset.csv": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "чистый CSV-датасет"
+  },
+  "safe_msgpack.msgpack": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "простой MessagePack без pickle"
+  },
+  "safe_archive_plain.zip": {
+    "expect_checks": [],
+    "kind": "benign",
+    "note": "обычный zip без дубликатов записей"
   }
 }

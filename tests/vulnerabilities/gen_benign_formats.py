@@ -452,6 +452,32 @@ def gen_wave6_benign() -> None:
     add("safe_nested_zip.zip", outer.getvalue(), "zip в zip без payload")
 
 
+
+def gen_wave7_benign() -> None:
+    """Волна 7: benign-версии сжатых payload'ов, секретов-заглушек, датасетов, msgpack и zip."""
+    import gzip as _gzip
+    import pickle as _pkl
+
+    add("safe_pickle_gz.pkl.gz", _gzip.compress(_pkl.dumps({"weights": [1.0, 2.0]})),
+        "gzip-сжатый обычный pickle")
+    add("safe_config_secrets.json",
+        json.dumps({"model": "demo", "api_key": "REPLACE_WITH_YOUR_KEY",
+                    "region": "eu-west-1"}).encode(),
+        "конфиг с заглушками вместо секретов")
+    add("safe_dataset.jsonl",
+        (json.dumps({"instruction": "Summarise the text", "input": "hello", "output": "hi"}) + "\n")
+        .encode(), "чистый JSONL-датасет инструкций")
+    add("safe_dataset.csv", b"id,value,label\n1,0.5,cat\n2,0.7,dog\n",
+        "чистый CSV-датасет")
+    add("safe_msgpack.msgpack", b"\x81\xa4name\xa5model", "простой MessagePack без pickle")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("model/config.json", json.dumps({"hidden_size": 4}))
+        z.writestr("model/weights.bin", b"\x00" * 32)
+        z.writestr("README.md", "# Demo\n")
+    add("safe_archive_plain.zip", buf.getvalue(), "обычный zip без дубликатов записей")
+
+
 # --------------------------------------------------------------------------
 # Крупные корректные примеры (по умолчанию не сохраняются в репозиторий)
 # --------------------------------------------------------------------------
@@ -536,6 +562,7 @@ def main() -> int:
     gen_extra_formats()
     gen_wave5_benign()
     gen_wave6_benign()
+    gen_wave7_benign()
     if args.large_mb:
         print("== крупные корректные примеры")
         gen_large(args.large_mb)

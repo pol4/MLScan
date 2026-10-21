@@ -130,6 +130,17 @@ considered complete**:
 * the scan record stores a structured `coverage` field (`modules`, `failed`, `complete`) which is
   shown as a banner on the artifact card and included in the reports (JSON/Markdown).
 
+Wave 7 added compressed payloads and datasets: **`.gz/.bz2/.xz`** are decompressed (64 MB cap) and
+dispatched by content — a pickle inside gzip is genuinely deserialised in the sandbox (behaviour is
+preserved), text `protocol 0` is recognised by opcodes, and a nested zip is processed recursively;
+**JSONL** (`INJ-03`) and **CSV/TSV** (`INJ-06` — formula injections `=cmd|.../HYPERLINK/DDE`);
+**MessagePack** (a pickle stream inside → `EXEC-02`); **secret leaks** in configs, cards and
+datasets (`SEC-01`: AWS keys, private keys, HF/GitHub/Slack tokens); **duplicate archive entries**
+(`FMT-12` — parser differential); **tar bombs** by declared size (`FMT-04`); **extension mismatch**
+(`FMT-02`); **unsupported containers** (7z/rar/zstd) are explicitly reported as "cannot be parsed"
+with incomplete coverage. Fixed along the way: an archive containing `config.json` is no longer
+treated as Keras, and `.gz` is no longer treated as a tar archive.
+
 Wave 6 added documents and build artifacts: **HTML/SVG** inside a model package (`INJ-05` —
 XSS on card render; the `www.w3.org` namespace is not treated as an external source),
 **Dockerfile/Containerfile** (`EXEC-02` — download-and-execute at image build time), **GGUF with a

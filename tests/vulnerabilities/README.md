@@ -148,9 +148,30 @@ ML-пайплайнах и редко проверяются сканерами:
 Вложенные архивы разбираются рекурсивно (до 2 уровней), поэтому payload не может спрятаться
 «на втором дне» zip. Namespace-декларации `www.w3.org` не считаются внешними источниками.
 
+## «Волна 7»: сжатые payload'ы, датасеты, утечки секретов, дубликаты и битые сценарии
+
+| Вектор | Вредоносный пример | Безопасный пример |
+|--------|--------------------|-------------------|
+| Сжатый payload (`.gz/.bz2/.xz`) | `vuln_pickle_gz.pkl.gz` (`A-01`, `F-30`) | `safe_pickle_gz.pkl.gz` |
+| Утечка секретов/токенов | `vuln_leak_config.json` (`SEC-01`) | `safe_config_secrets.json` (заглушки) |
+| JSONL-датасет с инъекцией | `vuln_dataset_prompt.jsonl` (`INJ-03`, `INT-03`) | `safe_dataset.jsonl` |
+| CSV-датасет с формульной инъекцией | `vuln_dataset_formula.csv` (`INJ-06`) | `safe_dataset.csv` |
+| MessagePack с pickle-потоком | `vuln_msgpack_pickle.msgpack` (`EXEC-02`) | `safe_msgpack.msgpack` |
+| Дубликаты записей в архиве (parser differential) | `vuln_zip_duplicate.zip` (`FMT-12`, `EXEC-04`) | `safe_archive_plain.zip` |
+| `trust_remote_code` в конфиге | `vuln_trust_remote_code.json` (`EXEC-04`) | — |
+| Tar-bomb (заявленный размер 12 ГБ) | `vuln_tar_bomb.tar` (`FMT-04`) | — |
+| Payload через `types.FunctionType` | `vuln_pickle_marshal.pkl` (`A-01`, `F-32`) | — |
+| Маскировка формата (pickle как `.safetensors`) | `vuln_mismatch.safetensors` (`FMT-02`) | — |
+| Неподдерживаемый контейнер (7z) | `vuln_container.7z` (`FMT-01` — честное «проверить нельзя») | — |
+
+Новые проверки: `SEC-01` (секреты/токены в артефакте), `INJ-06` (формульная инъекция в CSV),
+`FMT-12` (дубликаты записей в архиве). Сжатые payload'ы распаковываются (с ограничением) и
+разбираются по содержимому: pickle внутри gzip **действительно исполняется** в песочнице, поэтому
+поведенческие находки (`F-30` и др.) сохраняются; текст `protocol 0` распознаётся отдельно.
+
 ## Доброкачественные примеры сложных форматов
 
-Кроме образцов с закладками корпус содержит **48 безопасных** примеров (`safe_*`) в 39 форматах, в том числе
+Кроме образцов с закладками корпус содержит **54 безопасных** примера (`safe_*`) в 45 форматах, в том числе
 реальные файлы сложных форматов: safetensors (f32/f16), numpy `.npz`, torch `.pt`, HDF5 `.h5`,
 ONNX (MatMul+Add, opset 13), GGUF, Keras `.keras` (zip: `config.json` + `weights.h5`),
 архивы `.zip`/`.tar.gz`, joblib/dill/cloudpickle, tokenizer.json, MCP-манифест, YAML/XML-конфиги,
