@@ -114,6 +114,29 @@ and scan progress is mirrored into the DB. On startup the service marks interrup
 Historical records are linked to artifacts (`scans.artifact_id`) by
 `deploy/v2/db/backfill_scans.py`.
 
+**Coverage completeness (always taken into account in the verdict).** There are three
+verification modules: static (L1), dynamic (L2, load/execution in the sandbox) and behaviour
+(L3, probe). A module counts as executed only if it ran **without errors**: static — no
+exception; dynamic — the Job is `succeeded` **and** the model loaded (`load.ok`); behaviour —
+the object is loaded and the probe completed. If a module could not run (missing dependency,
+insufficient resources, timeout, corrupted file, sandbox did not start), the result is **not
+considered complete**:
+
+* a `Safe`/`Needs review` verdict is replaced by **`Inconclusive`**, with the reason
+  "not all verification modules could run (dynamic analysis: <reason>; behaviour: <reason>);
+  partial result: <what was found>";
+* if the partial data **already proves** danger (`critical`/`high` or hard dynamic signals),
+  the verdict is kept, but the reason gets "incomplete scan (<modules>)";
+* the scan record stores a structured `coverage` field (`modules`, `failed`, `complete`) which is
+  shown as a banner on the artifact card and included in the reports (JSON/Markdown).
+
+The per-module reason comes from the sandbox: e.g.
+`pickle.loads: ModuleNotFoundError: No module named 'mymod'` (model not loaded) or
+`формат safetensors не является pickle; динамика не применима`. The logic lives in
+`poc.coverage_of()` and `poc.decide()`; the sandbox harness is distributed as the
+`mlscan-harness` ConfigMap (`deploy/stage1/gen_configmaps.py` — **regenerate it whenever
+`HARNESS_SRC` changes**).
+
 ### 2.4 `mlscan-analytics` — analytics engine + UI (Component 3)
 
 | Object | Type | Purpose |

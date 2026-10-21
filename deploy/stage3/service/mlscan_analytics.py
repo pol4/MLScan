@@ -429,6 +429,9 @@ def stats() -> dict:
 # ----------------------------------------------------------------------------
 # Отчёты
 # ----------------------------------------------------------------------------
+_MODULE_LABELS = {"static": "статика", "dynamic": "динамика", "behavior": "поведение"}
+
+
 def report_md(rec: dict, lang: str = "ru") -> str:
     L = [f"# {T('report.title', lang, name=rec.get('name'))}", ""]
     L.append(f"- **{T('report.scan_id', lang)}:** `{rec.get('scan_id')}`")
@@ -443,6 +446,12 @@ def report_md(rec: dict, lang: str = "ru") -> str:
         L.append(f"- **{T('report.timings', lang)}:** {rec['timings']}")
     if rec.get("service_reason"):
         L.append(f"- **{T('art.reason', lang)}:** {TR(rec.get('service_reason'), lang)}")
+    cov = rec.get("coverage") or {}
+    if cov and cov.get("complete") is False:
+        L.append(f"- **{T('art.coverage_incomplete', lang)}:** " + "; ".join(
+            f"{TR(_MODULE_LABELS.get(k, k), lang)}: "
+            f"{TR((cov.get('modules') or {}).get(k, {}).get('reason'), lang)}"
+            for k in (cov.get("failed") or [])))
     L.append("")
     L.append(f"## {T('report.findings', lang)}")
     L.append("")
@@ -498,6 +507,7 @@ h1{font-size:18px;margin:0} a{color:#6cb6ff;text-decoration:none}
 main{padding:24px} .cards{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px}
 .card{background:#161a23;border:1px solid #232a36;border-radius:10px;padding:14px 18px;min-width:130px}
 .card .n{font-size:24px;font-weight:700} .card .l{color:#9aa4b2;font-size:12px;text-transform:uppercase}
+.warn{background:#3a2a12;border:1px solid #8a6d1f;border-radius:10px;padding:12px 16px;margin:14px 0;font-size:14px}
 table{border-collapse:collapse;width:100%} th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #232a36;font-size:14px}
 th{color:#9aa4b2;font-weight:600} code{background:#1d2330;padding:1px 5px;border-radius:4px}
 .v-Malicious{color:#ff6b6b}.v-Dangerous{color:#ffb057}.v-Needs{color:#ffd166}.v-Safe{color:#5dd39e}.v-Inconclusive{color:#9aa4b2}
@@ -513,22 +523,32 @@ input[type=file]{color:#e6e6e6} button{background:#3d7dd8;color:#fff;border:0;bo
 </style>"""
 
 
+def _with_lang(path: str, code: str) -> str:
+    """Текущий путь с ЗАМЕНОЙ параметра lang (чтобы не дублировать ?lang=en&lang=ru)."""
+    parts = urllib.parse.urlsplit(path or "/")
+    q = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+         if k != "lang"]
+    q.append(("lang", code))
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path or "/",
+                                    urllib.parse.urlencode(q), parts.fragment))
+
+
 def _lang_switch(lang: str, next_path: str = "/") -> str:
-    """Переключатель языка: RU | EN (cookie mlscan_lang)."""
-    nxt = urllib.parse.quote(next_path or "/")
+    """Переключатель языка: RU | EN (cookie mlscan_lang + параметр ?lang как фолбэк)."""
     parts = []
     for code in ("ru", "en"):
         label = "RU" if code == "ru" else "EN"
         if code == lang:
             parts.append(f"<b>{label}</b>")
         else:
+            nxt = urllib.parse.quote(_with_lang(next_path, code))
             parts.append(f"<a href='/lang?set={code}&next={nxt}'>{label}</a>")
     return (f"<span style='margin-left:auto;color:#9aa4b2;font-size:12px'>"
             f"{T('nav.language', lang)}: " + " | ".join(parts) + "</span>")
 
 
 def _page(title: str, body: str, script: str = "", lang: str = "ru",
-          subject: str = "anonymous", roles: list | None = None) -> bytes:
+          subject: str = "anonymous", roles: list | None = None, path: str = "/") -> bytes:
     roles = roles or []
     extra = ("<a href='/settings'>" + T("settings.title", lang) + "</a>") if "admin" in roles else ""
     return (f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>"
@@ -538,7 +558,7 @@ def _page(title: str, body: str, script: str = "", lang: str = "ru",
             f"<a href='/api/overview'>{T('nav.json', lang)}</a>"
             f"<a href='/api/evidence/verify'>{T('nav.evidence', lang)}</a>"
             f"<a href='/policy'>{T('nav.policy', lang)}</a>{extra}"
-            f"{_lang_switch(lang)}</header><main>{body}</main>{script}</body></html>").encode()
+            f"{_lang_switch(lang, path)}</header><main>{body}</main>{script}</body></html>").encode()
 
 
 def _js(lang: str) -> str:
@@ -643,7 +663,7 @@ def _login_page(error: str = "", lang: str = "ru") -> bytes:
     return _page(T("login.title", lang), body, lang=lang)
 
 
-def ui_index(lang: str = "ru", roles: list | None = None) -> bytes:
+def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> bytes:
     body = ("<div class='cards' id='cards'></div>"
             f"<form class='upload' id='f'><b>{T('dash.upload', lang)}</b><br><br>"
             f"<input type='file' name='file'> <button type='submit'>{T('dash.upload_btn', lang)}</button>"
@@ -675,11 +695,11 @@ def ui_index(lang: str = "ru", roles: list | None = None) -> bytes:
             f"<th>{T('dash.col.score', lang)}</th><th>{T('dash.col.action', lang)}</th></tr></thead>"
             f"<tbody id='rows'><tr><td colspan='8' style='color:#9aa4b2'>"
             f"{T('dash.loading', lang)}</td></tr></tbody></table>")
-    return _page(T("ui.overview", lang), body, _js(lang), lang=lang, roles=roles)
+    return _page(T("ui.overview", lang), body, _js(lang), lang=lang, roles=roles, path=path)
 
 
 def ui_settings(lang: str = "ru", current: str = "ru", message: str = "",
-                roles: list | None = None) -> bytes:
+                roles: list | None = None, path: str = "/") -> bytes:
     opts = "".join(
         f"<option value='{c}'{' selected' if c == current else ''}>{T(f'nav.lang_{c}', lang)}</option>"
         for c in ("ru", "en"))
@@ -690,10 +710,11 @@ def ui_settings(lang: str = "ru", current: str = "ru", message: str = "",
             f"<b>{T('settings.language', lang)}:</b>"
             f"<select name='lang' style='padding:8px'>{opts}</select>"
             f"<button type='submit'>{T('settings.save', lang)}</button></form>")
-    return _page(T("settings.title", lang), body, lang=lang, roles=roles)
+    return _page(T("settings.title", lang), body, lang=lang, roles=roles, path=path)
 
 
-def ui_artifact(sid: str, lang: str = "ru", roles: list | None = None) -> bytes | None:
+def ui_artifact(sid: str, lang: str = "ru", roles: list | None = None,
+                path: str = "/") -> bytes | None:
     rec = _index.get(sid)
     live = progress_of(sid)
     if not rec:
@@ -718,7 +739,7 @@ def ui_artifact(sid: str, lang: str = "ru", roles: list | None = None) -> bytes 
                      f"({live.get('progress')}%)</p>"
                      f"<div class='pbar'><span style='width:{live.get('progress',0)}%'></span></div>"
                      f"<p style='color:#9aa4b2'>{T('art.auto_refresh', lang)}</p>",
-                     js, lang=lang, roles=roles)
+                     js, lang=lang, roles=roles, path=path)
     v = rec.get("verdict", "")
     rows = "".join(
         f"<tr><td>{f['level']}</td><td>{f['check_id']}</td><td>{f['severity']}</td>"
@@ -741,6 +762,16 @@ def ui_artifact(sid: str, lang: str = "ru", roles: list | None = None) -> bytes 
             f"<table><tr><th>{T('art.col.level', lang)}</th><th>{T('art.col.id', lang)}</th>"
             f"<th>Severity</th><th>{T('art.col.conf', lang)}</th><th>{T('art.col.finding', lang)}</th>"
             f"<th>{T('art.col.evidence', lang)}</th></tr>" + rows + "</table>")
+    cov = (live or {}).get("coverage") or (rec or {}).get("coverage") or {}
+    if cov and cov.get("complete") is False:
+        det = "; ".join(
+            f"{TR(_MODULE_LABELS.get(k, k), lang)}: {TR((cov.get('modules') or {}).get(k, {}).get('reason'), lang)}"
+            if (cov.get("modules") or {}).get(k, {}).get("reason")
+            else TR(_MODULE_LABELS.get(k, k), lang)
+            for k in (cov.get("failed") or []))
+        body += (f"<div class='warn'><b>{T('art.coverage_incomplete', lang)}</b><br>"
+                 f"{_esc(det)}<br>"
+                 f"<span style='color:#9aa4b2'>{T('art.coverage_hint', lang)}</span></div>")
     sb = (live or {}).get("sandbox") or {}
     if sb:
         load = sb.get("load") or {}
@@ -754,7 +785,7 @@ def ui_artifact(sid: str, lang: str = "ru", roles: list | None = None) -> bytes 
         if errs:
             body += (f"<p>{T('art.dyn.errors', lang)}:<br>"
                      + "".join(f"<code>{_esc(TR(e, lang))}</code><br>" for e in errs[:5]) + "</p>")
-    return _page(rec.get("name", "artifact"), body, lang=lang, roles=roles)
+    return _page(rec.get("name", "artifact"), body, lang=lang, roles=roles, path=path)
 
 
 # ----------------------------------------------------------------------------
@@ -778,7 +809,8 @@ class Handler(BaseHTTPRequestHandler):
         """Язык запроса: ?lang= → cookie mlscan_lang → X-MLScan-Lang → глобальная настройка."""
         if i18n is None:
             return "ru"
-        return i18n.resolve(headers=self.headers, query=query, cookie=self._cookie("mlscan_lang"))
+        return i18n.resolve(headers=self.headers, query=query,
+                            cookie=self.headers.get("Cookie"))
 
     def _require(self):
         """Аутентификация на входе: API-ключ из заголовка или cookie (после /login)."""
@@ -810,6 +842,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # страницы и API не кэшируются: иначе переключение языка/данные «залипают»
+        self.send_header("Cache-Control", "no-store, must-revalidate")
         if rid:
             self.send_header("X-Request-ID", rid)
         self.end_headers()
@@ -875,7 +909,7 @@ class Handler(BaseHTTPRequestHandler):
                 nxt = "/"
             self.send_response(302)
             self.send_header("Set-Cookie",
-                             f"mlscan_lang={code}; Path=/; Max-Age=31536000; SameSite=Lax{_cookie_attr()}")
+                             f"mlscan_lang={code}; Path=/; Max-Age=31536000; SameSite=Lax")
             self.send_header("Location", nxt)
             self.end_headers()
             return
@@ -898,8 +932,8 @@ class Handler(BaseHTTPRequestHandler):
                                                    roles=getattr(self, "_roles", [])),
                                   "text/html; charset=utf-8")
             msg = T("settings.saved", lang, lang=cur) if q.get("saved") else ""
-            return self._send(200, ui_settings(lang, cur, msg, roles=getattr(self, "_roles", [])),
-                              "text/html; charset=utf-8")
+            return self._send(200, ui_settings(lang, cur, msg, roles=getattr(self, "_roles", []),
+                                               path=self.path), "text/html; charset=utf-8")
         if p == "/api/scans":
             return self._json(200, {"scans": list(_index.values())})
         if p == "/api/overview":
@@ -933,9 +967,11 @@ class Handler(BaseHTTPRequestHandler):
                                   "application/json; charset=utf-8")
             return self._json(404, {"error": T("msg.unknown_format", lang)})
         if p == "/":
-            return self._send(200, ui_index(lang, roles=getattr(self, "_roles", [])), "text/html; charset=utf-8")
+            return self._send(200, ui_index(lang, roles=getattr(self, "_roles", []),
+                                           path=self.path), "text/html; charset=utf-8")
         if p.startswith("/artifact/"):
-            html = ui_artifact(p.split("/", 2)[2], lang, roles=getattr(self, "_roles", []))
+            html = ui_artifact(p.split("/", 2)[2], lang, roles=getattr(self, "_roles", []),
+                               path=self.path)
             return self._send(200, html, "text/html; charset=utf-8") if html else self._send(404, b"not found", "text/plain")
         return self._json(404, {"error": T("msg.not_found", lang)})
 
@@ -963,7 +999,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"language": applied})
             self.send_response(302)
             self.send_header("Set-Cookie",
-                             f"mlscan_lang={applied}; Path=/; Max-Age=31536000; SameSite=Lax{_cookie_attr()}")
+                             f"mlscan_lang={applied}; Path=/; Max-Age=31536000; SameSite=Lax")
             self.send_header("Location", "/settings?saved=1")
             self.end_headers()
             return

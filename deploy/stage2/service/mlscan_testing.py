@@ -465,8 +465,13 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
         update(scan_id, stage="collecting", progress=90)
         findings = normalize(scan_id, rec.get("sha256", ""), static, dynamic)
         verdict, reason = mlscan_poc.decide(static, dynamic)
+        # полнота покрытия: какие модули реально отработали (см. poc.coverage_of)
+        coverage = mlscan_poc.coverage_of(static, dynamic)
+        if not coverage.get("complete"):
+            print(f"[testing] {scan_id}: неполное покрытие — {coverage.get('failed')}", file=sys.stderr)
         update(scan_id, state="done", stage="done", progress=100, verdict=verdict, reason=reason,
-               findings=findings, static=static, sandbox=dynamic, timings=timings)
+               findings=findings, static=static, sandbox=dynamic, timings=timings,
+               coverage=coverage)
         if DB_ENABLED:
             import json as _json
             db_exec("INSERT INTO scans(scan_id,status,stage,progress,verdict,reason,timings,finished_at) VALUES "
@@ -482,8 +487,12 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
                         f"{_lit(f.get('severity'))},{f.get('confidence') if f.get('confidence') is not None else 'NULL'},"
                         f"{_lit(f.get('title'))},{ev_sql})")
     except Exception as exc:  # noqa: BLE001
+        detail = f"{type(exc).__name__}: {exc}"
         update(scan_id, state="error", stage="error", progress=100, verdict="Inconclusive",
-               reason=f"ошибка сервиса тестирования: {type(exc).__name__}: {exc}", timings=timings)
+               reason=f"ошибка сервиса тестирования: {detail}", timings=timings,
+               coverage={"complete": False, "failed": ["static", "dynamic", "behavior"],
+                         "modules": {m: {"ok": False, "reason": f"ошибка сервиса тестирования: {detail}"}
+                                     for m in ("static", "dynamic", "behavior")}})
 
 
 # ----------------------------------------------------------------------------

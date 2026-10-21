@@ -149,6 +149,14 @@ execution: **PyTorch (CPU), numpy, safetensors, onnxruntime, h5py, gguf, joblib,
 cloudpickle** — so models in pickle, torch, numpy and model-as-code formats are actually loaded
 and executed.
 
+**An honest verdict when the scan is incomplete.** There are three modules (static L1, dynamic L2,
+behaviour L3). If a module could not run — the model failed to load (missing dependency),
+resources were insufficient, a timeout, the sandbox did not start — the result is not considered
+complete: instead of `Safe` the system returns **`Inconclusive`** with the reason "not all
+verification modules could run (dynamic analysis: `No module named 'mymod'`); partial result: …"
+and a banner on the card. If the partial data already proves danger, the verdict is kept but
+marked as incomplete.
+
 ### Analysis methods
 
 - **L1 static** — without execution: pickle opcodes/globals, structural format parsing, references
@@ -192,6 +200,12 @@ name and result, sorting by date/volume, a table with SHA-256, size, scan progre
 score and policy action:
 
 ![MLScan UI — dashboard](docs/img/en/ui-dashboard.png)
+
+**Incomplete scan card** — a model the dynamic stage could not load (module `mymod` is missing):
+verdict **Inconclusive** instead of a false `Safe`, the banner "The scan is incomplete" and the
+partial result:
+
+![MLScan UI — incomplete scan](docs/img/en/ui-incomplete-scan.png)
 
 **Artifact card** — the largest scanned model: the torch model `pytorch_model.pt` of
 **268,470,293 bytes (≈256 MiB)**. Visible are SHA-256, size, timings (static 0.42 s / sandbox

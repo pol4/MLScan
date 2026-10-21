@@ -1,6 +1,6 @@
 # Отчёт: проверка системы на синтетическом корпусе уязвимостей
 
-- Дата: 2026-10-21 17:40:00
+- Дата: 2026-10-21 18:56:56
 - Образцов: 38 (malicious=33, benign=5)
 - **Обнаружено (malicious): 33/33**
 - **Пропущено: 0**
@@ -8,11 +8,11 @@
 
 | Образец | Тип | Ожидаемые чек-иды | Результат | Вердикт (сервис) | Policy | State | Найдено |
 |---------|-----|-------------------|-----------|------------------|--------|-------|---------|
-| safe_card.md | benign | — | OK | Safe | Safe/allow | done | A-00 |
-| safe_config.json | benign | — | OK | Safe | Safe/allow | done | A-00 |
-| safe_image.png | benign | — | OK | Safe | Safe/allow | done | A-00 |
+| safe_card.md | benign | — | OK | Inconclusive | Safe/allow | done | A-00 |
+| safe_config.json | benign | — | OK | Inconclusive | Safe/allow | done | A-00 |
+| safe_image.png | benign | — | OK | Inconclusive | Safe/allow | done | A-00 |
 | safe_pickle_state.pkl | benign | — | OK | Safe | Safe/allow | done | — |
-| safe_safetensors.safetensors | benign | — | OK | Safe | Safe/allow | done | D-10 |
+| safe_safetensors.safetensors | benign | — | OK | Inconclusive | Safe/allow | done | D-10 |
 | vuln_auto_map.json | malicious | EXEC-04 | OK | Dangerous | Malicious/block | done | A-00, EXEC-04 |
 | vuln_gguf.gguf | malicious | INJ-01 | OK | Dangerous | Malicious/block | done | A-00, INJ-01 |
 | vuln_hdf5.h5 | malicious | EXEC-05, EXEC-07 | OK | Dangerous | Malicious/block | done | D-10, EXEC-05, EXEC-07 |
@@ -32,8 +32,8 @@
 | vuln_prompt_card.md | malicious | INJ-03 | OK | Dangerous | Malicious/block | done | A-00, A-20, INJ-03 |
 | vuln_safetensors_nan.safetensors | malicious | BD-01 | OK | Dangerous | Needs review/quarantine | done | BD-01, D-10 |
 | vuln_safetensors_overlap.safetensors | malicious | FMT-02 | OK | Dangerous | Needs review/quarantine | done | D-10, FMT-02 |
-| vuln_safetensors_trailing.safetensors | malicious | FMT-11 | OK | Needs review | Needs review/quarantine | done | D-10, FMT-11 |
-| vuln_steg_blob.json | malicious | STEG-02 | OK | Needs review | Needs review/quarantine | done | A-00, STEG-02 |
+| vuln_safetensors_trailing.safetensors | malicious | FMT-11 | OK | Inconclusive | Needs review/quarantine | done | D-10, FMT-11 |
+| vuln_steg_blob.json | malicious | STEG-02 | OK | Inconclusive | Needs review/quarantine | done | A-00, STEG-02 |
 | vuln_steg_polyglot.png | malicious | STEG-03 | OK | Dangerous | Malicious/block | done | A-00, A-20, STEG-03 |
 | vuln_steg_trailing.zip | malicious | STEG-01 | OK | Needs review | Needs review/quarantine | done | A-00, STEG-01 |
 | vuln_tar_symlink.tar | malicious | FMT-05 | OK | Dangerous | Malicious/block | done | A-00, FMT-05 |
@@ -43,6 +43,6 @@
 | vuln_tools.json | malicious | INJ-04 | OK | Dangerous | Malicious/block | done | A-00, INJ-04 |
 | vuln_torch_zip.pkl | malicious | A-01 | OK | Malicious | Malicious/block | done | A-01, A-02, F-30 |
 | vuln_unsafe_yaml.yaml | malicious | FMT-06 | OK | Dangerous | Malicious/block | done | A-00, A-20, FMT-06 |
-| vuln_url_config.json | malicious | INT-03 | OK | Needs review | Needs review/quarantine | done | A-00, A-20, INT-03 |
+| vuln_url_config.json | malicious | INT-03 | OK | Inconclusive | Needs review/quarantine | done | A-00, A-20, INT-03 |
 | vuln_xxe.xml | malicious | FMT-06 | OK | Dangerous | Malicious/block | done | A-00, FMT-06 |
 | vuln_zip_bomb.zip | malicious | FMT-04 | OK | Dangerous | Needs review/quarantine | done | A-00, FMT-04 |

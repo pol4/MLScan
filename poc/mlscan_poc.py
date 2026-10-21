@@ -277,9 +277,18 @@ def detect_format(path: Path) -> str:
 
 
 def static_stage(path: Path) -> dict[str, Any]:
+    try:
+        return _static_stage_impl(path)
+    except Exception as e:  # noqa: BLE001
+        return {"format": "unknown", "size": 0, "findings": [], "members": [],
+                "ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+
+
+def _static_stage_impl(path: Path) -> dict[str, Any]:
     data = path.read_bytes()
     fmt = detect_format(path)
-    result: dict[str, Any] = {"format": fmt, "size": len(data), "findings": [], "members": []}
+    result: dict[str, Any] = {"format": fmt, "size": len(data), "findings": [], "members": [],
+                              "ok": True, "error": None}
 
     if fmt in ("hdf5", "safetensors", "onnx"):
         result["findings"].append(
@@ -876,22 +885,33 @@ def main():
     phase[0] = "load"
     t0 = time.monotonic()
     obj = None
+    n_before = len(errors)
     try:
         obj = load_target(target, FMT, errors)
-        info["load"]["ok"] = True
-        info["load"]["type"] = type(obj).__name__
     except Exception as e:
         errors.append("load: %s: %s" % (type(e).__name__, e))
+    # ok = загрузка прошла БЕЗ ошибок: иначе модель не загружена (нет зависимости,
+    # повреждён файл, не хватило ресурсов) и делать вывод о безопасности нельзя
+    load_errors = errors[n_before:]
+    info["load"]["ok"] = not load_errors
+    info["load"]["failed"] = bool(load_errors)
+    info["load"]["type"] = type(obj).__name__ if obj is not None else None
     info["load"]["time_s"] = round(time.monotonic() - t0, 4)
     snap1 = snapshot()
     state_load = diff_snapshot(snap0, snap1)
     phase[0] = "probe"
+    beh_ok = True
     try:
         info["behavior"] = behavior_probe(obj)
     except Exception as e:
+        beh_ok = False
         errors.append("behavior: %s" % e)
         info["behavior"] = {"callables": [], "results": [], "object": None,
                             "types": {}, "suspicious_strings": [], "callable_paths": []}
+    # поведенческий модуль (L3) осмыслен только если объект загружен
+    if not info["load"]["ok"]:
+        beh_ok = False
+    info["behavior"]["ok"] = beh_ok
     snap2 = snapshot()
     state_probe = diff_snapshot(snap1, snap2)
     info["summary"] = summarize(events)
@@ -909,6 +929,14 @@ def main():
         rss1 = 0
     info["maxrss_kb"] = max(rss0, rss1)
     info["events"] = events
+    # покрытие модулей: что реально удалось выполнить в песочнице
+    dyn_reason = "; ".join(load_errors[:2]) if load_errors else None
+    info["coverage"] = {
+        "dynamic": {"ok": bool(info["load"]["ok"]), "reason": dyn_reason},
+        "behavior": {"ok": bool(beh_ok),
+                     "reason": None if beh_ok else (dyn_reason or "поведенческий модуль не выполнен")},
+    }
+    info["incomplete"] = not (info["coverage"]["dynamic"]["ok"] and info["coverage"]["behavior"]["ok"])
     beh = info.get("behavior") or {}
     sys.stdout.write(SUMMARY_MARKER + json.dumps({
         "format": FMT, "load_ok": info["load"]["ok"], "load_type": info["load"]["type"],
@@ -1019,12 +1047,89 @@ def dynamic_stage(path: Path, fmt: str, *, image: str, runtime: str | None,
 SEV_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 
 
+_MODULE_LABELS = {"static": "статика", "dynamic": "динамика", "behavior": "поведение"}
+
+
+def coverage_of(static: dict[str, Any], dynamic: dict[str, Any]) -> dict[str, Any]:
+    """Какие модули проверки реально отработали.
+
+    Модуль считается выполненным, только если он отработал без ошибок:
+    статика — без исключения; динамика — песочница запустилась И модель загрузилась;
+    поведение — объект загружен и probe выполнен. Иначе вывод о безопасности делать нельзя.
+    """
+    st = dynamic.get("status")
+    load = dynamic.get("load") or {}
+    beh = dynamic.get("behavior") or {}
+    hcov = dynamic.get("coverage") or {}
+    sandbox_ok = st in ("ok", "succeeded")
+    load_ok = bool(load.get("ok", (hcov.get("dynamic") or {}).get("ok", False)))
+    load_errors = [e for e in (load.get("errors") or []) if e]
+
+    dyn_reason = (hcov.get("dynamic") or {}).get("reason") or (load_errors[0] if load_errors else None)
+    if not sandbox_ok and not dyn_reason:
+        dyn_reason = dynamic.get("reason") or (
+            "не выполнялась" if st == "skipped" else f"не выполнялась (статус: {st or 'нет'})")
+    if dyn_reason and dyn_reason.startswith("динамика не выполнена"):
+        dyn_reason = "не выполнялась" + dyn_reason[len("динамика не выполнена"):]
+
+    if not sandbox_ok:
+        beh_reason = "пропущено (динамика недоступна)"
+    elif not load_ok:
+        beh_reason = "пропущено (модель не загружена)"
+    elif beh.get("ok", True) is False:
+        beh_reason = (hcov.get("behavior") or {}).get("reason") or "probe не выполнен"
+    else:
+        beh_reason = None
+
+    modules = {
+        "static": {"ok": static.get("ok", True) is not False, "reason": static.get("error")},
+        "dynamic": {"ok": sandbox_ok and load_ok, "reason": None if (sandbox_ok and load_ok) else dyn_reason},
+        "behavior": {"ok": sandbox_ok and load_ok and (beh.get("ok", True) is not False),
+                     "reason": beh_reason},
+    }
+    failed = [k for k, v in modules.items() if not v["ok"]]
+    return {"modules": modules, "failed": failed, "complete": not failed}
+
+
+def describe_coverage(cov: dict[str, Any]) -> str:
+    parts = []
+    for k in cov.get("failed") or []:
+        m = (cov.get("modules") or {}).get(k) or {}
+        label = _MODULE_LABELS.get(k, k)
+        parts.append(f"{label}: {m['reason']}" if m.get("reason") else label)
+    return "; ".join(parts)
+
+
 def decide(static: dict[str, Any], dynamic: dict[str, Any]) -> tuple[str, str]:
+    """Вердикт с учётом полноты покрытия.
+
+    Если какой-то модуль не смог отработать (нет зависимости, не хватило ресурсов,
+    таймаут, песочница не запустилась), то честный ответ — не «Safe», а
+    «проверить всеми модулями не получилось» + частичный результат. Исключение:
+    когда частичные данные УЖЕ доказывают опасность (critical/high или жёсткие
+    динамические сигналы) — вердикт сохраняется, а неполнота отмечается в причине.
+    """
+    verdict, reason = _decide_base(static, dynamic)
+    cov = coverage_of(static, dynamic)
+    if not cov["complete"]:
+        detail = describe_coverage(cov)
+        if verdict in ("Malicious", "Dangerous"):
+            reason = f"{reason}; проверка неполная ({detail})"
+        else:
+            reason = (f"проверить всеми модулями не получилось ({detail}); "
+                      f"частичный результат: {reason}")
+            verdict = "Inconclusive"
+    return verdict, reason
+
+
+def _decide_base(static: dict[str, Any], dynamic: dict[str, Any]) -> tuple[str, str]:
     sevs = [f["severity"] for f in static.get("findings", [])]
     max_sev = max(sevs, key=lambda s: SEV_RANK.get(s, 0)) if sevs else "info"
 
     dyn_reasons = []
-    if dynamic.get("status") == "skipped":
+    dyn_status = dynamic.get("status")
+    sandbox_failed = dyn_status in ("failed", "timeout", "error", "no-result")
+    if dyn_status == "skipped":
         dyn_reasons.append("динамика не выполнена (нет Docker)")
     s = dynamic.get("summary") or {}
     beh_findings = ((dynamic.get("behavior") or {}).get("findings")) or []
@@ -1055,10 +1160,10 @@ def decide(static: dict[str, Any], dynamic: dict[str, Any]) -> tuple[str, str]:
     if max_sev in ("critical", "high") and hard_dynamic:
         return "Malicious", f"Максимальная серьёзность {max_sev}; динамика: " + "; ".join(dyn_reasons)
     if max_sev in ("critical", "high"):
-        st = dynamic.get("status")
+        st = dyn_status
         if st in (None, "skipped"):
             note = "динамический этап не выполнялся"
-        elif st in ("error", "no-result"):
+        elif st in ("error", "no-result", "failed", "timeout"):
             note = "динамический этап завершился без результата"
         else:
             note = ("динамический этап выполнен, но жёстких сигналов исполнения "
@@ -1067,7 +1172,7 @@ def decide(static: dict[str, Any], dynamic: dict[str, Any]) -> tuple[str, str]:
         return "Dangerous", f"Опасные конструкции уровня {max_sev}: {note}{extra} — требуется ручное подтверждение"
     if hard_dynamic:
         return "Dangerous", "Динамика: " + "; ".join(dyn_reasons)
-    if dynamic.get("status") == "skipped":
+    if dyn_status in ("skipped", "failed", "timeout"):
         return "Inconclusive", "Только статика: динамика недоступна; неполное покрытие"
     if max_sev == "medium":
         return "Needs review", "Находки среднего уровня"

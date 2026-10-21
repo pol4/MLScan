@@ -113,6 +113,10 @@ CATALOG: dict[str, dict[str, str]] = {
     "art.col.conf": {"ru": "Увер.", "en": "Conf."},
     "art.col.finding": {"ru": "Находка", "en": "Finding"},
     "art.col.evidence": {"ru": "Доказательство", "en": "Evidence"},
+    "art.coverage_incomplete": {"ru": "Проверка выполнена не полностью",
+                               "en": "The scan is incomplete"},
+    "art.coverage_hint": {"ru": "Вердикт отражает только частичный результат.",
+                          "en": "The verdict reflects a partial result only."},
     "art.dynamic": {"ru": "Динамический этап (L2/L3)", "en": "Dynamic stage (L2/L3)"},
     "art.dyn.status": {"ru": "Статус", "en": "Status"},
     "art.dyn.load": {"ru": "загрузка", "en": "load"},
@@ -249,6 +253,25 @@ _RULES: list[tuple[re.Pattern, str]] = [
     _r(r"Находки среднего уровня", "Medium-severity findings"),
     _r(r"Опасных признаков не обнаружено", "No dangerous indicators found"),
     _r(r"Динамика: (.+)", "Dynamics: {0!tr}"),
+    # --- полнота покрытия (модули проверки)
+    _r(r"проверить всеми модулями не получилось \((.+)\); частичный результат: (.+)",
+       "not all verification modules could run ({0!tr}); partial result: {1!tr}"),
+    _r(r"проверка неполная \((.+)\)", "incomplete scan ({0!tr})"),
+    _r(r"статика: (.+)", "static analysis: {0!tr}"),
+    _r(r"динамика: (.+)", "dynamic analysis: {0!tr}"),
+    _r(r"поведение: (.+)", "behaviour: {0!tr}"),
+    _r(r"статика", "static analysis"),
+    _r(r"динамика", "dynamic analysis"),
+    _r(r"поведение", "behaviour"),
+    _r(r"пропущено \(модель не загружена\)", "skipped (model not loaded)"),
+    _r(r"пропущено \(динамика недоступна\)", "skipped (dynamic analysis unavailable)"),
+    _r(r"модель не загружена", "model not loaded"),
+    _r(r"probe не выполнен", "probe not executed"),
+    _r(r"не выполнялась \(нет Docker\)", "not run (no Docker)"),
+    _r(r"не выполнялась", "not run"),
+    _r(r"динамический этап не выполнялся", "dynamic stage was not executed"),
+    _r(r"не удалось загрузить модель: (.+)", "failed to load the model: {0}"),
+
     # --- ошибки загрузки в песочнице
     _r(r"model-as-code: entry-код не найден", "model-as-code: entry code not found"),
     _r(r"(.+) не установлен", "{0} is not installed"),
@@ -449,12 +472,23 @@ def set_global_lang(lang: str) -> str:
 
 
 def from_headers(headers) -> str | None:
+    """Явный заголовок клиента `X-MLScan-Lang` (язык API-запроса)."""
     if headers is None:
         return None
     get = getattr(headers, "get", None)
     if get is None:
         return None
-    return normalize(get("X-MLScan-Lang")) or normalize(get("Accept-Language"))
+    return normalize(get("X-MLScan-Lang"))
+
+
+def from_accept_language(headers) -> str | None:
+    """Язык браузера — только как последний резерв (ниже глобальной настройки)."""
+    if headers is None:
+        return None
+    get = getattr(headers, "get", None)
+    if get is None:
+        return None
+    return normalize(get("Accept-Language"))
 
 
 def from_query(query: dict | None) -> str | None:
@@ -462,24 +496,32 @@ def from_query(query: dict | None) -> str | None:
         return None
     v = query.get("lang")
     if isinstance(v, (list, tuple)):
-        v = v[0] if v else None
+        v = v[-1] if v else None   # при дублировании параметра побеждает последний
     return normalize(v)
 
 
 def from_cookie(cookie: str | None) -> str | None:
+    """Язык из cookie. Принимает и заголовок Cookie целиком, и уже извлечённое значение."""
     if not cookie:
         return None
-    for part in str(cookie).split(";"):
+    s = str(cookie)
+    for part in s.split(";"):
         k, _, v = part.strip().partition("=")
         if k == "mlscan_lang":
             return normalize(v)
-    return None
+    return normalize(s)   # передано само значение (например, "en")
 
 
 def resolve(headers=None, query: dict | None = None, cookie: str | None = None) -> str:
-    """Язык запроса: query → cookie → заголовки → глобальная настройка."""
-    return (from_query(query) or from_cookie(cookie) or from_headers(headers)
-            or global_lang())
+    """Язык ответа.
+
+    Приоритет: явный запрос (`?lang=`) → заголовок `X-MLScan-Lang` → cookie
+    переключателя → **глобальная настройка системы** (БД, иначе `MLSCAN_LANG`).
+    Язык браузера (`Accept-Language`) учитывается только как последний резерв:
+    выбранный для системы язык не должен перебиваться настройками клиента.
+    """
+    return (from_query(query) or from_headers(headers) or from_cookie(cookie)
+            or global_lang() or from_accept_language(headers) or startup_lang())
 
 
 # ---------------------------------------------------------------------------
