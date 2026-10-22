@@ -11,7 +11,7 @@ MLScan разворачивается **поэтапно**: каждый уро�
 | Ур. | Название | Что даёт | Что требует | Каталоги | Проверка |
 |-----|----------|----------|-------------|----------|----------|
 | **0** | **PoC** | Многоформатный статический анализ (pickle/torch/numpy, SafeTensors, ONNX, HDF5/Keras, GGUF, архивы, ноутбуки, скрипты, конфиги/карточки/токенизаторы, MCP, HTML/SVG, Dockerfile, датасеты, сжатые payload'ы), динамика в Docker и поведение (L3) для исполняемых форматов, отчёт MD/JSON, честный вердикт с покрытием | Python 3.10+, Docker (только для динамики) | [`poc/`](../poc) | `bash deploy/verify.sh 0` |
-| **1** | **Изолированная песочница** | То же, но недоверенный код исполняется в **Kata microVM** на одном узле: сетевой запрет + sinkhole/honeypot, RO-FS, drop-all, лимиты, Falco/eBPF, отдача артефакта сервером | Kubernetes на 1 узле, RuntimeClass `kata`/`gvisor`, реестр образов | [`stage1/`](./stage1), [`sandbox-image/`](./sandbox-image) | `bash deploy/verify.sh 1` |
+| **1** | **Изолированная песочница** | То же, но недоверенный код исполняется в **Kata microVM** на одном узле: сетевой запрет + sinkhole/honeypot, RO-FS, drop-all, лимиты, отдача артефакта сервером. **Опционально:** Falco/eBPF (хостовый мониторинг) | Kubernetes на 1 узле, RuntimeClass `kata`/`gvisor`, реестр образов | [`stage1/`](./stage1), [`sandbox-image/`](./sandbox-image) | `bash deploy/verify.sh 1` |
 | **2** | **Сервис тестирования** | HTTP API приёма артефактов (потоково, большие файлы), дедупликация в **S3 (Garage)** `sha256/<name>`, метаданные и находки в **PostgreSQL**, оркестрация Job, вердикт с учётом покрытия, сообщения RU/EN | Ур. 1 + Garage + PostgreSQL | [`v2/data/`](./v2/data), [`v2/db/`](./v2/db), [`stage2/`](./stage2) | `bash deploy/verify.sh 2` |
 | **3** | **Аналитика, Policy, Evidence, UI** | Скоринг, Policy Engine, append-only evidence с hash-chain (файл + зеркало в PG), отчёты JSON/MD/SARIF, веб-UI: вход (пользователи/API-ключи/роли), переключатель языка, `/settings` (глобальный язык), баннер неполной проверки | Ур. 2 + Ingress (Istio) | [`v2/auth/`](./v2/auth), [`i18n/`](./i18n), [`stage3/`](./stage3), [`ingress/`](./ingress) | `bash deploy/verify.sh 3` |
 | **4** | **Интеграции** | Реестр моделей по SHA-256, CI-gate (`/gate` → allow/block/review и exit-code), SIEM-экспорт (NDJSON/CEF), threat-intel | Ур. 2–3 | [`stage4/`](./stage4) | `bash deploy/verify.sh 4` |
@@ -33,6 +33,17 @@ bash deploy/verify.sh 5 --full  # + полный прогон корпуса (14
 
 Проверки предпосылок выполняются автоматически: скрипт сообщит, если нет `kubectl`/кластера,
 RuntimeClass `kata`, Garage/PostgreSQL или доступа к Secret с ключами.
+
+## Опциональные компоненты
+
+| Компонент | Уровень | Зачем | Установка | Проверка |
+|-----------|---------|-------|-----------|----------|
+| **Falco (modern eBPF)** | 1 | Хостовый runtime-мониторинг: exec/egress/write для **runc**-подов и событий хоста, правила `MLScan sandbox *` — обнаружение аномалий и попыток выхода. Syscalls **внутри Kata-микро-ВМ** ему не видны | `bash deploy/install.sh 1 --with-falco` (или `bash deploy/stage1/60-falco.sh`) | `bash deploy/verify.sh 1` (строка Falco), логи: `kubectl -n mlscan-monitoring logs ds/falco -c falco \| grep "MLScan sandbox"` |
+| **Red-team Job** | 5 | 7 проверок изоляции (escape-сценарии) | `bash deploy/stage5/apply.sh` (Job `40-redteam-job.yaml`) | `kubectl -n mlscan-ops get job` |
+
+Без опциональных компонентов соответствующие уровни **полностью работоспособны**: наблюдение за
+поведением модели обеспечивают внутригостевые audit-hooks harness (L2/L3), а изоляцию —
+Kata + NetworkPolicy + RO-FS + лимиты.
 
 ## Что выбрать
 

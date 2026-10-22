@@ -18,6 +18,18 @@
 **<CLUSTER>** (MicroK8s). Разворачивается в отдельные namespace и полностью
 самодостаточен.
 
+## Falco (опционально)
+
+Falco — **опциональный** компонент уровня 1: хостовый eBPF-мониторинг (правила `MLScan sandbox *`
+для exec/egress/write). Базовая изоляция и наблюдение за поведением модели работают **без него** —
+их обеспечивают внутригостевые audit-hooks harness; syscalls внутри Kata-микро-ВМ хостовому eBPF
+**не видны**, поэтому Falco полезен прежде всего для runc-подов и событий хоста.
+
+* **Установка:** `bash deploy/stage1/60-falco.sh` или `bash deploy/install.sh 1 --with-falco`
+  (helm chart `falcosecurity/falco`, драйвер `modern_ebpf`, namespace `mlscan-monitoring`).
+* **Проверка:** `bash deploy/verify.sh 1` (строка Falco) либо логи:
+  `kubectl -n mlscan-monitoring logs ds/falco -c falco | grep "MLScan sandbox"`.
+
 ## Что разворачивается
 
 | Компонент | Namespace | Назначение |

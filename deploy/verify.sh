@@ -86,7 +86,13 @@ case "$LEVEL" in
     kubectl -n mlscan-sandbox get networkpolicy >/dev/null 2>&1 && ok "NetworkPolicy (сетевой запрет)" \
       || bad "нет NetworkPolicy"
     kubectl -n mlscan-sandbox get pods >/dev/null 2>&1 && ok "namespace доступен для Job'ов" || bad "нет доступа"
-    info "Falco/eBPF и red-team проверки: deploy/stage1/60-falco.sh, deploy/stage5/40-redteam-job.yaml"
+    if kubectl -n mlscan-monitoring get daemonset falco >/dev/null 2>&1; then
+      ready=$(kubectl -n mlscan-monitoring get daemonset falco -o jsonpath='{.status.numberReady}/{.status.desiredNumberScheduled}' 2>/dev/null)
+      ok "Falco (eBPF, опционально): DaemonSet готов $ready в mlscan-monitoring"
+    else
+      info "Falco (опционально) не установлен — базовая изоляция работает без него; включить: bash deploy/stage1/60-falco.sh"
+    fi
+    info "red-team проверки изоляции: deploy/stage5/40-redteam-job.yaml"
     ;;
   2|3|4|5)
     echo "=== Уровень $LEVEL"

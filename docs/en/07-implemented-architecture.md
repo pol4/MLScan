@@ -88,11 +88,19 @@ there are no external service dependencies (DB, queue, brokers) — state is in 
 sandbox Job downloads it from the Artifact server of the testing service (port **8090**) using a
 one-time token. The per-scan ConfigMap transport is no longer used.
 
-### 2.2 `mlscan-monitoring` — eBPF monitoring
+### 2.2 `mlscan-monitoring` — eBPF monitoring (optional component)
+
+Falco is an **optional** level-1 component: it provides host-side runtime monitoring
+(exec/egress/write for **runc** pods and host events, rules `MLScan sandbox *`). Base isolation
+and model-behaviour observation work **without it** (in-guest harness audit hooks); syscalls
+inside a Kata microVM are not visible to host eBPF (see §10). Install:
+`bash deploy/stage1/60-falco.sh` (or `bash deploy/install.sh 1 --with-falco`); verify:
+`bash deploy/verify.sh 1`.
+
 
 | Object | Type | Purpose |
 |--------|-----|-----------|
-| `falco` (DaemonSet) | Falco 0.45.0, modern eBPF driver | host syscalls: exec/egress/write; rules `MLScan sandbox *` |
+| `falco` (DaemonSet) | Helm chart `falco` 9.2.0, Falco 0.45.0, `modern_ebpf` driver (installed in the current stand) | host syscalls: exec/egress/write; rules `MLScan sandbox *` |
 
 ### 2.3 `mlscan-testing` — testing service (Component 2)
 

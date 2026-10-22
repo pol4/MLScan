@@ -53,7 +53,7 @@ flowchart LR
 ```mermaid
 flowchart LR
   L0["Уровень 0 · PoC<br/>Python + Docker<br/>статика по всем форматам,<br/>динамика и поведение в Docker"]
-  L1["Уровень 1 · Песочница<br/>Kata microVM, сетевой запрет,<br/>honeypot, Falco/eBPF"]
+  L1["Уровень 1 · Песочница<br/>Kata microVM, сетевой запрет,<br/>honeypot; опц. Falco/eBPF"]
   L2["Уровень 2 · Сервис тестирования<br/>HTTP, S3 sha256, PostgreSQL,<br/>большие файлы, дедупликация"]
   L3["Уровень 3 · Аналитика и UI<br/>policy, evidence hash-chain,<br/>вход и роли, RU/EN"]
   L4["Уровень 4 · Интеграции<br/>реестр, CI-gate, SIEM"]
@@ -64,7 +64,7 @@ flowchart LR
 | Ур. | Что даёт (анализ и сервис) | Что требует | Установка · проверка |
 |-----|----------------------------|-------------|----------------------|
 | **0** | **PoC:** статика по всем форматам (pickle/torch/numpy, SafeTensors, ONNX, HDF5/Keras, GGUF, архивы, ноутбуки, скрипты, конфиги/карточки, MCP, HTML/SVG, Dockerfile, датасеты, сжатые payload'ы), динамика L2 и поведение L3 в Docker, отчёт MD/JSON | Python 3.10+, Docker (только для динамики) | `bash deploy/install.sh 0` · `bash deploy/verify.sh 0` |
-| **1** | То же, но недоверенный код исполняется в **микро-ВМ (Kata)**: сетевой запрет, honeypot/sinkhole, RO-FS, лимиты, Falco/eBPF | Kubernetes на 1 узле, RuntimeClass `kata`/`gvisor`, реестр образов | `bash deploy/install.sh 1` · `bash deploy/verify.sh 1` |
+| **1** | То же, но недоверенный код исполняется в **микро-ВМ (Kata)**: сетевой запрет, honeypot/sinkhole, RO-FS, лимиты; **опционально** — Falco/eBPF (хостовый мониторинг) | Kubernetes на 1 узле, RuntimeClass `kata`/`gvisor`, реестр образов | `bash deploy/install.sh 1` · `bash deploy/verify.sh 1` |
 | **2** | **Сервис тестирования:** HTTP-приём (потоково, большие модели), дедупликация в **S3 (Garage)** `sha256/<name>`, метаданные и находки в **PostgreSQL**, оркестрация Job, вердикт с учётом покрытия | Уровень 1 + Garage + PostgreSQL | `bash deploy/install.sh 2` · `bash deploy/verify.sh 2` |
 | **3** | **Аналитика:** скоринг, Policy Engine, append-only evidence с hash-chain, отчёты JSON/MD/SARIF, **веб-UI** (вход, роли, переключатель языка, `/settings`, баннер неполной проверки) | Уровни 1–2 + Istio Ingress | `bash deploy/install.sh 3` · `bash deploy/verify.sh 3` |
 | **4** | **Интеграции:** реестр моделей по SHA-256, CI-gate `/gate` (allow/block/review + exit-code), экспорт в SIEM (NDJSON/CEF), threat-intel | Уровни 2–3 | `bash deploy/install.sh 4` · `bash deploy/verify.sh 4` |
@@ -136,7 +136,8 @@ bash deploy/verify.sh 5 --full  # + полный прогон корпуса (14
 
 - каждый запуск — **микро-ВМ Kata** (своё ядро), **без сети** (кроме sinkhole/артефакт-сервера),
   read-only ФС, `drop ALL`, seccomp, лимиты CPU/RAM/диска, honeypot-файлы, наблюдение
-  (audit hooks + Falco) — это ограничивает и прямой payload, и эксплуатацию уязвимости движка;
+  (внутригостевые audit hooks — обязательно; хостовый Falco/eBPF — опционально, см. [`deploy/README.md`](./deploy/README.md))
+  — это ограничивает и прямой payload, и эксплуатацию уязвимости движка;
 - среда **гарантированно уничтожается** после проверки, а поведение **наблюдаемо** (файлы,
   процессы, сеть, `ctypes`, изменения `builtins`/import-хуков).
 
@@ -329,7 +330,7 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 | [`poc/mlscan_poc.py`](./poc/mlscan_poc.py) | **PoC (уровень 0)** — один Python-файл: статика по всем форматам + динамика/поведение в Docker |
 | [`poc/formats.py`](./poc/formats.py) | Адаптеры форматов (stdlib) — единый модуль для PoC и сервиса тестирования |
 | [`poc/scan/`](./poc/scan) | Демонстрационные данные (pickle + `formats/`) и генераторы |
-| [`deploy/stage1/`](./deploy/stage1) | Этап 1: укреплённая песочница (Kata, deception, sinkhole, NetworkPolicy, Falco) |
+| [`deploy/stage1/`](./deploy/stage1) | Этап 1 (уровень 1): песочница Kata, deception, sinkhole, NetworkPolicy; Falco — опционально (`60-falco.sh`) |
 | [`deploy/stage2/`](./deploy/stage2) | Этап 2: сервис тестирования |
 | [`deploy/stage3/`](./deploy/stage3) | Этап 3: аналитический движок + UI |
 | [`deploy/stage4/`](./deploy/stage4) | Этап 4: интеграции (registry/CI-gate/SIEM/threat-intel) |

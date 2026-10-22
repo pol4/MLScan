@@ -15,6 +15,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 LEVEL="${1:-}"
+WITH_FALCO="${WITH_FALCO:-0}"
+for arg in "$@"; do
+  [ "$arg" = "--with-falco" ] && WITH_FALCO=1
+done
 
 die() { echo "Ошибка: $*" >&2; exit 1; }
 step() { echo; echo "=== $*"; }
@@ -26,7 +30,7 @@ case "$LEVEL" in
 Использование: bash deploy/install.sh <0..5>
 
   0 — PoC: Python + Docker, без кластера (многоформатный статический анализ + динамика в Docker)
-  1 — изолированная песочница (Kata microVM) на одном узле Kubernetes
+  1 — изолированная песочница (Kata microVM) на одном узле Kubernetes (+ опция --with-falco)
   2 — + сервис тестирования: S3 (Garage), PostgreSQL, приём больших артефактов
   3 — + аналитика, Policy Engine, append-only evidence, веб-UI (вход, RU/EN, /settings)
   4 — + интеграции: реестр моделей, CI-gate, SIEM-экспорт, threat-intel
@@ -74,8 +78,16 @@ echo "Kubernetes: $K8S_VER | уровень установки: $LEVEL"
 # ------------------------------------------------------------ уровень 1
 step "[уровень 1] изолированная песочница (Kata microVM)"
 bash "$HERE/stage1/apply.sh"
-if [ -x "$HERE/stage1/60-falco.sh" ]; then
-  echo "Falco/eBPF (наблюдаемость песочницы) — запускается отдельно: bash deploy/stage1/60-falco.sh"
+# Falco — ОПЦИОНАЛЬНЫЙ компонент уровня 1: хостовый eBPF-мониторинг (runc-поды, события хоста).
+# Базовая изоляция и наблюдение внутри песочницы (audit-hooks harness) работают без него.
+if [ "$WITH_FALCO" = "1" ]; then
+  step "[уровень 1, опция] Falco (eBPF-мониторинг хоста)"
+  bash "$HERE/stage1/60-falco.sh"
+  kubectl -n mlscan-monitoring rollout status ds/falco --timeout=300s 2>/dev/null || true
+elif [ -x "$HERE/stage1/60-falco.sh" ]; then
+  echo "Falco (хостовый eBPF-мониторинг) — ОПЦИОНАЛЬНО:"
+  echo "  bash deploy/install.sh 1 --with-falco    # или: bash deploy/stage1/60-falco.sh"
+  echo "  без Falco уровень 1 полностью работоспособен (в песочнице работают audit-hooks harness)"
 fi
 echo "Образ песочницы собирается Kaniko (нужен для динамики в кластере):"
 echo "  bash deploy/sandbox-image/build.sh v4"

@@ -86,11 +86,17 @@ Python (без внешних зависимостей), образ `python:3.12
 скачивает его с Artifact-сервера сервиса тестирования (порт **8090**) по одноразовому токену.
 Per-scan ConfigMap-транспорт больше не используется.
 
-### 2.2 `mlscan-monitoring` — eBPF-мониторинг
+### 2.2 `mlscan-monitoring` — eBPF-мониторинг (опциональный компонент)
+
+Falco — **опциональный** компонент уровня 1: он даёт хостовый runtime-мониторинг (exec/egress/write
+для **runc**-подов и событий хоста, правила `MLScan sandbox *`). Базовая изоляция и наблюдение за
+поведением модели работают **без него** (внутригостевые audit-hooks harness); syscalls внутри
+Kata-микро-ВМ хостовому eBPF не видны (см. §10). Установка: `bash deploy/stage1/60-falco.sh`
+(или `bash deploy/install.sh 1 --with-falco`); проверка: `bash deploy/verify.sh 1`.
 
 | Объект | Тип | Назначение |
 |--------|-----|-----------|
-| `falco` (DaemonSet) | Falco 0.45.0, modern eBPF driver | хостовые syscalls: exec/egress/write; правила `MLScan sandbox *` |
+| `falco` (DaemonSet) | Helm chart `falco` 9.2.0, Falco 0.45.0, driver `modern_ebpf` (в текущем стенде установлен) | хостовые syscalls: exec/egress/write; правила `MLScan sandbox *` |
 
 ### 2.3 `mlscan-testing` — сервис тестирования (Компонента 2)
 

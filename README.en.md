@@ -53,7 +53,7 @@ upgrade path - [`deploy/upgrade.md`](./deploy/upgrade.md).
 ```mermaid
 flowchart LR
   L0["Level 0 · PoC<br/>Python + Docker<br/>static for every format,<br/>dynamic + behaviour in Docker"]
-  L1["Level 1 · Sandbox<br/>Kata microVM, network deny,<br/>honeypot, Falco/eBPF"]
+  L1["Level 1 · Sandbox<br/>Kata microVM, network deny,<br/>honeypot; opt. Falco/eBPF"]
   L2["Level 2 · Testing service<br/>HTTP, S3 sha256, PostgreSQL,<br/>large files, deduplication"]
   L3["Level 3 · Analytics and UI<br/>policy, evidence hash-chain,<br/>sign-in and roles, RU/EN"]
   L4["Level 4 · Integrations<br/>registry, CI gate, SIEM"]
@@ -64,7 +64,7 @@ flowchart LR
 | Lvl | What it provides (analysis and service) | What it requires | Install · verify |
 |-----|------------------------------------------|------------------|------------------|
 | **0** | **PoC:** static analysis for every format (pickle/torch/numpy, SafeTensors, ONNX, HDF5/Keras, GGUF, archives, notebooks, scripts, configs/cards, MCP, HTML/SVG, Dockerfile, datasets, compressed payloads), dynamic L2 and behaviour L3 in Docker, MD/JSON report | Python 3.10+, Docker (dynamic stage only) | `bash deploy/install.sh 0` · `bash deploy/verify.sh 0` |
-| **1** | The same, but untrusted code runs in a **microVM (Kata)**: network deny, honeypot/sinkhole, read-only FS, limits, Falco/eBPF | single-node Kubernetes, RuntimeClass `kata`/`gvisor`, image registry | `bash deploy/install.sh 1` · `bash deploy/verify.sh 1` |
+| **1** | The same, but untrusted code runs in a **microVM (Kata)**: network deny, honeypot/sinkhole, read-only FS, limits; **optional** Falco/eBPF (host monitoring) | single-node Kubernetes, RuntimeClass `kata`/`gvisor`, image registry | `bash deploy/install.sh 1` · `bash deploy/verify.sh 1` |
 | **2** | **Testing service:** HTTP intake (streaming, large models), deduplication in **S3 (Garage)** `sha256/<name>`, metadata and findings in **PostgreSQL**, Job orchestration, coverage-aware verdict | level 1 + Garage + PostgreSQL | `bash deploy/install.sh 2` · `bash deploy/verify.sh 2` |
 | **3** | **Analytics:** scoring, Policy Engine, append-only evidence with a hash chain, JSON/MD/SARIF reports, **web UI** (sign-in, roles, language switch, `/settings`, incomplete-scan banner) | levels 1-2 + Istio Ingress | `bash deploy/install.sh 3` · `bash deploy/verify.sh 3` |
 | **4** | **Integrations:** model registry by SHA-256, CI gate `/gate` (allow/block/review + exit code), SIEM export (NDJSON/CEF), threat intel | levels 2-3 | `bash deploy/install.sh 4` · `bash deploy/verify.sh 4` |
@@ -135,7 +135,8 @@ not only for "executing" formats. Every artifact is scanned by a **dedicated ins
 
 - every run is a **Kata microVM** (its own kernel), **no network** (except sinkhole/artifact
   server), read-only FS, `drop ALL`, seccomp, CPU/RAM/disk limits, honeypot files, observation
-  (audit hooks + Falco) — this constrains both a direct payload and engine-vulnerability exploitation;
+  (in-guest audit hooks are mandatory; host-side Falco/eBPF is optional, see [`deploy/README.md`](./deploy/README.md))
+  — this constrains both a direct payload and engine-vulnerability exploitation;
 - the environment is **destroyed after the scan**, and the behaviour is **observable** (files,
   processes, network, `ctypes`, changes to `builtins`/import hooks).
 
@@ -332,7 +333,7 @@ See [`docs/en/05-architecture.md`](./docs/en/05-architecture.md),
 | [`poc/mlscan_poc.py`](./poc/mlscan_poc.py) | **PoC (level 0)** — a single Python file: static analysis for every format plus dynamic/behaviour in Docker |
 | [`poc/formats.py`](./poc/formats.py) | Format adapters (stdlib) — one shared module for the PoC and the testing service |
 | [`poc/scan/`](./poc/scan) | Demo data (pickle + `formats/`) and generators |
-| [`deploy/stage1/`](./deploy/stage1) | Stage 1: hardened sandbox (Kata, deception, sinkhole, NetworkPolicy, Falco) |
+| [`deploy/stage1/`](./deploy/stage1) | Stage 1 (level 1): Kata sandbox, deception, sinkhole, NetworkPolicy; Falco is optional (`60-falco.sh`) |
 | [`deploy/stage2/`](./deploy/stage2) | Stage 2: testing service |
 | [`deploy/stage3/`](./deploy/stage3) | Stage 3: analytics engine + UI |
 | [`deploy/stage4/`](./deploy/stage4) | Stage 4: integrations (registry/CI gate/SIEM/threat intel) |
