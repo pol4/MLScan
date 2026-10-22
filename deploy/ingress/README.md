@@ -24,7 +24,30 @@ HTTP-порт **istio-ingressgateway** (NodePort `30217`, HTTPS `30921`) — о�
 - **Egress NetworkPolicy** (`mlscan-egress`) в `mlscan-testing/analytics/integrations/ops`:
   запрет наружу; разрешены DNS и кластерные CIDR (`10.152.0.0/16`, `10.1.0.0/16`);
   для `mlscan-testing` дополнительно разрешён Kubernetes API и порт S3 (3900). Адрес API-endpoint
-  подставляется автоматически при применении (`apply.sh` заменяет плейсхолдер `198.51.100.10`).
+  определяется автоматически при применении (`apply.sh`: EndpointSlice → Endpoints → ClusterIP
+  сервиса `kubernetes`) и подставляется вместо плейсхолдера `198.51.100.10`; если адрес определить
+  не удалось, правило отключается (зарезервированный `240.0.0.0/32`), а приложение **падает с
+  ошибкой**, если плейсхолдер всё же остался в применённой политике — иначе сервисы теряют доступ
+  к Kubernetes API и сканы завершаются таймаутом.
+
+**Осторожно (важно для k8s 1.33+):** устаревший `kubectl get endpoints kubernetes` в 1.33 удалён;
+используйте EndpointSlice. Симптом ошибки, если правило для API настроено неверно: сканы падают с
+`ошибка сервиса тестирования: TimeoutError: timed out` (сервис не может создать Job песочницы).
+
+### Файлы по уровням
+
+Манифесты разделены по уровням, чтобы `install.sh N` работал на любом уровне и после апгрейда:
+
+| Файл | Уровень | Объекты |
+|------|---------|---------|
+| `00-namespace.yaml`, `10-gateway.yaml` | 3 | namespace `mlscan-ingress`, Gateway |
+| `20-virtualservices.yaml` | 3 | VirtualServices: analytics, api (testing) |
+| `21-virtualservices-l4.yaml` / `22-virtualservices-l5.yaml` | 4 / 5 | VirtualServices: integrations / ops |
+| `30-egress-networkpolicies.yaml` | 3 | egress-политики: testing, analytics |
+| `31-egress-networkpolicies-l4.yaml` / `32-egress-networkpolicies-l5.yaml` | 4 / 5 | egress: integrations / ops |
+
+`apply.sh` применяет файл уровня только если соответствующий namespace существует (иначе печатает
+подсказку), поэтому более низкие уровни не ломаются.
 - Песочница `mlscan-sandbox` сохраняет собственную строгую политику (default-deny + sinkhole
   + artifact-сервер :8090).
 

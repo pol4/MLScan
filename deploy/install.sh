@@ -89,8 +89,13 @@ elif [ -x "$HERE/stage1/60-falco.sh" ]; then
   echo "  bash deploy/install.sh 1 --with-falco    # или: bash deploy/stage1/60-falco.sh"
   echo "  без Falco уровень 1 полностью работоспособен (в песочнице работают audit-hooks harness)"
 fi
-echo "Образ песочницы собирается Kaniko (нужен для динамики в кластере):"
-echo "  bash deploy/sandbox-image/build.sh v4"
+# Образ песочницы нужен для динамики в кластере (в т.ч. для демо `run-sandbox.sh` уровня 1)
+echo "Сборка образа песочницы (Kaniko)…"
+bash "$HERE/sandbox-image/build.sh" v4 >/dev/null
+if ! kubectl -n mlscan-build wait --for=condition=complete job/mlscan-sandbox-build --timeout=900s >/dev/null 2>&1; then
+  echo "Предупреждение: сборка образа не завершилась за 15 мин — проверьте:"
+  echo "  kubectl -n mlscan-build logs job/mlscan-sandbox-build"
+fi
 [ "$LEVEL" = "1" ] || true
 
 if [ "$LEVEL" -ge 2 ]; then

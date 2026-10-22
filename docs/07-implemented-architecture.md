@@ -550,6 +550,13 @@ Job скачивает свой файл с Artifact-сервера сервис
 `/metrics|/health/stack|/quality|/sla|/alerts|/settings|/settings/language|/retest` (ops),
 `/upload` (ingest).
 
+**Egress-allowlist и Kubernetes API.** Платформенные namespace получают deny-by-default
+egress-политику; доступ к K8s API разрешается правилом для реального адреса API-сервера, который
+`deploy/ingress/apply.sh` определяет через EndpointSlice (в k8s 1.33 устаревшие `Endpoints` удалены).
+Ошибочно оставшийся плейсхолдер блокирует API → сканы падают с `TimeoutError` на этапе создания Job
+песочницы; скрипт теперь завершается с ошибкой, если плейсхолдер остался применённым. Манифесты
+ingress разделены по уровням (`20/21/22` — VirtualServices, `30/31/32` — egress).
+
 Язык ответа выбирается так: `?lang=ru|en` → cookie `mlscan_lang` → `X-MLScan-Lang`/
 `Accept-Language` → глобальная настройка (таблица `settings`) → `MLSCAN_LANG` при запуске.
 

@@ -560,6 +560,13 @@ Main endpoints: `/scans`, `/scans/upload?lang=` (testing),
 `/metrics|/health/stack|/quality|/sla|/alerts|/settings|/settings/language|/retest` (ops),
 `/upload` (ingest).
 
+**Egress allowlist and the Kubernetes API.** Platform namespaces receive a deny-by-default
+egress policy; access to the K8s API is allowed by a rule for the real API server address, which
+`deploy/ingress/apply.sh` discovers via EndpointSlice (legacy `Endpoints` were removed in k8s 1.33).
+A placeholder left in the applied policy blocks the API, so scans fail with `TimeoutError` while
+creating the sandbox Job; the script now aborts if the placeholder remains. Ingress manifests are
+split per level (`20/21/22` VirtualServices, `30/31/32` egress).
+
 The response language is selected as follows: `?lang=ru|en` → cookie `mlscan_lang` → `X-MLScan-Lang`/
 `Accept-Language` → the global setting (`settings` table) → `MLSCAN_LANG` at startup.
 
