@@ -501,6 +501,10 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
                         f"{_lit(f.get('severity'))},{f.get('confidence') if f.get('confidence') is not None else 'NULL'},"
                         f"{_lit(f.get('title'))},{ev_sql})")
     except Exception as exc:  # noqa: BLE001
+        import traceback
+        print(f"[testing] scan {scan_id} failed on stage={timings.get('stage', '?')}: "
+              f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         detail = f"{type(exc).__name__}: {exc}"
         update(scan_id, state="error", stage="error", progress=100, verdict="Inconclusive",
                reason=f"ошибка сервиса тестирования: {detail}", timings=timings,

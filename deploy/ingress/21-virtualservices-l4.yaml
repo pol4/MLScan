@@ -1,0 +1,15 @@
+# VirtualService уровня 4 (интеграции). Применяется, когда namespace mlscan-integrations существует.
+# VirtualServices уровней 4–5 (интеграции, эксплуатация). Применяются, когда соответствующие
+# namespace уже развёрнуты: deploy/ingress/apply.sh применяет файл, только если namespace есть.
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mlscan-integrations
+  namespace: mlscan-integrations
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  hosts: ["integrations.mlscan.local"]
+  gateways: ["mlscan-ingress/mlscan-gateway"]
+  http:
+  - route:
+    - destination: {host: mlscan-integrations.mlscan-integrations.svc.cluster.local, port: {number: 8080}}

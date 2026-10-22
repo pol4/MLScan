@@ -58,8 +58,13 @@ Falco — **опциональный** компонент уровня 1: хос
 # namespace, ConfigMap'ы (harness + demo), deception, sinkhole, NetworkPolicy
 bash deploy/stage1/apply.sh
 
-# eBPF-мониторинг (Falco) — отдельно, в mlscan-monitoring
-bash deploy/stage1/60-falco.sh
+# eBPF-мониторинг (Falco) — ОПЦИОНАЛЬНО, отдельно:
+bash deploy/stage1/60-falco.sh            # или: bash deploy/install.sh 1 --with-falco
+
+# одна проверка в песочнице (транспорт уровня 1 — ConfigMap mlscan-samples):
+bash deploy/stage1/run-sandbox.sh evil2.pkl pickle            # образец по имени из CM
+bash deploy/stage1/run-sandbox.sh path/to/model.gguf gguf     # путь: файл сам попадает в CM
+SANDBOX_IMAGE=localhost:32000/mlscan-sandbox:v4 bash deploy/stage1/run-sandbox.sh model.safetensors safetensors
 ```
 
 Требуется доступ `kubectl` к кластеру (контекст `microk8s`) и `helm`.

@@ -10,29 +10,76 @@ kubectl apply -f "$HERE/00-namespace.yaml"
 echo "[2/6] Gateway (единая точка входа)"
 kubectl apply -f "$HERE/10-gateway.yaml"
 
+have_ns() { kubectl get ns "$1" >/dev/null 2>&1; }
+
 echo "[3/6] VirtualServices (маршрутизация по хостам)"
 kubectl apply -f "$HERE/20-virtualservices.yaml"
-
-echo "[4/6] Сервисы MLScan -> ClusterIP (убираем NodePort)"
-kubectl apply -f "$ROOT/deploy/stage3/30-service.yaml"
-kubectl apply -f "$ROOT/deploy/stage4/30-service.yaml"
-kubectl apply -f "$ROOT/deploy/stage5/20-service.yaml"
-kubectl apply -f "$ROOT/deploy/stage2/30-service.yaml"
-kubectl -n mlscan-testing delete svc mlscan-testing-api --ignore-not-found >/dev/null 2>&1 || true
-
-echo "[5/6] Egress-политики (deny-by-default + DNS + внутрикластерный allowlist)"
-API_IP=$(kubectl -n default get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
-if [ -n "${API_IP:-}" ]; then
-  echo "  API-endpoint: ${API_IP} (подставляется в политику)"
-  sed "s#198\.51\.100\.10/32#${API_IP}/32#" "$HERE/30-egress-networkpolicies.yaml" | kubectl apply -f -
+if have_ns mlscan-integrations; then
+  kubectl apply -f "$HERE/21-virtualservices-l4.yaml"
 else
-  echo "  WARN: не удалось определить API-endpoint; применяю как есть (проверьте политику)"
-  kubectl apply -f "$HERE/30-egress-networkpolicies.yaml"
+  echo "  (VirtualService интеграций — уровень 4)"
+fi
+if have_ns mlscan-ops; then
+  kubectl apply -f "$HERE/22-virtualservices-l5.yaml"
+else
+  echo "  (VirtualService эксплуатации — уровень 5)"
 fi
 
-echo "[6/6] Проверка живости сервисов"
+echo "[4/6] Сервисы MLScan -> ClusterIP (убираем NodePort)"
+have_ns mlscan-testing && kubectl apply -f "$ROOT/deploy/stage2/30-service.yaml"
+have_ns mlscan-analytics && kubectl apply -f "$ROOT/deploy/stage3/30-service.yaml"
+have_ns mlscan-integrations && kubectl apply -f "$ROOT/deploy/stage4/30-service.yaml" \
+  || echo "  (mlscan-integrations не развёрнут — уровень 4)"
+have_ns mlscan-ops && kubectl apply -f "$ROOT/deploy/stage5/20-service.yaml" \
+  || echo "  (mlscan-ops не развёрнут — уровень 5)"
+
+echo "[5/6] Egress-политики (deny-by-default + DNS + внутрикластерный allowlist)"
+# Определяем реальный адрес API-сервера: сначала EndpointSlice (k8s 1.33+),
+# затем устаревшие Endpoints, иначе ClusterIP сервиса kubernetes.
+API_IP=$(kubectl get endpointslices.discovery.k8s.io -n default kubernetes \
+  -o jsonpath='{.endpoints[0].addresses[0]}' 2>/dev/null || true)
+[ -n "${API_IP:-}" ] || API_IP=$(kubectl -n default get endpoints kubernetes \
+  -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
+if [ -z "${API_IP:-}" ]; then
+  API_IP=$(kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  [ -n "${API_IP:-}" ] && echo "  (EndpointSlice недоступен; использую ClusterIP API $API_IP, порт 443 уже разрешён правилом 10.152.0.0/16)"
+fi
+if [ -n "${API_IP:-}" ]; then
+  sed "s#198\.51\.100\.10/32#${API_IP}/32#" "$HERE/30-egress-networkpolicies.yaml" | kubectl apply -f -
+else
+  # Заведомо неверный IP применять нельзя (это блокирует доступ сервисов к K8s API).
+  # Оставляем правило-заглушку из зарезервированного диапазона и громко предупреждаем.
+  sed "s#198\.51\.100\.10/32#240.0.0.0/32#" "$HERE/30-egress-networkpolicies.yaml" | kubectl apply -f -
+  echo "  ВНИМАНИЕ: не удалось определить API-IP — правило для API отключено (ClusterIP:443 разрешён отдельным правилом)"
+fi
+# Контроль: плейсхолдер не должен остаться в применённой политике (иначе сервисы теряют доступ к API)
+if kubectl -n mlscan-testing get networkpolicy mlscan-egress -o yaml 2>/dev/null | grep -q "198\.51\.100\.10"; then
+  echo "ОШИБКА: в применённой egress-политике остался плейсхолдер 198.51.100.10 — доступ к K8s API будет заблокирован" >&2
+  exit 1
+fi
+if have_ns mlscan-integrations; then
+  kubectl apply -f "$HERE/31-egress-networkpolicies-l4.yaml"
+else
+  echo "  (egress-политика интеграций — уровень 4)"
+fi
+if have_ns mlscan-ops; then
+  kubectl apply -f "$HERE/32-egress-networkpolicies-l5.yaml"
+else
+  echo "  (egress-политика эксплуатации — уровень 5)"
+fi
+
+echo "[6/6] Проверка живости сервисов (только развёрнутые уровни)"
 for ns in mlscan-testing mlscan-analytics mlscan-integrations mlscan-ops; do
-  kubectl -n "$ns" rollout status deploy/"$(kubectl -n "$ns" get deploy -o jsonpath='{.items[0].metadata.name}')" --timeout=120s >/dev/null 2>&1 || true
+  if ! have_ns "$ns"; then
+    echo "  ($ns ещё не развёрнут)"
+    continue
+  fi
+  dep="$(kubectl -n "$ns" get deploy -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [ -z "${dep:-}" ]; then
+    echo "  ($ns: Deployment'ов пока нет)"
+    continue
+  fi
+  kubectl -n "$ns" rollout status "deploy/$dep" --timeout=120s >/dev/null 2>&1 && echo "  $ns/$dep — ok" || echo "  $ns/$dep — проверьте состояние"
 done
 
 cat <<'TXT'

@@ -1,4 +1,6 @@
 # Egress-контроль платформенных namespace: deny-by-default наружу, разрешены
+# только DNS и внутрикластерный трафик (service/pod CIDR). Базовые namespace (уровни 2–3).
+# Egress-контроль платформенных namespace: deny-by-default наружу, разрешены
 # только DNS и внутрикластерный трафик (service/pod CIDR). Заменяет неявный
 # «открытый egress» платформенных сервисов на явный allowlist.
 # Песочница (mlscan-sandbox) имеет собственную, более строгую политику.
@@ -25,6 +27,7 @@ spec:
   - to:
     - ipBlock: {cidr: 198.51.100.10/32}
     ports: [{protocol: TCP, port: 16443}, {protocol: TCP, port: 443}]
+
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -44,41 +47,3 @@ spec:
     - ipBlock: {cidr: 10.152.0.0/16}
     - ipBlock: {cidr: 10.1.0.0/16}
     ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 8090}, {protocol: TCP, port: 3900}, {protocol: TCP, port: 5432}]
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: mlscan-egress
-  namespace: mlscan-integrations
-  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
-spec:
-  podSelector: {}
-  policyTypes: [Egress]
-  egress:
-  - to:
-    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
-      podSelector: {matchLabels: {k8s-app: kube-dns}}
-    ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
-  - to:
-    - ipBlock: {cidr: 10.152.0.0/16}
-    - ipBlock: {cidr: 10.1.0.0/16}
-    ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 5432}, {protocol: TCP, port: 3900}, {protocol: TCP, port: 3903}]
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: mlscan-egress
-  namespace: mlscan-ops
-  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
-spec:
-  podSelector: {}
-  policyTypes: [Egress]
-  egress:
-  - to:
-    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
-      podSelector: {matchLabels: {k8s-app: kube-dns}}
-    ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
-  - to:
-    - ipBlock: {cidr: 10.152.0.0/16}
-    - ipBlock: {cidr: 10.1.0.0/16}
-    ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 5432}, {protocol: TCP, port: 3900}, {protocol: TCP, port: 3903}]

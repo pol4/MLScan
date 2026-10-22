@@ -169,9 +169,33 @@ case "$LEVEL" in
       O="http://127.0.0.1:$((PORTS_BASE + 3))"
       curl -fsS --noproxy '*' -H "Authorization: Bearer $KEY" "$O/metrics" 2>/dev/null | grep -q "^mlscan_" \
         && ok "ops: метрики Prometheus отдаются" || bad "ops: /metrics"
-      q=$(curl -fsS --noproxy '*' -H "Authorization: Bearer $KEY" "$O/quality" 2>/dev/null \
-          | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("tpr"), d.get("fpr"))' 2>/dev/null)
-      [ -n "${q:-}" ] && ok "ops: качество (TPR/FPR) = $q" || bad "ops: /quality"
+      # качество считается по golden-набору: сначала запускаем retest, затем ждём метрики
+      if curl -fsS --noproxy '*' -X POST -H "Authorization: Bearer $KEY" "$O/retest" >/dev/null 2>&1; then
+        info "ops: retest golden-набора запущен (38 образцов)"
+      else
+        bad "ops: POST /retest не сработал"
+      fi
+      q=""
+      for _ in $(seq 1 30); do
+        q=$(curl -fsS --noproxy '*' -H "Authorization: Bearer $KEY" "$O/quality" 2>/dev/null || true)
+        echo "$q" | grep -qE '"tpr": *[0-9]' && break
+        sleep 10
+      done
+      summary=$(printf '%s' "$q" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+tpr, fpr = d.get("tpr"), d.get("fpr")
+tp, tn, skipped = d.get("tp"), d.get("tn"), d.get("skipped")
+print(f"{tpr}|{fpr}|{tp}|{tn}|{skipped}")' 2>/dev/null)
+      IFS='|' read -r TPR FPR TP TN SKIP <<< "${summary:-|||}"
+      if [ "${TPR:-None}" = "1.0" ] && [ "${FPR:-None}" = "0.0" ]; then
+        ok "ops: качество TPR=$TPR FPR=$FPR (TP=$TP TN=$TN, в процессе=$SKIP)"
+      else
+        bad "ops: качество TPR=${TPR:-?} FPR=${FPR:-?} (ожидание TPR=1.0, FPR=0.0; TP=${TP:-?} TN=${TN:-?} в процессе=${SKIP:-?})"
+      fi
       kubectl -n mlscan-ops get cronjob >/dev/null 2>&1 && ok "ops: CronJob'ы (retest) есть" || bad "ops: нет CronJob"
       kubectl -n mlscan-data get cronjob mlscan-lifecycle >/dev/null 2>&1 \
         && ok "lifecycle: retention/TTL (mlscan-lifecycle)" || bad "lifecycle: нет CronJob mlscan-lifecycle"

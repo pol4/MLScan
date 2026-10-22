@@ -127,6 +127,8 @@ fi
 if [ "$LEVEL" -ge 4 ]; then
   step "[уровень 4] интеграции (реестр, CI-gate, SIEM, threat-intel)"
   bash "$HERE/stage4/apply.sh"
+  # VirtualServices и egress-политики для интеграций применяются, когда namespace уже есть
+  bash "$HERE/ingress/apply.sh" >/dev/null
 fi
 
 # ------------------------------------------------------------ уровень 5
@@ -134,6 +136,7 @@ if [ "$LEVEL" -ge 5 ]; then
   step "[уровень 5] эксплуатация (метрики, качество, retest, lifecycle)"
   bash "$HERE/stage5/apply.sh"
   bash "$HERE/v2/lifecycle/apply.sh"
+  bash "$HERE/ingress/apply.sh" >/dev/null    # + VirtualServices/egress для ops
 fi
 fi
 

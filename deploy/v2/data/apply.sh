@@ -25,21 +25,53 @@ kubectl -n "$NS" create configmap mlscan-s3client \
 kubectl apply -f "$HERE/20-garage.yaml"
 kubectl -n "$NS" rollout status statefulset/garage --timeout=240s
 
-echo "[4/6] инициализация Garage: layout, bucket, key"
+echo "[4/6] инициализация Garage: layout, bucket, key (идемпотентно)"
 NODE_ID=$(kubectl -n "$NS" exec garage-0 -c garage -- /garage status 2>/dev/null | grep -oE '^[0-9a-f]{16}' | head -1 || true)
 if [ -z "${NODE_ID:-}" ]; then
   echo "ОШИБКА: не удалось получить node id Garage:"; kubectl -n "$NS" exec garage-0 -c garage -- /garage status || true; exit 1
 fi
-kubectl -n "$NS" exec garage-0 -c garage -- /garage layout assign -z dc1 -c 700G "$NODE_ID" || true
-kubectl -n "$NS" exec garage-0 -c garage -- /garage layout apply --version 1 || true
-kubectl -n "$NS" exec garage-0 -c garage -- /garage bucket create "$BUCKET" || true
-kubectl -n "$NS" exec garage-0 -c garage -- /garage key create "$KEYNAME" || true
-kubectl -n "$NS" exec garage-0 -c garage -- /garage bucket allow --read --write --owner "$BUCKET" --key "$KEYNAME" || true
 
-INFO=$(kubectl -n "$NS" exec garage-0 -c garage -- /garage key info --show-secret "$KEYNAME")
+# layout: применяем только если ещё не применён (повторный apply ломается: "Invalid new layout version")
+LAYOUT_VER=$(kubectl -n "$NS" exec garage-0 -c garage -- /garage layout show 2>/dev/null \
+  | sed -n 's/.*layout version: *//p' | head -1 || true)
+if [ -z "${LAYOUT_VER:-}" ] || [ "${LAYOUT_VER:-0}" = "0" ]; then
+  kubectl -n "$NS" exec garage-0 -c garage -- /garage layout assign -z dc1 -c 700G "$NODE_ID" >/dev/null 2>&1 || true
+  kubectl -n "$NS" exec garage-0 -c garage -- /garage layout apply --version 1 >/dev/null 2>&1 || true
+fi
+
+garage_cli() { kubectl -n "$NS" exec garage-0 -c garage -- /garage "$@" 2>/dev/null; }
+
+# bucket — только если отсутствует
+if ! garage_cli bucket list | awk '{print $1}' | grep -qx "$BUCKET"; then
+  garage_cli bucket create "$BUCKET" >/dev/null 2>&1 || true
+fi
+garage_cli bucket list | awk '{print $1}' | grep -qx "$BUCKET" || {
+  echo "ОШИБКА: bucket $BUCKET не создан"; exit 1; }
+
+# ключ: ищем существующий по имени, иначе создаём; дальше работаем только по ID,
+# чтобы не ловить "N matching keys" при повторных запусках
+key_id() { garage_cli key list | awk -v n="$KEYNAME" '$2 == n {print $1; exit}'; }
+KEY_ID="$(key_id)"
+if [ -z "$KEY_ID" ]; then
+  garage_cli key create "$KEYNAME" >/dev/null 2>&1 || true
+  KEY_ID="$(key_id)"
+fi
+[ -n "$KEY_ID" ] || { echo "ОШИБКА: ключ $KEYNAME не создан"; exit 1; }
+
+garage_cli bucket allow --read --write --owner "$BUCKET" --key "$KEY_ID" >/dev/null 2>&1 || true
+
+# лишние дубликаты ключей с тем же именем (появлялись при повторной установке) — удаляем
+for dup in $(garage_cli key list | awk -v n="$KEYNAME" -v keep="$KEY_ID" '$2 == n && $1 != keep {print $1}'); do
+  echo "  удаляю дубликат ключа $dup ($KEYNAME)"
+  garage_cli key delete --yes "$dup" >/dev/null 2>&1 || true
+done
+
+INFO=$(garage_cli key info --show-secret "$KEY_ID" || true)
 ACCESS=$(printf '%s\n' "$INFO" | sed -n 's/^Key ID: *//p' | head -1)
 SECRET=$(printf '%s\n' "$INFO" | sed -n 's/^Secret key: *//p' | head -1)
-if [ -z "$ACCESS" ] || [ -z "$SECRET" ]; then echo "ОШИБКА: ключ не получен:"; echo "$INFO"; exit 1; fi
+if [ -z "$ACCESS" ] || [ -z "$SECRET" ]; then
+  echo "ОШИБКА: не удалось получить реквизиты ключа $KEY_ID:"; echo "$INFO"; exit 1
+fi
 
 echo "[5/6] Secret с реквизитами S3 для сервисов"
 kubectl -n "$NS" create secret generic mlscan-s3 \
