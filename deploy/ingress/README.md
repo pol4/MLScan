@@ -67,13 +67,30 @@ bash deploy/install.sh 3 --with-tls        # или: NODE_IP=<ip> bash deploy/in
 При удалении MLScan не забудьте убрать наш Secret из общего namespace:
 `kubectl -n istio-system delete secret mlscan-tls`.
 
+### Firefox/Chrome: как не наткнуться на SSL_ERROR_RX_RECORD_TOO_LONG
+
+Браузеры с включённым «HTTPS-Only» (Firefox) или автоподъёмом на HTTPS сначала пробуют `https://`.
+Если вы открываете **HTTP-порт 30217** по HTTPS, handshake уходит в HTTP-порт и появляется эта
+ошибка. Варианты:
+
+* открыть явно `http://analytics.mlscan.local:30217` (в Firefox на странице ошибки — «Continue to
+  HTTP Site», либо добавьте исключение: Настройки → Приватность → Только HTTPS → Исключения →
+  `analytics.mlscan.local`);
+* включить TLS (`bash deploy/ingress/40-tls.sh`) и пользоваться `https://analytics.mlscan.local:30921`
+  (самоподписанный сертификат: «Дополнительно» → «Принять риск»).
+
+TLS-сервер применяется **декларативно** (`15-gateway-tls.yaml`): `ingress/apply.sh` восстанавливает
+его при каждом запуске, если Secret `mlscan-tls` существует (иначе `kubectl apply` базового
+`10-gateway.yaml` сбрасывал HTTPS-сервер и TLS «пропадал» после переустановки).
+
 ### Файлы по уровням
 
 Манифесты разделены по уровням, чтобы `install.sh N` работал на любом уровне и после апгрейда:
 
 | Файл | Уровень | Объекты |
 |------|---------|---------|
-| `00-namespace.yaml`, `10-gateway.yaml` | 3 | namespace `mlscan-ingress`, Gateway |
+| `00-namespace.yaml`, `10-gateway.yaml` | 3 | namespace `mlscan-ingress`, Gateway (HTTP) |
+| `15-gateway-tls.yaml` | 3 (если TLS включён) | Gateway с HTTP **и** HTTPS (применяется автоматически при наличии Secret `mlscan-tls`) |
 | `20-virtualservices.yaml` | 3 | VirtualServices: analytics, api (testing) |
 | `21-virtualservices-l4.yaml` / `22-virtualservices-l5.yaml` | 4 / 5 | VirtualServices: integrations / ops |
 | `30-egress-networkpolicies.yaml` | 3 | egress-политики: testing, analytics |

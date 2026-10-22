@@ -47,23 +47,7 @@ else
 fi
 
 echo "[2/3] HTTPS-сервер на Gateway $GW_NAME (:443, TLS SIMPLE, secret=$SECRET)"
-python3 - "$NS" "$GW_NAME" "$SECRET" "$HOSTS" <<'PY' | kubectl apply -f - >/dev/null
-import json, subprocess, sys
-ns, gw, secret, hosts = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].split()
-cur = json.loads(subprocess.check_output(
-    ["kubectl", "-n", ns, "get", "gateway", gw, "-o", "json"], text=True))
-spec = cur["spec"]
-if not any(s.get("port", {}).get("number") == 443 for s in spec.get("servers", [])):
-    spec.setdefault("servers", []).append({
-        "port": {"number": 443, "name": "https", "protocol": "HTTPS"},
-        "tls": {"mode": "SIMPLE", "credentialName": secret},
-        "hosts": hosts,
-    })
-obj = {"apiVersion": "networking.istio.io/v1beta1", "kind": "Gateway",
-       "metadata": {"name": gw, "namespace": ns, "labels": cur["metadata"].get("labels", {})},
-       "spec": spec}
-print(json.dumps(obj))
-PY
+bash "$HERE/apply.sh" >/dev/null
 
 echo "[3/3] проверка"
 HTTPS_PORT="$(kubectl -n istio-system get svc istio-ingressgateway \

@@ -1,0 +1,26 @@
+# Gateway MLScan с HTTPS (применяется поверх 10-gateway.yaml, если есть Secret mlscan-tls).
+# Общий istio-ingressgateway слушает 443 -> NodePort 30921; сертификат читается шлюзом из
+# namespace istio-system (см. deploy/ingress/40-tls.sh).
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: mlscan-gateway
+  namespace: mlscan-ingress
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port: {number: 80, name: http, protocol: HTTP}
+    hosts:
+    - analytics.mlscan.local
+    - integrations.mlscan.local
+    - ops.mlscan.local
+    - api.mlscan.local
+  - port: {number: 443, name: https, protocol: HTTPS}
+    tls: {mode: SIMPLE, credentialName: mlscan-tls}
+    hosts:
+    - analytics.mlscan.local
+    - integrations.mlscan.local
+    - ops.mlscan.local
+    - api.mlscan.local

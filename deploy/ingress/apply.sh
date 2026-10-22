@@ -9,6 +9,13 @@ kubectl apply -f "$HERE/00-namespace.yaml"
 
 echo "[2/6] Gateway (единая точка входа)"
 kubectl apply -f "$HERE/10-gateway.yaml"
+# TLS — декларативно: если сертификат выпущен (40-tls.sh), HTTPS-сервер восстанавливается
+# при каждом применении (иначе kubectl apply из 10-gateway.yaml «снёс» бы его)
+if kubectl -n mlscan-ingress get secret mlscan-tls >/dev/null 2>&1 || kubectl -n istio-system get secret mlscan-tls >/dev/null 2>&1; then
+  kubectl apply -f "$HERE/15-gateway-tls.yaml"
+else
+  echo "  (HTTPS не настроен: включить — bash deploy/ingress/40-tls.sh)"
+fi
 
 have_ns() { kubectl get ns "$1" >/dev/null 2>&1; }
 
