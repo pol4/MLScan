@@ -206,8 +206,14 @@ print(f"{tpr}|{fpr}|{tp}|{tn}|{skipped}")' 2>/dev/null)
 
     if [ "$FULL" = "--full" ]; then
       info "полный прогон корпуса (141 образец, ~1 час)…"
-      python3 "$ROOT/tests/vulnerabilities/run_tests.py" --url "$T" --key "$KEY" \
-        --out /tmp/mlscan-corpus.md 2>&1 | tail -6
+      if [ "$LEVEL" -ge 3 ] && [ -n "${A:-}" ]; then
+        python3 "$ROOT/tests/vulnerabilities/run_tests.py" --url "$T" --analytics-url "$A" \
+          --key "$KEY" --out /tmp/mlscan-corpus.md 2>&1 | tail -8
+      else
+        python3 "$ROOT/tests/vulnerabilities/run_tests.py" --url "$T" \
+          --key "$KEY" --out /tmp/mlscan-corpus.md 2>&1 | tail -8
+      fi
+      grep -E "Обнаружено|ложных|Пропущено" /tmp/mlscan-corpus.md 2>/dev/null || true
     fi
     ;;
   *) echo "Использование: bash deploy/verify.sh <0..5> [--full]"; exit 2 ;;

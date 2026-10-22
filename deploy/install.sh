@@ -144,6 +144,10 @@ cat <<EOF
 
 Уровень $LEVEL развёрнут.
   Проверка:        bash deploy/verify.sh $LEVEL
-  Что дальше:      deploy/upgrade.md (переход на уровень $((LEVEL + 1)))
   Состав уровней:  deploy/README.md
 EOF
+if [ "$LEVEL" -lt 5 ]; then
+  echo "  Что дальше:      deploy/upgrade.md (переход на уровень $((LEVEL + 1)))"
+else
+  echo "  Что дальше:      верхний уровень — эксплуатационные регламенты в deploy/stage5/README.md"
+fi

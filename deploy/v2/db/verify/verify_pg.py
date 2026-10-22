@@ -26,11 +26,21 @@ pg.query("INSERT INTO artifacts(sha256,size,filename,s3_key) VALUES "
 cols, rows = pg.query("SELECT sha256,size FROM artifacts WHERE sha256='pgclient-test'")
 print("select:", rows)
 
-try:
-    pg.query("UPDATE evidence SET scan_id='x'")
+import time
+enforced = False
+reason = ""
+for _ in range(15):
+    try:
+        pg.query("UPDATE evidence SET scan_id='x'")
+        time.sleep(1)          # на свежей БД схема/триггеры могут применяться параллельно
+    except Exception as exc:  # noqa: BLE001
+        enforced = True
+        reason = str(exc)[:60]
+        break
+if enforced:
+    print("append-only OK:", reason)
+else:
     print("append-only: NOT enforced (unexpected)")
-except Exception as exc:  # noqa: BLE001
-    print("append-only OK:", str(exc)[:60])
 
 pg.close()
 print("PG CLIENT VERIFY OK")
