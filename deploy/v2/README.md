@@ -271,6 +271,20 @@ Harness песочницы умеет **исполнять entry-код** model-
 Проверено: `evil_reqs.zip` → Malicious (install-hooks + code), `evil_polyglot.png` → Malicious
 (polyglot), `evil_url_config/evil_steg/evil_blob` → Needs review, `benign_image.png` → Safe.
 
+## Пользователи UI: пароли (реализовано)
+
+`deploy/v2/auth/users.sh` создаёт/дополняет пользователей `admin` и `analyst`:
+
+* явный пароль (`MLSCAN_ADMIN_PASSWORD` / `MLSCAN_ANALYST_PASSWORD` или `PASS_ADMIN`/`PASS_ANALYST`)
+  — устанавливается (в т.ч. сброс);
+* если пользователь уже есть и пароль не задан — пароль **сохраняется** (повторные установки его
+  не «уводят»; раньше генерировался новый на каждый запуск — из-за этого после переустановки было
+  непонятно, какой пароль актуален);
+* если пользователя нет — генерируется случайный, печатается и сохраняется в `/tmp/mlscan-users.json`
+  (`--show` показывает сохранённые пароли).
+
+Проверка: `bash deploy/verify.sh 3` включает вход в UI по паролю (берётся из переменной или файла).
+
 ## Язык UI и сообщений: RU/EN (реализовано)
 
 UI и сообщения сервисов локализованы: переключатель языка в шапке UI (cookie `mlscan_lang`),

@@ -149,6 +149,19 @@ case "$LEVEL" in
       # вход в UI по API-ключу и страница входа
       curl -fsS --noproxy '*' "$A/login" 2>/dev/null | grep -qi "Вход\|Sign in" \
         && ok "UI: страница входа отдаётся" || bad "UI: страница входа"
+      # вход по паролю (API-ключ проверяется отдельно): иначе «тесты проходят, а в UI не войти»
+      ui_pass="${MLSCAN_ADMIN_PASSWORD:-}"
+      if [ -z "$ui_pass" ] && [ -f /tmp/mlscan-users.json ]; then
+        ui_pass=$(python3 -c 'import json;print(json.load(open("/tmp/mlscan-users.json")).get("admin",""))' 2>/dev/null || true)
+      fi
+      if [ -n "$ui_pass" ]; then
+        code=$(curl -sS --noproxy '*' -o /dev/null -w '%{http_code}' -X POST \
+          --data-urlencode "username=admin" --data-urlencode "password=$ui_pass" "$A/login" 2>/dev/null)
+        [ "$code" = "302" ] && ok "UI: вход по паролю admin выполнен (302)" \
+          || bad "UI: вход по паролю admin не выполнен (HTTP ${code:-?}) — пароль мог измениться; сброс: MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh"
+      else
+        info "UI: пароль admin неизвестен — вход по паролю не проверен; сброс/установка: MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh"
+      fi
     fi
 
     if [ "$LEVEL" -ge 4 ]; then

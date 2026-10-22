@@ -273,6 +273,12 @@ score and policy action (the current stand holds 3575 scans):
 
 ![MLScan UI — dashboard](docs/img/en/ui-dashboard.png)
 
+**UI credentials.** Users are created by the level-3 installation: `admin` (role `admin`) and
+`analyst` (role `analyst`). The passwords are **printed by `bash deploy/install.sh 3`** and stored in
+`/tmp/mlscan-users.json`; show them later with `bash deploy/v2/auth/users.sh --show`, set or reset with
+`MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh`. Re-running the installation **does not
+change** the passwords. API-key sign-in (CI/scripts) — `bash deploy/v2/auth/keys.sh`.
+
 **Settings** — the global message language of the whole system (available to the `admin` role; stored
 in the database and applied by every service to new and historical records):
 

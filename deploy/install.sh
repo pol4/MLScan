@@ -156,3 +156,22 @@ if [ "$LEVEL" -lt 5 ]; then
 else
   echo "  Что дальше:      верхний уровень — эксплуатационные регламенты в deploy/stage5/README.md"
 fi
+if [ "$LEVEL" -ge 3 ]; then
+  echo
+  echo "  Вход в UI (роли admin/analyst):"
+  if [ -f /tmp/mlscan-users.json ]; then
+    python3 - <<'PY'
+import json
+try:
+    for user, pwd in json.load(open("/tmp/mlscan-users.json")).items():
+        print(f"    {user} / {pwd}")
+except Exception:
+    pass
+PY
+    echo "    (файл /tmp/mlscan-users.json; показать позже: bash deploy/v2/auth/users.sh --show)"
+  else
+    echo "    пароли неизвестны — задайте: MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh"
+  fi
+  echo "    Сброс пароля:    MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh"
+  echo "    Вход по API-ключу: bash deploy/v2/auth/keys.sh (печатает ключи)"
+fi

@@ -52,6 +52,16 @@ Testing Service (Этап 2)  ──HTTP──▶  Analytics Engine (Этап 3)
 | GET | `/settings` | **UI**: настройки (выбор языка системы), только роль `admin` |
 | POST | `/settings/language` | смена глобального языка системы, только роль `admin` |
 
+### Вход в UI
+
+* Пользователи: `admin` (роль `admin`), `analyst` (роль `analyst`, `ci-reader`).
+* Пароли создаются при установке, **печатаются в выводе `install.sh`** и хранятся в
+  `/tmp/mlscan-users.json`. Показать: `bash deploy/v2/auth/users.sh --show`; задать/сбросить:
+  `MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh` (повторная установка пароли не меняет).
+* Вход по API-ключу (для CI): ключи печатает `bash deploy/v2/auth/keys.sh`.
+* Сессия — 12 часов; при истечении UI возвращает на `/login?expired=1` с пояснением.
+* Проверка: `bash deploy/verify.sh 3` (в т.ч. вход по паролю admin).
+
 ### Полнота покрытия в вердикте
 
 Аналитика учитывает `coverage` из сервиса тестирования: если какой-то модуль не отработал,

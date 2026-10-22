@@ -48,6 +48,17 @@ RuntimeClass `kata`, Garage/PostgreSQL или доступа к Secret с клю
   идемпотентность Garage, уровневая раскладка ingress и определение адреса K8s API, метрики качества,
   гонка append-only проверки, why-порт-форварды в `--full`).
 
+## Учётные данные
+
+| Что | Где взять | Сброс/установка |
+|-----|-----------|-----------------|
+| Пароли UI (`admin`, `analyst`, уровень 3+) | печатаются `install.sh 3+`; файл `/tmp/mlscan-users.json` | `bash deploy/v2/auth/users.sh --show`; `MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh` |
+| API-ключи (CI/скрипты, роли admin/ci-reader/service) | `bash deploy/v2/auth/keys.sh` (печатает ключи, они же в Secret `mlscan-keys`) | пересоздать: `bash deploy/v2/auth/keys.sh` + `rollout restart` сервисов |
+
+Повторные запуски `install.sh` пароли UI **не меняют** (сохраняются), ключи API берутся из Secret.
+Проверка уровня 3+ включает вход в UI **по паролю** и по API-ключу; если пароль неизвестен,
+`verify.sh` сообщает об этом явно и подсказывает команду сброса.
+
 ## Опциональные компоненты
 
 | Компонент | Уровень | Зачем | Установка | Проверка |

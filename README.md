@@ -274,6 +274,12 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 
 ![MLScan UI — дашборд](docs/img/ui-dashboard.png)
 
+**Учётные данные UI.** Пользователи создаются при установке уровня 3: `admin` (роль `admin`) и
+`analyst` (роль `analyst`). Пароли **печатаются в выводе `bash deploy/install.sh 3`** и хранятся в
+`/tmp/mlscan-users.json`; показать позже — `bash deploy/v2/auth/users.sh --show`, задать/сбросить —
+`MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh`. Повторные запуски установки пароли
+**не меняют**. Вход по API-ключу (для CI/скриптов) — `bash deploy/v2/auth/keys.sh`.
+
 **Настройки** — глобальный язык сообщений всей системы (доступно роли `admin`; сохраняется в БД,
 применяется ко всем сервисам для новых и исторических записей):
 
