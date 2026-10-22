@@ -14,6 +14,9 @@ ROOT="$(cd "$HERE/.." && pwd)"
 LEVEL="${1:-}"
 FULL="${2:-}"
 SAMPLES="$ROOT/tests/vulnerabilities/samples"
+PF_PIDS=()
+cleanup_pf() { for pid in "${PF_PIDS[@]:-}"; do [ -n "$pid" ] && kill "$pid" 2>/dev/null || true; done; }
+trap cleanup_pf EXIT
 PORTS_BASE=$((19400 + LEVEL * 20))
 FAIL=0
 
@@ -102,6 +105,7 @@ case "$LEVEL" in
     [ -n "$KEY" ] || { bad "не удалось получить admin API-ключ из Secret mlscan-keys"; exit 1; }
     kubectl -n "$NS_TEST" port-forward svc/mlscan-testing "$PORTS_BASE:8080" >/dev/null 2>&1 &
     PF_TEST=$!
+    PF_PIDS+=("$PF_TEST")
     sleep 4
     T="http://127.0.0.1:$PORTS_BASE"
     curl -fsS --noproxy '*' "$T/healthz" >/dev/null 2>&1 && ok "тестирование: /healthz" || bad "тестирование: /healthz"
@@ -125,13 +129,14 @@ case "$LEVEL" in
     fi
     kubectl -n mlscan-data get statefulset garage postgres >/dev/null 2>&1 \
       && ok "S3 (Garage) и PostgreSQL развёрнуты" || bad "нет Garage/PostgreSQL (нужен уровень 2)"
-    kill "$PF_TEST" 2>/dev/null || true
+    # порт-форварды не закрываем: они нужны шагу --full; очистка — в конце скрипта
 
     if [ "$LEVEL" -ge 3 ]; then
       kubectl -n mlscan-analytics get deploy mlscan-analytics >/dev/null 2>&1 \
         || bad "нет аналитики (уровень 3)"
       kubectl -n mlscan-analytics port-forward svc/mlscan-analytics "$((PORTS_BASE + 1)):8080" >/dev/null 2>&1 &
       PF_AN=$!
+    PF_PIDS+=("$PF_AN")
       sleep 4
       A="http://127.0.0.1:$((PORTS_BASE + 1))"
       curl -fsS --noproxy '*' -H "Authorization: Bearer $KEY" "$A/healthz" >/dev/null 2>&1 \
@@ -144,7 +149,6 @@ case "$LEVEL" in
       # вход в UI по API-ключу и страница входа
       curl -fsS --noproxy '*' "$A/login" 2>/dev/null | grep -qi "Вход\|Sign in" \
         && ok "UI: страница входа отдаётся" || bad "UI: страница входа"
-      kill "$PF_AN" 2>/dev/null || true
     fi
 
     if [ "$LEVEL" -ge 4 ]; then
@@ -152,19 +156,20 @@ case "$LEVEL" in
         || bad "нет интеграций (уровень 4)"
       kubectl -n mlscan-integrations port-forward svc/mlscan-integrations "$((PORTS_BASE + 2)):8080" >/dev/null 2>&1 &
       PF_IN=$!
+    PF_PIDS+=("$PF_IN")
       sleep 4
       I="http://127.0.0.1:$((PORTS_BASE + 2))"
       curl -fsS --noproxy '*' -H "Authorization: Bearer $KEY" "$I/healthz" >/dev/null 2>&1 \
         && ok "интеграции: /healthz" || bad "интеграции: /healthz"
       curl -fsS --noproxy '*' -H "Authorization: Bearer $KEY" "$I/registry" >/dev/null 2>&1 \
         && ok "интеграции: реестр доступен" || bad "интеграции: /registry"
-      kill "$PF_IN" 2>/dev/null || true
     fi
 
     if [ "$LEVEL" -ge 5 ]; then
       kubectl -n mlscan-ops get deploy mlscan-ops >/dev/null 2>&1 || bad "нет ops (уровень 5)"
       kubectl -n mlscan-ops port-forward svc/mlscan-ops "$((PORTS_BASE + 3)):8080" >/dev/null 2>&1 &
       PF_OP=$!
+    PF_PIDS+=("$PF_OP")
       sleep 4
       O="http://127.0.0.1:$((PORTS_BASE + 3))"
       curl -fsS --noproxy '*' -H "Authorization: Bearer $KEY" "$O/metrics" 2>/dev/null | grep -q "^mlscan_" \
@@ -201,19 +206,31 @@ print(f"{tpr}|{fpr}|{tp}|{tn}|{skipped}")' 2>/dev/null)
         && ok "lifecycle: retention/TTL (mlscan-lifecycle)" || bad "lifecycle: нет CronJob mlscan-lifecycle"
       kubectl -n mlscan-data get cronjob mlscan-pg-backup >/dev/null 2>&1 \
         && ok "backup: mlscan-pg-backup" || bad "backup: нет CronJob mlscan-pg-backup"
-      kill "$PF_OP" 2>/dev/null || true
     fi
 
     if [ "$FULL" = "--full" ]; then
       info "полный прогон корпуса (141 образец, ~1 час)…"
-      if [ "$LEVEL" -ge 3 ] && [ -n "${A:-}" ]; then
+      # port-forward мог умереть за время проверок — при необходимости пересоздаём
+      if ! curl -fsS --noproxy '*' "$T/healthz" >/dev/null 2>&1; then
+        kubectl -n mlscan-testing port-forward svc/mlscan-testing "$PORTS_BASE:8080" >/dev/null 2>&1 &
+        PF_PIDS+=($!); sleep 4
+        curl -fsS --noproxy '*' "$T/healthz" >/dev/null 2>&1 || bad "корпус: сервис тестирования недоступен ($T)"
+      fi
+      if [ "$LEVEL" -ge 3 ] && [ -n "${A:-}" ] && curl -fsS --noproxy '*' -H "Authorization: Bearer $KEY" "$A/healthz" >/dev/null 2>&1; then
         python3 "$ROOT/tests/vulnerabilities/run_tests.py" --url "$T" --analytics-url "$A" \
           --key "$KEY" --out /tmp/mlscan-corpus.md 2>&1 | tail -8
       else
         python3 "$ROOT/tests/vulnerabilities/run_tests.py" --url "$T" \
           --key "$KEY" --out /tmp/mlscan-corpus.md 2>&1 | tail -8
       fi
-      grep -E "Обнаружено|ложных|Пропущено" /tmp/mlscan-corpus.md 2>/dev/null || true
+      det="$(grep -oE 'Обнаружено \(malicious\): [0-9]+/[0-9]+' /tmp/mlscan-corpus.md 2>/dev/null | tail -1)"
+      fp="$(grep -oE 'Ложных срабатываний на benign: [0-9]+/[0-9]+' /tmp/mlscan-corpus.md 2>/dev/null | tail -1)"
+      got="${det##*: }"; tot="${got##*/}"
+      if [ -n "${got:-}" ] && [ "${got%%/*}" = "$tot" ]; then
+        ok "корпус: $det; $fp"
+      else
+        bad "корпус: ${det:-не запустился} (ожидание обнаружения 87/87); $fp"
+      fi
     fi
     ;;
   *) echo "Использование: bash deploy/verify.sh <0..5> [--full]"; exit 2 ;;
