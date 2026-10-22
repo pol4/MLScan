@@ -34,6 +34,39 @@ HTTP-порт **istio-ingressgateway** (NodePort `30217`, HTTPS `30921`) — о�
 используйте EndpointSlice. Симптом ошибки, если правило для API настроено неверно: сканы падают с
 `ошибка сервиса тестирования: TimeoutError: timed out` (сервис не может создать Job песочницы).
 
+### TLS (опционально): HTTPS рядом с HTTP
+
+По умолчанию Gateway слушает **только HTTP** (`http://analytics.mlscan.local:30217`). Если открыть
+UI по `https://…:30217`, браузер отправит TLS-хендшейк на HTTP-порт, получит HTTP-ответ и покажет
+**`SSL_ERROR_RX_RECORD_TOO_LONG`** (в логах шлюза это видно как `http1.codec_error`/400). Это не
+поломка сервиса — просто неверная схема для этого порта.
+
+Включается одной командой:
+
+```bash
+bash deploy/install.sh 3 --with-tls        # или: NODE_IP=<ip> bash deploy/ingress/40-tls.sh
+```
+
+Что делает `40-tls.sh`:
+
+* генерирует **самоподписанный** сертификат (`CN=mlscan.local`, SAN `DNS:mlscan.local`,
+  `DNS:*.mlscan.local`, `IP:<node>`);
+* создаёт Secret `mlscan-tls` в `mlscan-ingress` **и в `istio-system`** — общий
+  `istio-ingressgateway` читает TLS-секрет по `credentialName` из своего namespace (иначе в логах
+  `filter_chain_not_found` на 8443 и «initial fetch timed out … tls.v3.Secret»);
+* добавляет в `mlscan-gateway` HTTPS-сервер (:443, `tls.mode=SIMPLE`, `credentialName=mlscan-tls`).
+
+Адреса после включения:
+
+| Схема | Адрес | Примечание |
+|-------|-------|------------|
+| HTTP | `http://analytics.mlscan.local:30217` | работает всегда (CI/скрипты) |
+| HTTPS | `https://analytics.mlscan.local:30921` | самоподписанный сертификат → предупреждение браузера ожидаемо; **нужен Hostname (SNI), не IP** |
+
+Для доверенного сертификата положите свой Secret и передайте его: `SECRET=my-tls bash deploy/ingress/40-tls.sh`.
+При удалении MLScan не забудьте убрать наш Secret из общего namespace:
+`kubectl -n istio-system delete secret mlscan-tls`.
+
 ### Файлы по уровням
 
 Манифесты разделены по уровням, чтобы `install.sh N` работал на любом уровне и после апгрейда:

@@ -16,8 +16,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 LEVEL="${1:-}"
 WITH_FALCO="${WITH_FALCO:-0}"
+WITH_TLS="${WITH_TLS:-0}"
 for arg in "$@"; do
   [ "$arg" = "--with-falco" ] && WITH_FALCO=1
+  [ "$arg" = "--with-tls" ] && WITH_TLS=1
 done
 
 die() { echo "Ошибка: $*" >&2; exit 1; }
@@ -30,7 +32,7 @@ case "$LEVEL" in
 Использование: bash deploy/install.sh <0..5>
 
   0 — PoC: Python + Docker, без кластера (многоформатный статический анализ + динамика в Docker)
-  1 — изолированная песочница (Kata microVM) на одном узле Kubernetes (+ опция --with-falco)
+  1 — изолированная песочница (Kata microVM) на одном узле Kubernetes (+ опции --with-falco/--with-tls)
   2 — + сервис тестирования: S3 (Garage), PostgreSQL, приём больших артефактов
   3 — + аналитика, Policy Engine, append-only evidence, веб-UI (вход, RU/EN, /settings)
   4 — + интеграции: реестр моделей, CI-gate, SIEM-экспорт, threat-intel
@@ -126,6 +128,14 @@ if [ "$LEVEL" -ge 3 ]; then
   bash "$HERE/stage3/apply.sh"
   step "[уровень 3] внешний доступ (Istio Ingress) и egress-allowlist"
   bash "$HERE/ingress/apply.sh"
+  if [ "$WITH_TLS" = "1" ]; then
+    step "[уровень 3, опция] TLS для Ingress (самоподписанный сертификат)"
+    bash "$HERE/ingress/40-tls.sh"
+  else
+    echo "TLS для Ingress — ОПЦИОНАЛЬНО (по умолчанию UI по HTTP):"
+    echo "  bash deploy/install.sh 3 --with-tls    # или: NODE_IP=<ip> bash deploy/ingress/40-tls.sh"
+    echo "  без TLS используйте http://analytics.mlscan.local:30217 (https:// на этот порт даёт SSL-ошибку)"
+  fi
 fi
 
 # ------------------------------------------------------------ уровень 4
@@ -172,6 +182,16 @@ PY
   else
     echo "    пароли неизвестны — задайте: MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh"
   fi
+  # адреса доступа: HTTP всегда, HTTPS — если включён TLS на шлюзе
+  https_port="$(kubectl -n istio-system get svc istio-ingressgateway \
+    -o jsonpath='{range .spec.ports[?(@.name=="https")]}{.nodePort}{end}' 2>/dev/null || true)"
+  has_tls="$(kubectl -n mlscan-ingress get gateway mlscan-gateway \
+    -o jsonpath='{range .spec.servers[?(@.port.number==443)]}{.port.name}{end}' 2>/dev/null || true)"
+  if [ -n "${has_tls:-}" ]; then
+    echo "  UI по HTTPS:      https://analytics.mlscan.local:${https_port:-30921}  (самоподписанный сертификат — предупреждение браузера ожидаемо)"
+  fi
+  echo "  UI по HTTP:       http://analytics.mlscan.local:30217"
+  echo "    (SSL_ERROR_RX_RECORD_TOO_LONG = https:// на HTTP-порт 30217; включить HTTPS: bash deploy/ingress/40-tls.sh)"
   echo "    Сброс пароля:    MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh"
   echo "    Вход по API-ключу: bash deploy/v2/auth/keys.sh (печатает ключи)"
 fi

@@ -48,6 +48,18 @@ RuntimeClass `kata`, Garage/PostgreSQL или доступа к Secret с клю
   идемпотентность Garage, уровневая раскладка ingress и определение адреса K8s API, метрики качества,
   гонка append-only проверки, why-порт-форварды в `--full`).
 
+## Адреса UI
+
+| Схема | Адрес | Когда |
+|-------|-------|-------|
+| HTTP | `http://analytics.mlscan.local:30217` | всегда (по умолчанию) |
+| HTTPS | `https://analytics.mlscan.local:30921` | после `install.sh 3 --with-tls` (самоподписанный сертификат) |
+
+Сначала добавьте хост в `/etc/hosts`: `<NODE_IP> analytics.mlscan.local ops.mlscan.local integrations.mlscan.local api.mlscan.local`.
+Ошибка браузера **`SSL_ERROR_RX_RECORD_TOO_LONG`** означает `https://` на HTTP-порт 30217 — используйте
+`http://…:30217` либо включите TLS и перейдите на порт 30921. Проверка уровня 3+ проверяет и HTTP, и
+HTTPS (если включён).
+
 ## Учётные данные
 
 | Что | Где взять | Сброс/установка |

@@ -149,6 +149,30 @@ case "$LEVEL" in
       # вход в UI по API-ключу и страница входа
       curl -fsS --noproxy '*' "$A/login" 2>/dev/null | grep -qi "Вход\|Sign in" \
         && ok "UI: страница входа отдаётся" || bad "UI: страница входа"
+      # HTTPS: проверяем только если TLS включён на шлюзе (иначе это ожидаемое INFO)
+      https_nodeport="$(kubectl -n istio-system get svc istio-ingressgateway \
+        -o jsonpath='{range .spec.ports[?(@.name=="https")]}{.nodePort}{end}' 2>/dev/null || true)"
+      tls_on="$(kubectl -n mlscan-ingress get gateway mlscan-gateway \
+        -o jsonpath='{range .spec.servers[?(@.port.number==443)]}{.port.name}{end}' 2>/dev/null || true)"
+      if [ -n "${tls_on:-}" ]; then
+        # NodePort доступен по IP узла (не по 127.0.0.1): берём NODE_IP, иначе адрес API-сервера
+        node_ip="${NODE_IP:-}"
+        [ -n "$node_ip" ] || node_ip="$(kubectl get endpointslices.discovery.k8s.io -n default kubernetes \
+          -o jsonpath='{.endpoints[0].addresses[0]}' 2>/dev/null || true)"
+        [ -n "$node_ip" ] || node_ip=127.0.0.1
+        hcode=$(curl -sS --noproxy '*' -k -m 8 -o /dev/null -w '%{http_code}' \
+          --resolve "analytics.mlscan.local:${https_nodeport:-30921}:${node_ip}" \
+          "https://analytics.mlscan.local:${https_nodeport:-30921}/login" 2>/dev/null || echo ERR)
+        if [ "$hcode" = "200" ]; then
+          ok "UI: HTTPS включён (NodePort ${https_nodeport:-30921}) — /login 200 (сертификат самоподписанный)"
+        elif [ "$hcode" = "000" ] || [ "$hcode" = "ERR" ]; then
+          info "UI: HTTPS настроен, но проверить из этого окружения не удалось (нужен доступ к NodePort ${https_nodeport:-30921} и SNI-хост)"
+        else
+          bad "UI: HTTPS вернул HTTP ${hcode} — проверьте Gateway/секрет mlscan-tls (istio-system)"
+        fi
+      else
+        info "UI: HTTPS не включён (по умолчанию HTTP :30217); включить: bash deploy/ingress/40-tls.sh"
+      fi
       # вход по паролю (API-ключ проверяется отдельно): иначе «тесты проходят, а в UI не войти»
       ui_pass="${MLSCAN_ADMIN_PASSWORD:-}"
       if [ -z "$ui_pass" ] && [ -f /tmp/mlscan-users.json ]; then

@@ -273,6 +273,12 @@ score and policy action (the current stand holds 3575 scans):
 
 ![MLScan UI — dashboard](docs/img/en/ui-dashboard.png)
 
+**UI address:** `http://analytics.mlscan.local:30217` (HTTP by default; HTTPS is optional:
+`bash deploy/install.sh 3 --with-tls` -> `https://analytics.mlscan.local:30921`, self-signed
+certificate). A browser error `SSL_ERROR_RX_RECORD_TOO_LONG` means `https://` was used on HTTP port
+30217 - use `http://...:30217` or enable TLS. Add the hosts first: `/etc/hosts` ->
+`<NODE_IP> analytics.mlscan.local ops.mlscan.local integrations.mlscan.local api.mlscan.local`.
+
 **UI credentials.** Users are created by the level-3 installation: `admin` (role `admin`) and
 `analyst` (role `analyst`). The passwords are **printed by `bash deploy/install.sh 3`** and stored in
 `/tmp/mlscan-users.json`; show them later with `bash deploy/v2/auth/users.sh --show`, set or reset with

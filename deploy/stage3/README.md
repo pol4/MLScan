@@ -52,6 +52,13 @@ Testing Service (Этап 2)  ──HTTP──▶  Analytics Engine (Этап 3)
 | GET | `/settings` | **UI**: настройки (выбор языка системы), только роль `admin` |
 | POST | `/settings/language` | смена глобального языка системы, только роль `admin` |
 
+### Адрес UI
+
+`http://analytics.mlscan.local:30217` (по умолчанию). HTTPS — опционально:
+`bash deploy/install.sh 3 --with-tls` (или `NODE_IP=<ip> bash deploy/ingress/40-tls.sh`) добавляет
+HTTPS на порт `30921` (самоподписанный сертификат; нужен Hostname/SNI). Ошибка
+`SSL_ERROR_RX_RECORD_TOO_LONG` в браузере означает `https://` на HTTP-порт — см. `deploy/ingress/README.md`.
+
 ### Вход в UI
 
 * Пользователи: `admin` (роль `admin`), `analyst` (роль `analyst`, `ci-reader`).

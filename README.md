@@ -274,6 +274,12 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 
 ![MLScan UI — дашборд](docs/img/ui-dashboard.png)
 
+**Адрес UI:** `http://analytics.mlscan.local:30217` (по умолчанию HTTP; HTTPS — опционально:
+`bash deploy/install.sh 3 --with-tls` → `https://analytics.mlscan.local:30921`, самоподписанный
+сертификат). Ошибка браузера `SSL_ERROR_RX_RECORD_TOO_LONG` = `https://` на HTTP-порт 30217:
+используйте `http://…:30217` или включите TLS. Перед открытием добавьте хост в `/etc/hosts`:
+`<NODE_IP> analytics.mlscan.local ops.mlscan.local integrations.mlscan.local api.mlscan.local`.
+
 **Учётные данные UI.** Пользователи создаются при установке уровня 3: `admin` (роль `admin`) и
 `analyst` (роль `analyst`). Пароли **печатаются в выводе `bash deploy/install.sh 3`** и хранятся в
 `/tmp/mlscan-users.json`; показать позже — `bash deploy/v2/auth/users.sh --show`, задать/сбросить —
