@@ -75,6 +75,12 @@ flowchart LR
 синтетический корпус (141 образец). Форматный анализ **не зависит от уровня**: адаптеры едины
 ([`poc/formats.py`](./poc/formats.py)), поэтому и PoC, и сервис проверяют один и тот же набор форматов.
 
+```bash
+bash deploy/install.sh 3        # поставить уровни 1→2→3 (идемпотентно; можно сразу 5)
+bash deploy/verify.sh 3         # проверка уровня «извне»
+bash deploy/verify.sh 5 --full  # + полный прогон корпуса (141 образец)
+```
+
 ---
 
 ## Зачем понадобилась более сложная архитектура и Kubernetes
@@ -244,7 +250,8 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 датасеты Parquet/Arrow, ONNX external_data, внешние ссылки HDF5, safetensors-метаданные.
 Безопасная часть — реальные файлы этих форматов и **пять образцов ~198 МБ**, генерируемых
 на лету и загружаемых сразу в сервис тестирования. **Результат: 87/87 обнаружено, 0 пропусков, 0/54 ложных срабатываний**; крупные
-модели — `Safe` с полным покрытием; метрики качества по форматам TPR=1.0, FPR=0.0.
+модели — `Safe` с полным покрытием; метрики качества по форматам TPR=1.0, FPR=0.0. Быстрый прогон корпуса на развёрнутом стенде —
+`bash deploy/verify.sh <уровень> --full`; генерация и детали — в README корпуса.
 
 ---
 
@@ -364,41 +371,6 @@ cat model.pkl | python3 poc/mlscan_poc.py - --name model.pkl        # ввод �
 Артефакт передаётся в контейнер **без расшаренных каталогов** (stdin + base64-бутстрап harness,
 результат — в stdout); вердикт учитывает полноту покрытия (`Inconclusive` + причина, если модуль
 не смог отработать).
-
----
-
-## Установка и проверка
-
-Установка выбранного уровня и его проверка (схема уровней — выше; подробности —
-[`deploy/README.md`](./deploy/README.md)):
-
-```bash
-bash deploy/install.sh 3        # уровни 1→2→3 со всеми зависимостями (идемпотентно; сразу 5 тоже можно)
-bash deploy/verify.sh 3         # сквозная проверка уровня «извне»
-bash deploy/verify.sh 5 --full  # + полный прогон синтетического корпуса (141 образец)
-```
-
-Если нужен ручной контроль по этапам — команды в README соответствующего каталога
-(эти же шаги выполняет `install.sh`):
-
-```bash
-bash deploy/stage1/apply.sh && bash deploy/stage1/60-falco.sh   # песочница + eBPF
-bash deploy/stage2/apply.sh                                      # сервис тестирования
-bash deploy/stage3/apply.sh                                      # аналитика + UI
-bash deploy/stage4/apply.sh                                      # интеграции
-bash deploy/stage5/apply.sh                                      # эксплуатация
-bash deploy/v2/data/apply.sh && bash deploy/v2/db/apply.sh       # v2: S3 + PostgreSQL
-bash deploy/v2/auth/keys.sh                                      # API-ключи (admin/ci/service)
-```
-
-Синтетический корпус (141 образец: 87 с закладками + 54 безопасных, включая ~198 МБ) —
-генерация и прогон описаны в [`tests/vulnerabilities/README.md`](./tests/vulnerabilities/README.md):
-
-```bash
-python3 tests/vulnerabilities/gen_corpus.py                 # базовые образцы (в репозитории)
-# образцы «волн 4–7» и безопасные генерируются в образе песочницы (см. tests/vulnerabilities/README.md)
-python3 tests/vulnerabilities/run_tests.py --url <testing-url> --analytics-url <analytics-url> --key <API_KEY>
-```
 
 ---
 

@@ -76,6 +76,12 @@ runs the synthetic corpus (141 samples). Format analysis does **not** depend on 
 adapters are shared ([`poc/formats.py`](./poc/formats.py)), so the PoC and the service inspect the
 same set of formats.
 
+```bash
+bash deploy/install.sh 3        # install levels 1->2->3 (idempotent; 5 also works)
+bash deploy/verify.sh 3         # verify the level from the outside
+bash deploy/verify.sh 5 --full  # plus a full corpus run (141 samples)
+```
+
 ---
 
 ## Why a more complex architecture and Kubernetes were needed
@@ -243,7 +249,8 @@ benign part contains real files of complex formats (safetensors, ONNX, HDF5, GGU
 numpy, archives, tokenizers, manifests) plus **five ~198 MB samples** generated on demand and
 uploaded straight to the testing service. **Result: 87/87 detected, 0 misses, 0/54 false
 positives**; the large models are `Safe` with complete coverage; per-format quality metrics
-TPR=1.0, FPR=0.0.
+TPR=1.0, FPR=0.0. A quick corpus run against a deployed stand is
+`bash deploy/verify.sh <level> --full`; generation and details are in the corpus README.
 
 ---
 
@@ -364,41 +371,6 @@ cat model.pkl | python3 poc/mlscan_poc.py - --name model.pkl        # stdin inpu
 The artefact is passed into the container **without shared directories** (stdin + a base64 bootstrap
 harness, the result goes to stdout); the verdict accounts for coverage completeness (`Inconclusive`
 with a reason when a module could not run).
-
----
-
-## Installation and verification
-
-Install and verify the level you chose (the level scheme is above; details in
-[`deploy/README.md`](./deploy/README.md)):
-
-```bash
-bash deploy/install.sh 3        # levels 1->2->3 with all dependencies (idempotent; 5 also works)
-bash deploy/verify.sh 3         # end-to-end verification of the level
-bash deploy/verify.sh 5 --full  # plus a full synthetic corpus run (141 samples)
-```
-
-If you prefer manual control per stage, use the commands from the corresponding directory README
-(`install.sh` performs exactly these steps):
-
-```bash
-bash deploy/stage1/apply.sh && bash deploy/stage1/60-falco.sh   # sandbox + eBPF
-bash deploy/stage2/apply.sh                                      # testing service
-bash deploy/stage3/apply.sh                                      # analytics + UI
-bash deploy/stage4/apply.sh                                      # integrations
-bash deploy/stage5/apply.sh                                      # operations
-bash deploy/v2/data/apply.sh && bash deploy/v2/db/apply.sh       # v2: S3 + PostgreSQL
-bash deploy/v2/auth/keys.sh                                      # API keys (admin/ci/service)
-```
-
-The synthetic corpus (141 samples: 87 malicious + 54 benign, including ~198 MB ones) - generation
-and execution are described in [`tests/vulnerabilities/README.md`](./tests/vulnerabilities/README.md):
-
-```bash
-python3 tests/vulnerabilities/gen_corpus.py                 # base samples (in the repository)
-# wave 4-7 and benign samples are generated inside the sandbox image (see tests/vulnerabilities/README.md)
-python3 tests/vulnerabilities/run_tests.py --url <testing-url> --analytics-url <analytics-url> --key <API_KEY>
-```
 
 ---
 
