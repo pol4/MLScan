@@ -153,6 +153,16 @@ requires a CI gate, a registry of verified artefacts and event export to a SIEM.
 
 ---
 
+## 4.1. Verified in practice
+
+The plan was verified on a clean cluster in two passes: **step by step 0 -> 1 -> 2 -> 3 -> 4 -> 5**
+(verifying every level) and **straight to the top level** with a single command
+(`install.sh 5 --with-falco`). The full verification result: every criterion `[OK]`, the synthetic
+corpus **87/87 detected, 0 missed, 0/54 false positives**, quality `TPR=1.0/FPR=0.0`. Installation
+defects found during these runs (sandbox demo scan, Garage idempotency, level-aware ingress manifests
+and K8s API address, quality metrics, append-only probe race, port-forwards in `--full`) are fixed in
+the deployment code.
+
 ## 5. Out of scope
 
 * Cross-zone storage replication and a DR runbook (in a single-node setup these are external procedures).
