@@ -53,7 +53,7 @@ RuntimeClass `kata`, Garage/PostgreSQL или доступа к Secret с клю
 | Схема | Адрес | Когда |
 |-------|-------|-------|
 | HTTP | `http://analytics.mlscan.local:30217` | всегда (по умолчанию) |
-| HTTPS | `https://analytics.mlscan.local:30921` | после `install.sh 3 --with-tls` (самоподписанный сертификат) |
+| HTTPS | `https://analytics.mlscan.local:30921` (или коротко `https://mlscan.local:30921`) | после `install.sh 3 --with-tls`; сертификат самоподписанный и покрывает `mlscan.local` + `*.mlscan.local` (по IP без SNI — не работает) |
 
 Сначала добавьте хост в `/etc/hosts`: `<NODE_IP> analytics.mlscan.local ops.mlscan.local integrations.mlscan.local api.mlscan.local`.
 Ошибка браузера **`SSL_ERROR_RX_RECORD_TOO_LONG`** означает `https://` на HTTP-порт 30217 — используйте

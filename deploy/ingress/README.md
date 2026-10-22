@@ -67,6 +67,22 @@ bash deploy/install.sh 3 --with-tls        # или: NODE_IP=<ip> bash deploy/in
 При удалении MLScan не забудьте убрать наш Secret из общего namespace:
 `kubectl -n istio-system delete secret mlscan-tls`.
 
+### Какой сертификат отдаётся (и почему «неправильный»)
+
+Наш Gateway объявляет HTTPS для **всего домена**: hosts `mlscan.local` и `*.mlscan.local`, поэтому
+сертификат `mlscan-tls` отдаётся для любого имени в домене (`analytics.mlscan.local`,
+`ops.mlscan.local`, `mlscan.local`, произвольный `*.mlscan.local`). SAN сертификата:
+`DNS:mlscan.local`, `DNS:*.mlscan.local`, `IP:<node>`.
+
+* **CA не менялся**: это отдельный самоподписанный листовой сертификат только для `mlscan.local`;
+  общий `istio-ca` и сертификаты других проектов не затрагиваются.
+* Соседние проекты на том же шлюзе продолжают получать **свои** сертификаты (проверено по SNI:
+  `app.aisandbox.local` → `CN=app.aisandbox.local`).
+* Если раньше имя вне списка (например, `mlscan.local`) отдавало «чужой» сертификат — это была
+  именно узкая настройка hosts; сейчас покрыт весь домен.
+* HTTPS **по IP без SNI** не поддерживается (у шлюза нет фильтра для пустого SNI) — используйте
+  имя хоста. Короткий адрес `https://mlscan.local:30921` тоже открывает UI (VirtualService `mlscan-root`).
+
 ### Firefox/Chrome: как не наткнуться на SSL_ERROR_RX_RECORD_TOO_LONG
 
 Браузеры с включённым «HTTPS-Only» (Firefox) или автоподъёмом на HTTPS сначала пробуют `https://`.
