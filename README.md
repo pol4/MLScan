@@ -299,6 +299,7 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 - `docs/06` план реализации (реализован) · `docs/07` as-built архитектура · `docs/08` тест-гайд
 - `docs/09` анализ других форматов/закладок · `docs/10` план расширения (волны) · `docs/11` целевая архитектура v2
 - `docs/12` локализация UI и сообщений (RU/EN) — [`docs/12-i18n.md`](./docs/12-i18n.md)
+- `docs/13` план поэтапного развёртывания (уровни 0–5) — [`docs/13-deployment-plan.md`](./docs/13-deployment-plan.md)
 - английские версии — [`docs/en/`](./docs/en)
 
 ---
@@ -320,8 +321,18 @@ for f in poc/scan/evil*.pkl; do python3 poc/mlscan_poc.py "$f"; done
 
 ## Проверка на кластере
 
-Каждый этап/волна разворачивается отдельным скриптом; подробности и команды — в README
-соответствующего каталога:
+**Выбор уровня развёртывания** — [`deploy/README.md`](./deploy/README.md): от PoC
+(Python + Docker, без кластера) до промышленного контура. Уровни самодостаточны, следующий
+только добавляет возможности (план — [`docs/13-deployment-plan.md`](./docs/13-deployment-plan.md)):
+
+```bash
+bash deploy/install.sh 0        # уровень 0: PoC — печатает инструкцию, кластер не нужен
+bash deploy/install.sh 3        # уровни 1→2→3 со всеми зависимостями (идемпотентно)
+bash deploy/install.sh 5        # сразу всё
+bash deploy/verify.sh 5         # сквозная проверка уровня (--full — полный корпус)
+```
+
+Детали по этапам (уровни 1–5) — в README соответствующего каталога:
 
 ```bash
 bash deploy/stage1/apply.sh && bash deploy/stage1/60-falco.sh   # песочница + eBPF

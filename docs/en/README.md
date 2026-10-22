@@ -19,6 +19,7 @@ are in [`docs/`](../).
 | 10 | [Plan: new formats](10-plan-new-formats.md) | extension waves |
 | 11 | [v2 target architecture](11-target-architecture-v2.md) | v2 target design |
 | 12 | [UI and message localisation (RU/EN)](12-i18n.md) | language switch and global language setting |
+| 13 | [Staged deployment plan](13-deployment-plan.md) | deployment levels 0-5, acceptance criteria, upgrade paths |
 
 Related:
 

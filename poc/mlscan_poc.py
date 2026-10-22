@@ -392,12 +392,126 @@ def detect_format(path: Path) -> str:
     return fmt
 
 
+# Минимальные подписи отчёта: PoC должен работать автономно (файл + Docker).
+_POC_LABELS = {
+    "ru": {"title": "Отчёт MLScanner PoC", "artifact": "Артефакт", "size": "Размер",
+           "bytes": "байт", "format": "Формат", "verdict": "Вердикт", "date": "Дата",
+           "static": "Статический анализ (L1)", "dynamic": "Динамический анализ в песочнице (L2)",
+           "behaviour": "Поведенческое тестирование (L3)", "coverage": "Полнота проверки",
+           "incomplete": "Проверка выполнена не полностью", "no_findings": "Находок нет.",
+           "cat": "Кат.", "sev": "Severity", "conf": "Уверенность", "finding": "Находка",
+           "evidence": "Доказательство", "members": "Просканированные члены контейнера",
+           "skipped": "Пропущен", "status": "Статус", "load": "Загрузка", "load_err": "ошибка загрузки",
+           "signals": "Сеть", "processes": "процессы", "exec": "exec", "mem_exec": "в памяти",
+           "writes": "запись файлов", "events": "Наблюдаемые события (первые 40)",
+           "stderr": "stderr контейнера", "beh_findings": "Находки по поведению",
+           "beh_skipped": "Пропущено (модель не загружена вне песочницы)."},
+    "en": {"title": "MLScanner PoC report", "artifact": "Artifact", "size": "Size",
+           "bytes": "bytes", "format": "Format", "verdict": "Verdict", "date": "Date",
+           "static": "Static analysis (L1)", "dynamic": "Dynamic analysis in the sandbox (L2)",
+           "behaviour": "Behavioural testing (L3)", "coverage": "Coverage",
+           "incomplete": "The scan is incomplete", "no_findings": "No findings.",
+           "cat": "Cat.", "sev": "Severity", "conf": "Confidence", "finding": "Finding",
+           "evidence": "Evidence", "members": "Container members scanned",
+           "skipped": "Skipped", "status": "Status", "load": "Load", "load_err": "load error",
+           "signals": "Network", "processes": "processes", "exec": "exec", "mem_exec": "in-memory",
+           "writes": "file writes", "events": "Observed events (first 40)",
+           "stderr": "container stderr", "beh_findings": "Behavioural findings",
+           "beh_skipped": "Skipped (the model was not loaded outside the sandbox)."},
+}
+I18N = None
+LANG = "ru"
+
+
+def _load_i18n():
+    """Общий модуль локализации (deploy/i18n) — если доступен, переводит и находки."""
+    here = Path(__file__).resolve().parent
+    for cand in (here / "i18n", here.parent / "deploy" / "i18n", Path("/opt/i18n")):
+        if (cand / "i18n.py").exists():
+            try:
+                sys.path.insert(0, str(cand))
+                import i18n as _i  # noqa: PLC0415
+                return _i
+            except Exception:  # noqa: BLE001
+                continue
+    return None
+
+
+def _t(key: str) -> str:
+    if I18N is not None:
+        full = {"title": "poc.title", "artifact": "poc.artifact", "size": "poc.size",
+                "bytes": "poc.bytes", "format": "poc.format", "verdict": "poc.verdict",
+                "date": "poc.date", "static": "poc.static", "dynamic": "poc.dynamic",
+                "behaviour": "poc.behaviour", "coverage": "poc.coverage",
+                "incomplete": "poc.incomplete", "no_findings": "poc.no_findings",
+                "cat": "poc.col.category", "sev": "poc.col.severity",
+                "conf": "poc.col.confidence", "finding": "poc.col.finding",
+                "evidence": "poc.col.evidence", "members": "poc.members"}.get(key, key)
+        return I18N.t(full, LANG)
+    return _POC_LABELS.get(LANG, _POC_LABELS["ru"]).get(key, key)
+
+
+def _tr(text):
+    """Перевод «свободных» строк (находки, причина) — требует общего модуля i18n."""
+    return I18N.tr(text, LANG) if I18N is not None else text
+
+
+def _sandbox_fmt(static: dict[str, Any]) -> str:
+    """Формат для динамического этапа: имя адаптера, как в сервисе тестирования."""
+    af = static.get("adapter_format")
+    if af in ("torchserve-mar", "model-as-code", "python"):
+        return "model-as-code"
+    if af == "torch-package":
+        return "zip"
+    known = ("safetensors", "onnx", "hdf5", "keras", "gguf", "tar", "zip", "config", "card",
+             "xml", "yaml", "tokenizer", "image", "pmml", "notebook", "script", "dataset",
+             "tflite", "coreml", "mlflow", "savedmodel", "jinja", "native", "sitepath",
+             "html", "dockerfile", "jsonl", "csv", "msgpack", "compressed", "unsupported")
+    if af in known:
+        return af
+    return static.get("format") or "pickle"
+
+
+def _format_adapter():
+    """Единый модуль адаптеров форматов (тот же, что использует сервис тестирования).
+
+    Уровень 0 (PoC) должен уметь анализировать много разных форматов без инфраструктуры,
+    поэтому адаптер лежит рядом: `poc/formats.py`. Если файла нет — PoC работает в режиме
+    только pickle.
+    """
+    try:
+        import formats as _fmt  # noqa: PLC0415
+        return _fmt
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def static_stage(path: Path) -> dict[str, Any]:
     try:
-        return _static_stage_impl(path)
+        result = _static_stage_impl(path)
     except Exception as e:  # noqa: BLE001
-        return {"format": "unknown", "size": 0, "findings": [], "members": [],
-                "ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+        result = {"format": "unknown", "size": 0, "findings": [], "members": [],
+                  "ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+    # Адаптеры форматов: структурные проверки safetensors/ONNX/HDF5/GGUF/Keras/архивов/
+    # ноутбуков/скриптов/док-ов/датасетов и т.д. Находки объединяются без дублей.
+    adapter = _format_adapter()
+    if adapter is not None:
+        try:
+            extra = adapter.static_scan(path)
+        except Exception as e:  # noqa: BLE001
+            extra = {"findings": [{"check_id": "FMT-00", "category": "FMT",
+                                   "title": "Ошибка адаптера формата", "severity": "low",
+                                   "confidence": 0.3, "evidence": str(e)}]}
+        known = {(f.get("check_id"), f.get("title")) for f in result["findings"]}
+        for f in extra.get("findings") or []:
+            if (f.get("check_id"), f.get("title")) not in known:
+                result["findings"].append(f)
+        fmt = extra.get("format")
+        if fmt:
+            result["adapter_format"] = fmt
+            if fmt != "pickle":
+                result["format"] = fmt
+    return result
 
 
 # Большие модели (сотни МБ) нельзя читать целиком в память сервиса: статика работает
@@ -1671,51 +1785,51 @@ def _decide_base(static: dict[str, Any], dynamic: dict[str, Any]) -> tuple[str, 
 def render_report(path: Path, sha: str, static: dict[str, Any],
                   dynamic: dict[str, Any], verdict: str, reason: str) -> str:
     L: list[str] = []
-    L.append("# Отчёт MLScanner PoC")
+    L.append(f"# {_t('title')}")
     L.append("")
-    L.append(f"- **Артефакт:** `{path.name}`")
-    L.append(f"- **Размер:** {static.get('size', 0)} байт")
+    L.append(f"- **{_t('artifact')}:** `{path.name}`")
+    L.append(f"- **{_t('size')}:** {static.get('size', 0)} {_t('bytes')}")
     L.append(f"- **SHA-256:** `{sha}`")
-    L.append(f"- **Формат:** `{static.get('format')}`")
-    L.append(f"- **Вердикт:** **{verdict}** — {reason}")
-    L.append(f"- **Дата:** {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    L.append(f"- **{_t('format')}:** `{static.get('format')}`")
+    L.append(f"- **{_t('verdict')}:** **{verdict}** — {_tr(reason)}")
+    L.append(f"- **{_t('date')}:** {time.strftime('%Y-%m-%d %H:%M:%S')}")
     L.append("")
-    L.append("## 1. Статический анализ (L1)")
+    L.append(f"## 1. {_t('static')}")
     findings = static.get("findings", [])
     if static.get("members"):
-        L.append(f"Просканированные члены контейнера: {', '.join(static['members'])}")
+        L.append(f"{_t('members')}: {', '.join(static['members'])}")
         L.append("")
     if not findings:
-        L.append("Находок нет.")
+        L.append(_t("no_findings"))
     else:
-        L.append("| ID | Кат. | Severity | Уверенность | Находка | Доказательство |")
+        L.append(f"| ID | {_t('cat')} | {_t('sev')} | {_t('conf')} | {_t('finding')} | {_t('evidence')} |")
         L.append("|----|------|----------|-------------|---------|----------------|")
         for f in sorted(findings, key=lambda x: -SEV_RANK.get(x["severity"], 0)):
             L.append("| {id} | {cat} | {sev} | {conf:.2f} | {title} | `{ev}` |".format(
                 id=f["check_id"], cat=f["category"], sev=f["severity"],
-                conf=f["confidence"], title=f["title"],
-                ev=(f.get("evidence") or "").replace("|", "\\|")[:200]))
+                conf=f["confidence"], title=_tr(f["title"]),
+                ev=_tr(f.get("evidence") or "").replace("|", "\\|")[:200]))
     L.append("")
-    L.append("## 2. Динамический анализ в песочнице (L2)")
+    L.append(f"## 2. {_t('dynamic')}")
     if dynamic.get("status") == "skipped":
-        L.append(f"Пропущен: {dynamic.get('reason')}")
+        L.append(f"{_t('skipped')}: {_tr(dynamic.get('reason'))}")
     else:
-        L.append(f"- Статус: `{dynamic.get('status')}`, exit code: `{dynamic.get('exit_code')}`, "
+        L.append(f"- {_t('status')}: `{dynamic.get('status')}`, exit code: `{dynamic.get('exit_code')}`, "
                  f"wall: {dynamic.get('wall_s')} с")
         load = dynamic.get("load") or {}
-        L.append(f"- Загрузка: ok=`{load.get('ok')}`, тип=`{load.get('type')}`, "
+        L.append(f"- {_t('load')}: ok=`{load.get('ok')}`, type=`{load.get('type')}`, "
                  f"время={load.get('time_s')} с")
         for e in (load.get("errors") or [])[:10]:
-            L.append(f"  - ошибка загрузки: `{e}`")
+            L.append(f"  - {_t('load_err')}: `{_tr(e)}`")
         s = dynamic.get("summary") or {}
-        L.append(f"- Сеть: {s.get('network_attempts', 0)}, процессы: {s.get('subprocess', 0)}, "
-                 f"exec: {s.get('exec', 0)} (в памяти: {s.get('mem_exec', 0)}), "
-                 f"dlopen: {s.get('dlopen', 0)}, запись файлов: {s.get('file_writes', 0)}, "
+        L.append(f"- {_t('signals')}: {s.get('network_attempts', 0)}, {_t('processes')}: {s.get('subprocess', 0)}, "
+                 f"{_t('exec')}: {s.get('exec', 0)} ({_t('mem_exec')}: {s.get('mem_exec', 0)}), "
+                 f"dlopen: {s.get('dlopen', 0)}, {_t('writes')}: {s.get('file_writes', 0)}, "
                  f"maxRSS: {dynamic.get('maxrss_kb', '?')} КБ")
         evs = dynamic.get("events") or []
         if evs:
             L.append("")
-            L.append("Наблюдаемые события (первые 40):")
+            L.append(_t("events") + ":")
             L.append("")
             L.append("| t | phase | event | args |")
             L.append("|---|-------|-------|------|")
@@ -1724,21 +1838,31 @@ def render_report(path: Path, sha: str, static: dict[str, Any],
                 L.append(f"| {e['t']} | {e['phase']} | {e['event']} | `{args}` |")
         if dynamic.get("stderr"):
             L.append("")
-            L.append("<details><summary>stderr контейнера</summary>")
+            L.append(f"<details><summary>{_t('stderr')}</summary>")
             L.append("")
             L.append("```")
             L.append(dynamic["stderr"][-2000:])
             L.append("```")
             L.append("</details>")
+    cov = coverage_of(static, dynamic)
     L.append("")
-    L.append("## 3. Поведенческое тестирование (L3)")
+    L.append(f"## {_t('coverage')}")
+    if cov.get("complete"):
+        L.append(f"- {_t('coverage')}: ok — {', '.join(sorted(cov['modules']))}")
+    else:
+        L.append(f"- **{_t('incomplete')}**")
+        for key in cov.get("failed") or []:
+            mod = (cov.get("modules") or {}).get(key) or {}
+            L.append(f"  - {_tr(_MODULE_LABELS.get(key, key))}: {_tr(mod.get('reason') or '')}")
+    L.append("")
+    L.append(f"## 3. {_t('behaviour')}")
     beh = dynamic.get("behavior") if dynamic.get("status") != "skipped" else None
     if not beh:
-        L.append("Пропущено (модель не загружена вне песочницы).")
+        L.append(_t("beh_skipped"))
     else:
         bf = beh.get("findings") or []
         if bf:
-            L.append("Находки по поведению:")
+            L.append(_t("beh_findings") + ":")
             L.append("")
             L.append("| ID | Severity | Находка | Доказательство |")
             L.append("|----|----------|---------|----------------|")
@@ -1797,12 +1921,17 @@ def main() -> int:
     ap.add_argument("--runtime", default=None, help="runtime Docker, напр. runsc (gVisor)")
     ap.add_argument("--timeout", type=int, default=60, help="таймаут этапа динамики, с")
     ap.add_argument("--static-only", action="store_true", help="без запуска контейнера")
+    ap.add_argument("--lang", default=os.environ.get("MLSCAN_LANG", "ru"), choices=("ru", "en"),
+                    help="язык отчёта и сообщений (RU/EN); по умолчанию MLSCAN_LANG или ru")
     ap.add_argument("--name", default=None,
                     help="имя/расширение при вводе из stdin ('-'): напр. model.pt")
     ap.add_argument("--keep", action="store_true",
                     help="сохранить временный файл при вводе из stdin")
     ap.add_argument("--version", action="version", version=VERSION)
     args = ap.parse_args()
+    global I18N, LANG
+    I18N = _load_i18n()
+    LANG = args.lang
 
     cleanup: Path | None = None
     if args.target == "-":
@@ -1828,7 +1957,7 @@ def main() -> int:
             dynamic: dict[str, Any] = {"status": "skipped",
                                        "reason": "запрошен режим --static-only"}
         else:
-            dynamic = dynamic_stage(path, static["format"], image=args.image,
+            dynamic = dynamic_stage(path, _sandbox_fmt(static), image=args.image,
                                     runtime=args.runtime, timeout=args.timeout)
 
         verdict, reason = decide(static, dynamic)

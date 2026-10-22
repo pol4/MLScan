@@ -429,7 +429,9 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
         t = time.time()
         update(scan_id, state="running", stage="static", progress=10)
         static = mlscan_poc.static_stage(Path(path))
-        if format_adapter is not None:
+        if format_adapter is not None and "adapter_format" not in static:
+            # PoC (mlscan_poc.static_stage) уже применяет тот же адаптер форматов,
+            # поэтому повторный вызов нужен только если он недоступен
             try:
                 fa = format_adapter.static_scan(Path(path))
                 if fa.get("findings"):

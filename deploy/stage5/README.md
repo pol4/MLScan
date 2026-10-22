@@ -1,5 +1,19 @@
 # Этап 5 — Промышленная эксплуатация (MLScan)
 
+## Уровень развёртывания
+
+| | |
+|---|---|
+| **Уровень** | 5 — эксплуатация (метрики, качество, retest, lifecycle, backup) |
+| **Предпосылки** | Уровни 3–4 + `deploy/v2/lifecycle` (retention/TTL) + `deploy/v2/backup` |
+| **Добавляет** | Метрики Prometheus, `/quality` (TPR/FPR), `/sla`, `/retest` по cron, red-team Job, `/alerts`, retention/TTL + карантин + tombstones, backup/restore с проверкой, PDB, аттестация |
+| **Не даёт** | — (верхний уровень) |
+| **Установка** | `bash deploy/install.sh 5` |
+| **Проверка** | `bash deploy/verify.sh 5` |
+| **Дальше** | [`../upgrade.md`](../upgrade.md): — ; см. эксплуатационные регламенты в этом README |
+| **Обзор уровней** | [`../README.md`](../README.md) |
+
+
 Ops-слой поверх Этапов 1–4. Namespace `mlscan-ops`. Только стандартная библиотека Python.
 
 ## Что реализовано

@@ -321,8 +321,18 @@ harness, the result goes to stdout).
 
 ## Cluster verification
 
-Each stage/wave is deployed by its own script; details and commands are in the README of the
-corresponding directory:
+**Choose your deployment level** - [`deploy/README.md`](./deploy/README.md): from the PoC
+(Python + Docker, no cluster) up to a production loop. Levels are self-sufficient and the next one
+only adds capabilities (plan: [`docs/en/13-deployment-plan.md`](./docs/en/13-deployment-plan.md)):
+
+```bash
+bash deploy/install.sh 0        # level 0: PoC - prints instructions, no cluster changes
+bash deploy/install.sh 3        # levels 1->2->3 with all dependencies (idempotent)
+bash deploy/install.sh 5        # everything at once
+bash deploy/verify.sh 5         # end-to-end level verification (--full runs the corpus)
+```
+
+Each stage (levels 1-5) is also deployed by its own script; details are in the directory README:
 
 ```bash
 bash deploy/stage1/apply.sh && bash deploy/stage1/60-falco.sh   # sandbox + eBPF

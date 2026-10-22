@@ -26,7 +26,7 @@ else
 fi
 # PG-клиент и реквизиты (I2)
 kubectl -n "$NS" create configmap mlscan-formats \
-  --from-file=detector.py="$HERE/../v2/formats/detector.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  --from-file=detector.py="$HERE/../../poc/formats.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap mlscan-authz \
   --from-file=authz.py="$HERE/../v2/auth/authz.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap mlscan-i18n \

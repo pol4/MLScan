@@ -1,5 +1,19 @@
 # Этап 4 — Интеграции (MLScan)
 
+## Уровень развёртывания
+
+| | |
+|---|---|
+| **Уровень** | 4 — интеграции (реестр, CI-gate, SIEM, threat-intel) |
+| **Предпосылки** | Уровни 2–3 (нужен сервис тестирования; analytics — для скоринга решений) |
+| **Добавляет** | Реестр моделей по SHA-256, CI-gate `/gate` (allow/block/review + exit-code), экспорт событий в SIEM (NDJSON/CEF), seed threat-intel |
+| **Не даёт** | Метрики/качество/retest/lifecycle/backup (уровень 5) |
+| **Установка** | `bash deploy/install.sh 4` |
+| **Проверка** | `bash deploy/verify.sh 4` |
+| **Дальше** | [`../upgrade.md`](../upgrade.md): 4 → 5 (эксплуатация) |
+| **Обзор уровней** | [`../README.md`](../README.md) |
+
+
 Сквозные интеграции поверх Этапов 2–3. Namespace `mlscan-integrations`. Только стандартная
 библиотека Python; с Kubernetes API не взаимодействует.
 
