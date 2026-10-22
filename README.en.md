@@ -33,9 +33,48 @@ arbitrary ML/AI artifacts — including very large ones — in an isolated envir
 flowchart LR
   P["PoC<br/>1 format, 1 file"] --> S["Pickle system<br/>3 components (Stages 0-5)"]
   S --> V0["v2 Wave 0<br/>S3, PostgreSQL, AuthN/Z, audit"]
-  V0 --> V1["v2 Waves 1-3<br/>format adapters, detectors, lifecycle"]
+  V0 --> V1["v2 Waves 1-7<br/>format adapters, detectors, lifecycle"]
   V1 --> T["Synthetic corpus<br/>87/87 detected, 0 FP"]
 ```
+
+---
+
+## Deployment scheme: levels 0-5
+
+The system is deployed **in stages**: every level is self-sufficient (fully usable within its
+analysis capabilities), the next level only adds capabilities and components, and incompleteness is
+never concealed - when a verification module could not run, the verdict is `Inconclusive` with a
+partial result. You can stop at any level.
+
+Plan and rationale - [`docs/en/13-deployment-plan.md`](./docs/en/13-deployment-plan.md),
+level chooser - [`deploy/README.md`](./deploy/README.md),
+upgrade path - [`deploy/upgrade.md`](./deploy/upgrade.md).
+
+```mermaid
+flowchart LR
+  L0["Level 0 · PoC<br/>Python + Docker<br/>static for every format,<br/>dynamic + behaviour in Docker"]
+  L1["Level 1 · Sandbox<br/>Kata microVM, network deny,<br/>honeypot, Falco/eBPF"]
+  L2["Level 2 · Testing service<br/>HTTP, S3 sha256, PostgreSQL,<br/>large files, deduplication"]
+  L3["Level 3 · Analytics and UI<br/>policy, evidence hash-chain,<br/>sign-in and roles, RU/EN"]
+  L4["Level 4 · Integrations<br/>registry, CI gate, SIEM"]
+  L5["Level 5 · Operations<br/>metrics, TPR/FPR, retest,<br/>TTL/quarantine, backup"]
+  L0 --> L1 --> L2 --> L3 --> L4 --> L5
+```
+
+| Lvl | What it provides (analysis and service) | What it requires | Install · verify |
+|-----|------------------------------------------|------------------|------------------|
+| **0** | **PoC:** static analysis for every format (pickle/torch/numpy, SafeTensors, ONNX, HDF5/Keras, GGUF, archives, notebooks, scripts, configs/cards, MCP, HTML/SVG, Dockerfile, datasets, compressed payloads), dynamic L2 and behaviour L3 in Docker, MD/JSON report | Python 3.10+, Docker (dynamic stage only) | `bash deploy/install.sh 0` · `bash deploy/verify.sh 0` |
+| **1** | The same, but untrusted code runs in a **microVM (Kata)**: network deny, honeypot/sinkhole, read-only FS, limits, Falco/eBPF | single-node Kubernetes, RuntimeClass `kata`/`gvisor`, image registry | `bash deploy/install.sh 1` · `bash deploy/verify.sh 1` |
+| **2** | **Testing service:** HTTP intake (streaming, large models), deduplication in **S3 (Garage)** `sha256/<name>`, metadata and findings in **PostgreSQL**, Job orchestration, coverage-aware verdict | level 1 + Garage + PostgreSQL | `bash deploy/install.sh 2` · `bash deploy/verify.sh 2` |
+| **3** | **Analytics:** scoring, Policy Engine, append-only evidence with a hash chain, JSON/MD/SARIF reports, **web UI** (sign-in, roles, language switch, `/settings`, incomplete-scan banner) | levels 1-2 + Istio Ingress | `bash deploy/install.sh 3` · `bash deploy/verify.sh 3` |
+| **4** | **Integrations:** model registry by SHA-256, CI gate `/gate` (allow/block/review + exit code), SIEM export (NDJSON/CEF), threat intel | levels 2-3 | `bash deploy/install.sh 4` · `bash deploy/verify.sh 4` |
+| **5** | **Operations:** Prometheus metrics, `/quality` (TPR/FPR), `/sla`, cron `/retest`, red-team Job, `/alerts`, retention/TTL + quarantine, backup/restore with verification | levels 3-4 | `bash deploy/install.sh 5` · `bash deploy/verify.sh 5` |
+
+The commands are idempotent: `install.sh N` installs everything required up to level N (you can go
+straight to 5), `verify.sh N` checks the level from the outside, and `verify.sh N --full` additionally
+runs the synthetic corpus (141 samples). Format analysis does **not** depend on the level: the
+adapters are shared ([`poc/formats.py`](./poc/formats.py)), so the PoC and the service inspect the
+same set of formats.
 
 ---
 
@@ -279,7 +318,12 @@ See [`docs/en/05-architecture.md`](./docs/en/05-architecture.md),
 | [`START.en.md`](./START.en.md) | Introductory article: project focus, history, architecture scalability |
 | [`Concept.en.md`](./Concept.en.md) | Concept of the system (English) |
 | [`tests/vulnerabilities/`](./tests/vulnerabilities) | **Synthetic vulnerability corpus** + procedure + detection report |
-| [`poc/mlscan_poc.py`](./poc/mlscan_poc.py) | **PoC** — a single Python file with three analysis methods |
+| [`deploy/README.md`](./deploy/README.md) | **Deployment level chooser (0-5)**, capability and command matrix |
+| [`deploy/install.sh`](./deploy/install.sh) | Idempotent installation of the selected level (with prerequisite checks) |
+| [`deploy/verify.sh`](./deploy/verify.sh) | End-to-end level verification (`--full` runs the corpus) |
+| [`deploy/upgrade.md`](./deploy/upgrade.md) | N -> N+1 upgrade: components, migrations, rollback |
+| [`poc/mlscan_poc.py`](./poc/mlscan_poc.py) | **PoC (level 0)** — a single Python file: static analysis for every format plus dynamic/behaviour in Docker |
+| [`poc/formats.py`](./poc/formats.py) | Format adapters (stdlib) — one shared module for the PoC and the testing service |
 | [`poc/scan/`](./poc/scan) | Demo data (pickle + `formats/`) and generators |
 | [`deploy/stage1/`](./deploy/stage1) | Stage 1: hardened sandbox (Kata, deception, sinkhole, NetworkPolicy, Falco) |
 | [`deploy/stage2/`](./deploy/stage2) | Stage 2: testing service |
@@ -290,8 +334,8 @@ See [`docs/en/05-architecture.md`](./docs/en/05-architecture.md),
 | [`deploy/sandbox-image/`](./deploy/sandbox-image) | Sandbox image `mlscan-sandbox` (torch CPU), Kaniko build |
 | [`deploy/ingress/`](./deploy/ingress) | Ingress (Istio) and egress allowlist |
 | [`deploy/v2/`](./deploy/v2) | **v2:** S3 (Garage), PostgreSQL, AuthN/Z+audit, observability, backup, lifecycle, format detectors |
-| [`docs/`](./docs) | Detailed documentation (01–11, RU) |
-| [`docs/en/`](./docs/en) | English documentation (01–11) |
+| [`docs/`](./docs) | Detailed documentation (01-13, RU) |
+| [`docs/en/`](./docs/en) | English documentation (01-13) |
 
 ### Documentation (brief)
 
@@ -304,35 +348,38 @@ See [`docs/en/05-architecture.md`](./docs/en/05-architecture.md),
 
 ---
 
-## PoC quick start
+## PoC quick start (level 0)
 
-Requirements: Python 3.10+ and **Docker** (for the dynamic stage).
+Requirements: Python 3.10+ (stdlib only) and **Docker** for the dynamic stage only.
+The PoC already analyses **every supported format** statically (see [`poc/README.md`](./poc/README.md)):
 
 ```bash
-python3 poc/mlscan_poc.py poc/scan/evil0.pkl --out report.md   # static + dynamic + behaviour
-python3 poc/mlscan_poc.py poc/scan/evil2.pkl --static-only     # static only
-for f in poc/scan/evil*.pkl; do python3 poc/mlscan_poc.py "$f"; done
+python3 poc/mlscan_poc.py poc/scan/evil0.pkl --out report.md        # static + dynamic + behaviour
+python3 poc/mlscan_poc.py model.safetensors --static-only           # SafeTensors: static only
+python3 poc/mlscan_poc.py payload.ipynb --static-only --lang en     # notebook, English report
+python3 poc/mlscan_poc.py arch/model.zip --image localhost:32000/mlscan-sandbox:v4  # dynamic with libs
+cat model.pkl | python3 poc/mlscan_poc.py - --name model.pkl        # stdin input (no file on disk)
 ```
 
-The file is passed into the container **without shared directories** (stdin + a base64 bootstrap
-harness, the result goes to stdout).
+The artefact is passed into the container **without shared directories** (stdin + a base64 bootstrap
+harness, the result goes to stdout); the verdict accounts for coverage completeness (`Inconclusive`
+with a reason when a module could not run).
 
 ---
 
-## Cluster verification
+## Installation and verification
 
-**Choose your deployment level** - [`deploy/README.md`](./deploy/README.md): from the PoC
-(Python + Docker, no cluster) up to a production loop. Levels are self-sufficient and the next one
-only adds capabilities (plan: [`docs/en/13-deployment-plan.md`](./docs/en/13-deployment-plan.md)):
+Install and verify the level you chose (the level scheme is above; details in
+[`deploy/README.md`](./deploy/README.md)):
 
 ```bash
-bash deploy/install.sh 0        # level 0: PoC - prints instructions, no cluster changes
-bash deploy/install.sh 3        # levels 1->2->3 with all dependencies (idempotent)
-bash deploy/install.sh 5        # everything at once
-bash deploy/verify.sh 5         # end-to-end level verification (--full runs the corpus)
+bash deploy/install.sh 3        # levels 1->2->3 with all dependencies (idempotent; 5 also works)
+bash deploy/verify.sh 3         # end-to-end verification of the level
+bash deploy/verify.sh 5 --full  # plus a full synthetic corpus run (141 samples)
 ```
 
-Each stage (levels 1-5) is also deployed by its own script; details are in the directory README:
+If you prefer manual control per stage, use the commands from the corresponding directory README
+(`install.sh` performs exactly these steps):
 
 ```bash
 bash deploy/stage1/apply.sh && bash deploy/stage1/60-falco.sh   # sandbox + eBPF
@@ -344,10 +391,12 @@ bash deploy/v2/data/apply.sh && bash deploy/v2/db/apply.sh       # v2: S3 + Post
 bash deploy/v2/auth/keys.sh                                      # API keys (admin/ci/service)
 ```
 
-A full run of the synthetic corpus (see [`tests/vulnerabilities/README.md`](./tests/vulnerabilities/README.md)):
+The synthetic corpus (141 samples: 87 malicious + 54 benign, including ~198 MB ones) - generation
+and execution are described in [`tests/vulnerabilities/README.md`](./tests/vulnerabilities/README.md):
 
 ```bash
-python3 tests/vulnerabilities/gen_corpus.py
+python3 tests/vulnerabilities/gen_corpus.py                 # base samples (in the repository)
+# wave 4-7 and benign samples are generated inside the sandbox image (see tests/vulnerabilities/README.md)
 python3 tests/vulnerabilities/run_tests.py --url <testing-url> --analytics-url <analytics-url> --key <API_KEY>
 ```
 

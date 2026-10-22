@@ -33,9 +33,47 @@
 flowchart LR
   P["PoC<br/>1 формат, 1 файл"] --> S["Система для pickle<br/>3 компоненты (Этапы 0-5)"]
   S --> V0["v2 Волна 0<br/>S3, PostgreSQL, AuthN/Z, audit"]
-  V0 --> V1["v2 Волны 1-3<br/>адаптеры форматов, детекторы, lifecycle"]
+  V0 --> V1["v2 Волны 1-7<br/>адаптеры форматов, детекторы, lifecycle"]
   V1 --> T["Синтетический корпус<br/>87/87 обнаружено, 0 FP"]
 ```
+
+---
+
+## Схема развёртывания: уровни 0–5
+
+Система разворачивается **поэтапно**: каждый уровень самодостаточен (полностью работоспособен
+в рамках своих возможностей анализа), следующий только добавляет возможности и компоненты, а
+незавершённость никогда не маскируется — если модуль не смог отработать, вердикт `Inconclusive`
+с частичным результатом. Остановиться можно на любом уровне.
+
+План и аргументация — [`docs/13-deployment-plan.md`](./docs/13-deployment-plan.md),
+выбор уровня — [`deploy/README.md`](./deploy/README.md),
+переход на следующий — [`deploy/upgrade.md`](./deploy/upgrade.md).
+
+```mermaid
+flowchart LR
+  L0["Уровень 0 · PoC<br/>Python + Docker<br/>статика по всем форматам,<br/>динамика и поведение в Docker"]
+  L1["Уровень 1 · Песочница<br/>Kata microVM, сетевой запрет,<br/>honeypot, Falco/eBPF"]
+  L2["Уровень 2 · Сервис тестирования<br/>HTTP, S3 sha256, PostgreSQL,<br/>большие файлы, дедупликация"]
+  L3["Уровень 3 · Аналитика и UI<br/>policy, evidence hash-chain,<br/>вход и роли, RU/EN"]
+  L4["Уровень 4 · Интеграции<br/>реестр, CI-gate, SIEM"]
+  L5["Уровень 5 · Эксплуатация<br/>метрики, TPR/FPR, retest,<br/>TTL/карантин, backup"]
+  L0 --> L1 --> L2 --> L3 --> L4 --> L5
+```
+
+| Ур. | Что даёт (анализ и сервис) | Что требует | Установка · проверка |
+|-----|----------------------------|-------------|----------------------|
+| **0** | **PoC:** статика по всем форматам (pickle/torch/numpy, SafeTensors, ONNX, HDF5/Keras, GGUF, архивы, ноутбуки, скрипты, конфиги/карточки, MCP, HTML/SVG, Dockerfile, датасеты, сжатые payload'ы), динамика L2 и поведение L3 в Docker, отчёт MD/JSON | Python 3.10+, Docker (только для динамики) | `bash deploy/install.sh 0` · `bash deploy/verify.sh 0` |
+| **1** | То же, но недоверенный код исполняется в **микро-ВМ (Kata)**: сетевой запрет, honeypot/sinkhole, RO-FS, лимиты, Falco/eBPF | Kubernetes на 1 узле, RuntimeClass `kata`/`gvisor`, реестр образов | `bash deploy/install.sh 1` · `bash deploy/verify.sh 1` |
+| **2** | **Сервис тестирования:** HTTP-приём (потоково, большие модели), дедупликация в **S3 (Garage)** `sha256/<name>`, метаданные и находки в **PostgreSQL**, оркестрация Job, вердикт с учётом покрытия | Уровень 1 + Garage + PostgreSQL | `bash deploy/install.sh 2` · `bash deploy/verify.sh 2` |
+| **3** | **Аналитика:** скоринг, Policy Engine, append-only evidence с hash-chain, отчёты JSON/MD/SARIF, **веб-UI** (вход, роли, переключатель языка, `/settings`, баннер неполной проверки) | Уровни 1–2 + Istio Ingress | `bash deploy/install.sh 3` · `bash deploy/verify.sh 3` |
+| **4** | **Интеграции:** реестр моделей по SHA-256, CI-gate `/gate` (allow/block/review + exit-code), экспорт в SIEM (NDJSON/CEF), threat-intel | Уровни 2–3 | `bash deploy/install.sh 4` · `bash deploy/verify.sh 4` |
+| **5** | **Эксплуатация:** метрики Prometheus, `/quality` (TPR/FPR), `/sla`, `/retest` по cron, red-team Job, `/alerts`, retention/TTL + карантин, backup/restore с проверкой | Уровни 3–4 | `bash deploy/install.sh 5` · `bash deploy/verify.sh 5` |
+
+Команды идемпотентны: `install.sh N` доустанавливает всё необходимое до уровня N (можно сразу 5),
+`verify.sh N` проверяет уровень «извне», а `verify.sh N --full` дополнительно прогоняет
+синтетический корпус (141 образец). Форматный анализ **не зависит от уровня**: адаптеры едины
+([`poc/formats.py`](./poc/formats.py)), поэтому и PoC, и сервис проверяют один и тот же набор форматов.
 
 ---
 
@@ -277,7 +315,12 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 |------|---------|
 | [`START.md`](./START.md) | Стартовая статья: фокус проекта, история, масштабируемость архитектуры |
 | [`tests/vulnerabilities/`](./tests/vulnerabilities) | **Синтетический корпус уязвимостей** + процедура + отчёт о детекции |
-| [`poc/mlscan_poc.py`](./poc/mlscan_poc.py) | **PoC** — один Python-файл с тремя методами проверки |
+| [`deploy/README.md`](./deploy/README.md) | **Выбор уровня развёртывания (0–5)**, матрица возможностей и команд |
+| [`deploy/install.sh`](./deploy/install.sh) | Установка выбранного уровня (идемпотентно, с проверкой предпосылок) |
+| [`deploy/verify.sh`](./deploy/verify.sh) | Сквозная проверка уровня (`--full` — прогон корпуса) |
+| [`deploy/upgrade.md`](./deploy/upgrade.md) | Переход N → N+1: компоненты, миграции, откат |
+| [`poc/mlscan_poc.py`](./poc/mlscan_poc.py) | **PoC (уровень 0)** — один Python-файл: статика по всем форматам + динамика/поведение в Docker |
+| [`poc/formats.py`](./poc/formats.py) | Адаптеры форматов (stdlib) — единый модуль для PoC и сервиса тестирования |
 | [`poc/scan/`](./poc/scan) | Демонстрационные данные (pickle + `formats/`) и генераторы |
 | [`deploy/stage1/`](./deploy/stage1) | Этап 1: укреплённая песочница (Kata, deception, sinkhole, NetworkPolicy, Falco) |
 | [`deploy/stage2/`](./deploy/stage2) | Этап 2: сервис тестирования |
@@ -288,8 +331,8 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 | [`deploy/i18n/`](./deploy/i18n) | Модуль локализации RU/EN (UI, сообщения сервисов, находки) |
 | [`deploy/ingress/`](./deploy/ingress) | Ingress (Istio) и egress-allowlist |
 | [`deploy/v2/`](./deploy/v2) | **v2:** S3 (Garage), PostgreSQL, AuthN/Z+audit, наблюдаемость, бэкап, lifecycle, детекторы форматов |
-| [`docs/`](./docs) | Детальная документация (01–11) |
-| [`docs/en/`](./docs/en) | Английская версия документации (01–11) |
+| [`docs/`](./docs) | Детальная документация (01–13) |
+| [`docs/en/`](./docs/en) | Английская версия документации (01–13) |
 | [`README.en.md`](./README.en.md) | English version of this page |
 
 ### Документация (кратко)
@@ -304,35 +347,39 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 
 ---
 
-## Быстрый старт PoC
+## Быстрый старт PoC (уровень 0)
 
-Требования: Python 3.10+ и **Docker** (для динамического этапа).
+Требования: Python 3.10+ (только stdlib) и **Docker** — только для динамического этапа.
+PoC уже умеет статически проверять **все поддерживаемые форматы** (наш «второй глаз» для
+расширенного списка — [`poc/README.md`](./poc/README.md)):
 
 ```bash
-python3 poc/mlscan_poc.py poc/scan/evil0.pkl --out report.md   # статика + динамика + поведение
-python3 poc/mlscan_poc.py poc/scan/evil2.pkl --static-only     # только статика
-for f in poc/scan/evil*.pkl; do python3 poc/mlscan_poc.py "$f"; done
+python3 poc/mlscan_poc.py poc/scan/evil0.pkl --out report.md        # статика + динамика + поведение
+python3 poc/mlscan_poc.py model.safetensors --static-only           # SafeTensors: только статика
+python3 poc/mlscan_poc.py payload.ipynb --static-only --lang en     # ноутбук, отчёт на английском
+python3 poc/mlscan_poc.py arch/model.zip --image localhost:32000/mlscan-sandbox:v4  # динамика с библиотеками
+cat model.pkl | python3 poc/mlscan_poc.py - --name model.pkl        # ввод из stdin (без файла на диске)
 ```
 
-Файл передаётся в контейнер **без расшаренных каталогов** (stdin + base64-бутстрап harness,
-результат — в stdout).
+Артефакт передаётся в контейнер **без расшаренных каталогов** (stdin + base64-бутстрап harness,
+результат — в stdout); вердикт учитывает полноту покрытия (`Inconclusive` + причина, если модуль
+не смог отработать).
 
 ---
 
-## Проверка на кластере
+## Установка и проверка
 
-**Выбор уровня развёртывания** — [`deploy/README.md`](./deploy/README.md): от PoC
-(Python + Docker, без кластера) до промышленного контура. Уровни самодостаточны, следующий
-только добавляет возможности (план — [`docs/13-deployment-plan.md`](./docs/13-deployment-plan.md)):
+Установка выбранного уровня и его проверка (схема уровней — выше; подробности —
+[`deploy/README.md`](./deploy/README.md)):
 
 ```bash
-bash deploy/install.sh 0        # уровень 0: PoC — печатает инструкцию, кластер не нужен
-bash deploy/install.sh 3        # уровни 1→2→3 со всеми зависимостями (идемпотентно)
-bash deploy/install.sh 5        # сразу всё
-bash deploy/verify.sh 5         # сквозная проверка уровня (--full — полный корпус)
+bash deploy/install.sh 3        # уровни 1→2→3 со всеми зависимостями (идемпотентно; сразу 5 тоже можно)
+bash deploy/verify.sh 3         # сквозная проверка уровня «извне»
+bash deploy/verify.sh 5 --full  # + полный прогон синтетического корпуса (141 образец)
 ```
 
-Детали по этапам (уровни 1–5) — в README соответствующего каталога:
+Если нужен ручной контроль по этапам — команды в README соответствующего каталога
+(эти же шаги выполняет `install.sh`):
 
 ```bash
 bash deploy/stage1/apply.sh && bash deploy/stage1/60-falco.sh   # песочница + eBPF
@@ -344,10 +391,12 @@ bash deploy/v2/data/apply.sh && bash deploy/v2/db/apply.sh       # v2: S3 + Post
 bash deploy/v2/auth/keys.sh                                      # API-ключи (admin/ci/service)
 ```
 
-Полный прогон синтетического корпуса (см. [`tests/vulnerabilities/README.md`](./tests/vulnerabilities/README.md)):
+Синтетический корпус (141 образец: 87 с закладками + 54 безопасных, включая ~198 МБ) —
+генерация и прогон описаны в [`tests/vulnerabilities/README.md`](./tests/vulnerabilities/README.md):
 
 ```bash
-python3 tests/vulnerabilities/gen_corpus.py
+python3 tests/vulnerabilities/gen_corpus.py                 # базовые образцы (в репозитории)
+# образцы «волн 4–7» и безопасные генерируются в образе песочницы (см. tests/vulnerabilities/README.md)
 python3 tests/vulnerabilities/run_tests.py --url <testing-url> --analytics-url <analytics-url> --key <API_KEY>
 ```
 
