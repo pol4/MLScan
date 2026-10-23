@@ -40,3 +40,4 @@ echo "Ops API:  http://<CLUSTER>:30810  (/metrics /health/stack /quality /sla)"
 echo "Retest:   curl -XPOST http://<CLUSTER>:30810/retest"
 echo "Демо:     $HERE/run-demo.sh"
 echo "Аттестат: $HERE/60-attest.sh"
+kubectl apply -f "$HERE/65-attest-cronjob.yaml"   # аттестация evidence (P1-5)

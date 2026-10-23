@@ -1,0 +1,39 @@
+# Автоматическая аттестация целостности evidence (docs/14, P1-5).
+# Каждые 6 часов проверяем hash-цепочку и HMAC-подписи evidence через API аналитики;
+# при нарушении Job завершается ошибкой (видно в CronJob-статусе и в метрике ops).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mlscan-attest
+  namespace: mlscan-ops
+  labels: {app: mlscan-ops, mlscan.io/stage: "5"}
+spec:
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: attest
+            image: python:3.12-slim
+            command: ["python","-c","import json,os,sys,urllib.request\nurl=os.environ['ANALYTICS_URL']+'/api/evidence/verify'\nreq=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['INTERNAL_KEY']})\nop=urllib.request.build_opener(urllib.request.ProxyHandler({}))\nd=json.loads(op.open(req,timeout=60).read())\nprint('ATTEST',json.dumps({k:d.get(k) for k in ('ok','entries','signed','generations','broken_at','error')}))\nsys.exit(0 if d.get('ok') else 1)"]
+            env:
+            - name: ANALYTICS_URL
+              value: http://mlscan-analytics.mlscan-analytics.svc.cluster.local:8080
+            - name: INTERNAL_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: INTERNAL_KEY}}
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 65532
+              runAsGroup: 65532
+              seccompProfile: {type: RuntimeDefault}
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities: {drop: ["ALL"]}
+            resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 200m, memory: 128Mi}}

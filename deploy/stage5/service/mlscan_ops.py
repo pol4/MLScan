@@ -182,8 +182,13 @@ def retest() -> dict:
     with _lock:
         _state["retest_runs"] += 1
         _state["retest_last_ts"] = int(time.time())
+    # аттестация evidence (P1-5): результат проверки целостности в ответе /retest
+    try:
+        ev = get_json(ANALYTICS_URL + "/api/evidence/verify")
+    except Exception:  # noqa: BLE001
+        ev = {"ok": False, "error": "analytics unavailable"}
     return {"submitted": len(submitted), "files": [n for n, _ in submitted],
-            "elapsed_s": round(time.time() - started, 1), "sync": sync}
+            "elapsed_s": round(time.time() - started, 1), "sync": sync, "evidence": ev}
 
 
 def sla() -> dict:

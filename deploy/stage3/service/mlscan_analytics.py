@@ -286,7 +286,7 @@ def _startup_writer_lock() -> None:
 
 
 def _append(record: dict) -> dict:
-    global _last_hash
+    global _last_hash, _last_sig
     with _lock:
         prev = _last_hash
         payload = json.dumps(record, ensure_ascii=False, sort_keys=True)
