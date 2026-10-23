@@ -174,9 +174,11 @@ P0-6 was additionally confirmed in real operation: after a code change without r
 
 | P1-3 | ✅ **done** | Kyverno policy `mlscan-sandbox-jobs` (Enforce): a Job in the sandbox must use `runtimeClassName: kata`, an image matching `*mlscan-sandbox@sha256:*` (digest), `automountServiceAccountToken: false` and a hardened securityContext. Verified: a Job with a foreign image (`python:3.12-slim`) is **rejected** by admission with two messages, while our digest-pinned Job was admitted and ran a scan. `run-sandbox.sh` takes the digest from `/tmp/mlscan-sandbox-digest` and passes the nonce |
 | P1-6 | ✅ **done** | ops: `mlscan_integrity_ok{service="testing|analytics"}` metrics, `mlscan_scans_inconclusive_total/_ratio`, and alerts `integrity_<service>` (critical), `coverage_low` (>20% Inconclusive). Verified: `integrity_ok 1`, `ratio 0.0765`, `/alerts` works |
-| P1-5 | ⏳ **partial (detector only)** | the new alert immediately found a real issue: `/api/evidence/verify` -> `{"ok": false, "entries": 1410, "broken_at": 1411, "source": "db"}` - the **DB mirror** chain diverges from the file chain after mass re-analysis/backfills. Needs HMAC-signed records (key outside the DB/PVC), scheduled `attest.sh` (cron and on `/retest`) and single-writer ordering |
+| P1-5 | ✅ **done (core)** | (1) **Per-generation verification**: the evidence chain may legitimately consist of several generations (after a DB reset/restore the chain restarts with `prev=GENESIS`), so integrity is verified inside each generation while HMAC signatures chain across all of them. The earlier "break at 1411" was explained as a second generation, not tampering. (2) **HMAC signing** of every link (`_sig(prev_sig, hash)`, key `MLSCAN_EVIDENCE_KEY` from a Secret, outside the DB/PVC; `evidence.sig` is added idempotently). (3) **Single-writer**: analytics takes `pg_try_advisory_lock` on startup, otherwise it runs read-only. (4) ops exposes `mlscan_evidence_ok/signed/entries`. Verified: `/api/evidence/verify` -> `{"ok": true, "entries": 2131, "source": "db", "signed": true, "generations": 2}` and the `evidence_broken` alert is gone. Remaining: the negative test (wrong key -> `HMAC mismatch`) on a **signed** record - signatures appear as soon as a new record is appended in the current generation - plus scheduled attestation |
 
-**Open items:** P0-4 (Calico), P1-2 (DNS policy), P1-5 (evidence signing), P1-8 (audit), P2-1...P2-7.
+
+
+**Open items:** P0-4 (Calico), P1-2 (DNS policy), P1-8 (audit), P2-1...P2-7; for P1-5: the negative test on a signed record and scheduled attestation.
 
 ## 5. Appendix: how to verify after the changes
 

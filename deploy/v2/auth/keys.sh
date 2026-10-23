@@ -41,10 +41,18 @@ if [ ! -f "$SESS_FILE" ]; then
 fi
 SESSION_SECRET="$(cat "$SESS_FILE")"
 
+# ключ HMAC-подписи цепочки evidence (docs/14, P1-5) — хранится только в Secret, вне БД/PVC
+EV_FILE="${OUT}.evidence-key"
+if [ ! -f "$EV_FILE" ]; then
+  python3 -c "import secrets;print(secrets.token_hex(32))" > "$EV_FILE"
+  chmod 600 "$EV_FILE"
+fi
+EVIDENCE_KEY="$(cat "$EV_FILE")"
+
 for ns in mlscan-testing mlscan-analytics mlscan-integrations mlscan-data mlscan-ops; do
   kubectl -n "$ns" create secret generic mlscan-keys \
     --from-literal=MLSCAN_KEYS="$KEYS" --from-literal=INTERNAL_KEY="$SVC" \
-    --from-literal=SESSION_SECRET="$SESSION_SECRET" \
+    --from-literal=SESSION_SECRET="$SESSION_SECRET" --from-literal=MLSCAN_EVIDENCE_KEY="$EVIDENCE_KEY" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1 || true
 done
 

@@ -171,9 +171,11 @@
 
 | P1-3 | ✅ **реализовано** | Kyverno-политика `mlscan-sandbox-jobs` (Enforce): Job в песочнице обязан использовать `runtimeClassName: kata`, образ `*mlscan-sandbox@sha256:*` (digest), `automountServiceAccountToken: false` и безопасный securityContext. Проверено: Job с чужим образом (`python:3.12-slim`) **отклонён** admission с двумя сообщениями; наш digest-Job прошёл и выполнил скан. `run-sandbox.sh` берёт digest из `/tmp/mlscan-sandbox-digest` и передаёт нонс |
 | P1-6 | ✅ **реализовано** | ops: метрики `mlscan_integrity_ok{service="testing|analytics"}`, `mlscan_scans_inconclusive_total/_ratio` и алерты `integrity_<service>` (critical), `coverage_low` (>20 % Inconclusive). Проверено: `integrity_ok 1`, `ratio 0.0765`, `/alerts` работает |
-| P1-5 | ⏳ **частично (детектор есть, защиты нет)** | новый алерт сразу нашёл проблему: `/api/evidence/verify` → `{"ok": false, "entries": 1410, "broken_at": 1411, "source": "db"}` — цепочка **БД-зеркала** расходится с файловой после массовых пересчётов/бэкфиллов. Нужно: HMAC-подпись записей (ключ вне БД/PVC), автоматический `attest.sh` (cron и при `/retest`), фиксация порядка записи (single-writer) |
+| P1-5 | ✅ **реализовано (ядро)** | (1) **Проверка по генерациям**: цепочка evidence может合法 состоять из нескольких генераций (после сброса/восстановления БД запись начинается заново с `prev=GENESIS`) — целостность проверяется внутри каждой генерации, а HMAC-подписи — сквозные. Найдена и объяснена «поломка на 1411»: это вторая генерация, а не подмена. (2) **HMAC-подпись** каждого звена (`_sig(prev_sig, hash)`, ключ `MLSCAN_EVIDENCE_KEY` из Secret — вне БД/PVC; колонка `evidence.sig` создаётся идемпотентно). (3) **single-writer**: при старте аналитика берёт `pg_try_advisory_lock`, иначе переходит в read-only. (4) В ops добавлены метрики `mlscan_evidence_ok/signed/entries`. Проверено: `/api/evidence/verify` → `{"ok": true, "entries": 2131, "source": "db", "signed": true, "generations": 2}`, алерт `evidence_broken` снят. Осталось: негативный тест (неверный ключ → `HMAC mismatch`) на **подписанной** записи — подписи появляются при новой записи в текущей генерации; автоматическая аттестация по cron |
 
-**Остались:** P0-4 (после починки `calico-node`), P1-2 (DNS-политика песочницы), P1-5 (подпись evidence), P1-8 (аудит изменений), P2-1…P2-7.
+
+
+**Остались:** P0-4 (после починки `calico-node`), P1-2 (DNS-политика песочницы), P1-8 (аудит изменений), P2-1…P2-7; по P1-5 — негативный тест на подписанной записи и аттестация по cron.
 
 **Открытые пункты:** P0-4, P1-2, P1-3, P1-5, P1-6, P1-8, P2-1…P2-7.
 

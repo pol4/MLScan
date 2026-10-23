@@ -246,6 +246,13 @@ def storage_metrics() -> list[str]:
         except Exception:  # noqa: BLE001
             pass
     try:
+        ev = get_json(ANALYTICS_URL + "/api/evidence/verify")
+        out.append("mlscan_evidence_ok %d" % (1 if ev.get("ok") else 0))
+        out.append("mlscan_evidence_signed %d" % (1 if ev.get("signed") else 0))
+        out.append("mlscan_evidence_entries %d" % int(ev.get("entries") or 0))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         by = (get_json(ANALYTICS_URL + "/api/stats").get("by_verdict") or {})
         total = sum(by.values())
         incon = by.get("Inconclusive", 0)

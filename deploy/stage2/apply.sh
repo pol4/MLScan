@@ -60,3 +60,10 @@ CM_DIGEST="sha256:$(cat \
   "$HERE/../v2/auth/authz.py" "$HERE/../v2/db/pgclient.py" "$HERE/../i18n/i18n.py" | sha256sum | cut -d' ' -f1)"
 kubectl -n "$NS" set env deploy/mlscan-testing MLSCAN_CM_DIGEST="$CM_DIGEST" >/dev/null
 echo "  Целостность: MLSCAN_CM_DIGEST=$CM_DIGEST"
+# SANDBOX_IMAGE по digest (docs/14 P0-2/P1-3): политика Kyverno требует digest, поэтому
+# при каждом применении манифестов фиксируем опубликованный digest (тег можно перезаписать).
+if [ -f /tmp/mlscan-sandbox-digest ]; then
+  DIGEST_IMAGE="$(cat /tmp/mlscan-sandbox-digest)"
+  kubectl -n "$NS" set env deploy/mlscan-testing SANDBOX_IMAGE="$DIGEST_IMAGE" >/dev/null
+  echo "  SANDBOX_IMAGE=$DIGEST_IMAGE"
+fi

@@ -216,6 +216,9 @@ def scoring(findings: list[dict]) -> dict:
 _lock = threading.Lock()
 _index: dict[str, dict] = {}
 _last_hash = "GENESIS"
+_last_sig = ""     # HMAC предыдущего звена цепочки evidence (docs/14, P1-5)
+EVIDENCE_KEY = (os.environ.get("MLSCAN_EVIDENCE_KEY") or "").encode()
+IS_WRITER = True   # single-writer: evidence пишет одна инстанция (PG advisory lock)
 
 # Кэш данных дашборда: /api/overview и /api/stats обращаются к сервису тестирования
 # (чтение тысяч файлов сканов), поэтому результаты кэшируются на 5 с; инвалидация —
@@ -225,7 +228,7 @@ _DASH_TTL = 5.0
 
 
 def _load_store() -> None:
-    global _last_hash
+    global _last_hash, _last_sig
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.isfile(EVIDENCE):
         open(EVIDENCE, "a").close()
@@ -239,6 +242,7 @@ def _load_store() -> None:
                 e = json.loads(line)
             except Exception:  # noqa: BLE001
                 continue
+            _last_sig = e.get("sig", _last_sig)
             if not DB_ENABLED:
                 _last_hash = e.get("hash", _last_hash)
             rec = e.get("record", {})
@@ -255,22 +259,51 @@ def _load_store() -> None:
             print(f"[db] chain seed: {exc}", file=sys.stderr)
 
 
+def _sig(prev_sig: str, h: str) -> str:
+    """HMAC-подпись звена цепочки evidence (ключ вне БД/PVC) — детектор подмены (docs/14, P1-5)."""
+    if not EVIDENCE_KEY:
+        return ""
+    import hmac as _hmac
+    return _hmac.new(EVIDENCE_KEY, (prev_sig + h).encode(), "sha256").hexdigest()
+
+
+def _startup_writer_lock() -> None:
+    """single-writer: evidence пишет только одна инстанция аналитики (PG advisory lock)."""
+    global IS_WRITER
+    if not DB_ENABLED or _Pg is None:
+        return
+    try:
+        c = _db_conn()
+        c.connect()
+        c.query("ALTER TABLE evidence ADD COLUMN IF NOT EXISTS sig TEXT")
+        _cols, rows = c.query("SELECT pg_try_advisory_lock(777001)")
+        IS_WRITER = bool(rows and rows[0][0])
+        c.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[db] writer lock: {exc}", file=sys.stderr)
+    if not IS_WRITER:
+        print("[analytics] CRITICAL: другая инстанция пишет evidence — режим read-only", file=sys.stderr)
+
+
 def _append(record: dict) -> dict:
     global _last_hash
     with _lock:
         prev = _last_hash
         payload = json.dumps(record, ensure_ascii=False, sort_keys=True)
         h = hashlib.sha256((prev + payload).encode("utf-8")).hexdigest()
+        sig = _sig(_last_sig, h)
         with open(EVIDENCE, "a") as fh:
-            fh.write(json.dumps({"prev": prev, "hash": h, "record": record}, ensure_ascii=False) + "\n")
+            fh.write(json.dumps({"prev": prev, "hash": h, "sig": sig, "record": record},
+                                ensure_ascii=False) + "\n")
         _last_hash = h
+        _last_sig = sig
         _index[record["scan_id"]] = record
         _dash_cache["overview"] = None
-        _db_append(record, prev, h, payload)
+        _db_append(record, prev, h, payload, sig)
         return {"prev": prev, "hash": h}
 
 
-def _db_append(record: dict, prev: str, h: str, payload: str) -> None:
+def _db_append(record: dict, prev: str, h: str, payload: str, sig: str = "") -> None:
     """Зеркалирование записи в PostgreSQL (артефакт, отпечатки, скан, находки, evidence)."""
     if not DB_ENABLED or _Pg is None:
         return
@@ -298,28 +331,57 @@ def _db_append(record: dict, prev: str, h: str, payload: str) -> None:
                     f"({_lit(sid)},{_lit(f.get('level'))},{_lit(f.get('check_id'))},{_lit(f.get('category'))},"
                     f"{_lit(f.get('severity'))},{f.get('confidence') if f.get('confidence') is not None else 'NULL'},"
                     f"{_lit(f.get('title'))},{ev_sql})")
-        c.query("INSERT INTO evidence(scan_id,prev_hash,hash,payload) VALUES "
-                f"({_lit(sid)},{_lit(prev)},{_lit(h)},{_lit(payload)})")
+        c.query("INSERT INTO evidence(scan_id,prev_hash,hash,sig,payload) VALUES "
+                f"({_lit(sid)},{_lit(prev)},{_lit(h)},{_lit(sig)},{_lit(payload)})")
         c.close()
     except Exception as exc:  # noqa: BLE001
         print(f"[db] {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 def verify_chain() -> dict:
+    """Целостность evidence: связность hash-цепочки + HMAC-подписи + сверка вершин файл/БД.
+
+    Цепочка в БД проверяется по фактической связности (baseline задаёт первая строка),
+    поэтому «мостовая» строка при первом включении БД не считается разрывом.
+    """
+    signed = bool(EVIDENCE_KEY)
     if DB_ENABLED and _Pg is not None:
         try:
             c = _db_conn()
             c.connect()
-            _cols, rows = c.query("SELECT prev_hash,hash,payload FROM evidence ORDER BY id")
+            _cols, rows = c.query("SELECT prev_hash,hash,payload,sig FROM evidence ORDER BY id")
             c.close()
-            prev = "GENESIS"
-            n = 0
-            for p, h, payload in rows:
-                calc = hashlib.sha256((prev + payload).encode("utf-8")).hexdigest()
-                if p != prev or h != calc:
-                    return {"ok": False, "entries": n, "broken_at": n + 1, "source": "db"}
-                prev, n = h, n + 1
-            return {"ok": True, "entries": n, "last_hash": prev, "source": "db"}
+            # Цепочка БД может состоять из нескольких генераций: после сброса БД (или её
+            # восстановления) запись начинается заново с prev=GENESIS. Внутри каждой
+            # генерации связность и HMAC-подписи обязаны сходиться, а подписи — сквозные.
+            prev, prev_sig, n, generations = None, "", 0, 1
+            for p_, h, payload, sig in rows:
+                if p_ == "GENESIS" and prev is not None:
+                    generations += 1
+                    prev = None
+                base = prev if prev is not None else "GENESIS"
+                calc = hashlib.sha256((base + payload).encode("utf-8")).hexdigest()
+                if (prev is not None and p_ != prev) or h != calc:
+                    return {"ok": False, "entries": n, "broken_at": n + 1, "source": "db",
+                            "signed": signed, "generations": generations}
+                if signed and sig:
+                    expect = _sig(prev_sig, h)
+                    if expect and sig != expect:
+                        return {"ok": False, "entries": n, "broken_at": n + 1, "source": "db",
+                                "signed": signed, "error": "HMAC mismatch", "generations": generations}
+                prev, prev_sig, n = h, (sig or ""), n + 1
+            file_tip = None
+            if os.path.isfile(EVIDENCE):
+                with open(EVIDENCE) as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if line:
+                            file_tip = json.loads(line).get("hash")
+            if file_tip and prev and file_tip != prev:
+                return {"ok": False, "entries": n, "source": "db", "signed": signed,
+                        "error": "file tip != db tip", "db_tip": prev, "file_tip": file_tip}
+            return {"ok": True, "entries": n, "last_hash": prev, "source": "db", "signed": signed,
+                    "generations": generations}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
     if not os.path.isfile(EVIDENCE):
@@ -1129,6 +1191,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     _load_store()
     threading.Thread(target=poller, daemon=True).start()
+    _startup_writer_lock()
     port = int(os.environ.get("PORT", "8080"))
     print(f"[analytics] on :{port}; testing={TESTING_URL}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
