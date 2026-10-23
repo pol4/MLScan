@@ -240,6 +240,25 @@ language setting** (`MLSCAN_LANG` at startup + `POST /settings/language` for an 
 stored in the database). Localised are the UI, verdict reasons, findings (including historical
 records) and reports. Russian documentation — [`README.md`](./README.md) / [`docs/`](./docs).
 
+### Platform hardening
+
+| Measure | Implementation | Verification |
+|---------|----------------|--------------|
+| Execution isolation | Kata microVM per scan, egress allowlist (DNS/sinkhole/artifact server), read-only FS, drop ALL, seccomp, honeypots, `default-deny` NetworkPolicy | `verify.sh 1`, red-team Job |
+| Image integrity | the Kaniko build publishes a **digest**; Jobs run only as `image@sha256:...`; a **Kyverno** policy requires kata + digest + a hardened securityContext | `verify.sh 1`; a Job with a foreign image is rejected by admission |
+| Platform egress | services may reach only PG/S3/DNS and the K8s API address (ClusterIP and node); foreign services and arbitrary ports are blocked; VirtualService/egress manifests are split per level | `verify.sh 3` |
+| Quotas and limits | `ResourceQuota`/`LimitRange` for the sandbox namespace; upload rate limit (30/min -> `429` + `Retry-After`); a cap of 5 in-flight scans | flood test: 30x`202`, 10x`429` |
+| Honest verdicts | incomplete coverage -> `Inconclusive` plus a banner; findings cap (500) with a truncation note | corpus; `verify.sh 2` |
+| Result forgery protection | the harness prints markers **with the scan nonce**; the service accepts only its own markers and cross-checks summary/result | spoofer sample `vuln_result_spoof.pkl` -> forgery ignored |
+| Code/config integrity | the digest of code and rule ConfigMaps is passed via env; the service verifies it on start and is **fail-closed** (`503`) | `/healthz` -> `integrity: true`; ConfigMap substitution test |
+| Evidence | append-only (file + DB triggers), hash chain + **HMAC signatures** (key in a Secret, outside the DB/PVC), per-generation verification, **single-writer** (PG advisory lock) | `/api/evidence/verify` -> `ok/signed/generations`; wrong key -> `HMAC mismatch` |
+| Attestation | CronJob `mlscan-attest` (every 6 h) plus the verification result in `POST /retest` and in the `mlscan_evidence_ok/signed/entries` metrics | Job `succeeded`, log `ATTEST {...}` |
+| Access | API keys with `expires_at` (expired -> `401`), UI users (PBKDF2, 200k), 12 h HMAC sessions, roles `admin/ci-reader/service`, audit in `audit_log` | expired key test |
+
+The full attack-scenario review and remediation plan are in [`docs/en/14-security-review.md`](./docs/en/14-security-review.md)
+(status: P0 and P1 implemented; open: P0-4 instant `Reject` for the sandbox network, P1-2 DNS policy,
+P1-8 change audit, P2).
+
 ### Self-testing
 
 A synthetic corpus — [`tests/vulnerabilities/`](./tests/vulnerabilities): **141 samples**
@@ -393,7 +412,8 @@ with a reason when a module could not run).
 Implemented and verified: the PoC, the pickle system (Stages 0–5), the v2 target architecture
 (Wave 0: S3/PostgreSQL/AuthN+audit/observability+backup; format waves 1–3: adapters and detectors,
 model-as-code dynamics; retention/TTL and quarantine), per-format quality metrics (TPR=1.0,
-FPR=0.0) and the synthetic corpus (87/87, 0 FP). The UI and service messages are
+FPR=0.0), the synthetic corpus (87/87, 0 FP) and **platform hardening** - P0/P1 from the security
+review ([`docs/14`](./docs/en/14-security-review.md)). The UI and service messages are
 localised RU/EN with a global language setting.
 
 Context: [`deploy/v2/README.md`](./deploy/v2/README.md), plan — [`docs/en/10-plan-new-formats.md`](./docs/en/10-plan-new-formats.md),

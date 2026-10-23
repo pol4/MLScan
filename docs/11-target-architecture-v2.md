@@ -22,6 +22,10 @@
 | Retention/TTL и карантин | ✅ (`deploy/v2/lifecycle`, `mlscan-lifecycle`) |
 | Адаптеры форматов и детекторы (model-as-code, Keras, ONNX, HDF5, GGUF, архивы, XXE, токенизаторы, prompt-injection, agent/MCP) | ✅ (`deploy/v2/formats`) |
 | Локализация UI и сообщений RU/EN, глобальная настройка языка | ✅ (`deploy/i18n`, [`12-i18n.md`](./12-i18n.md)) |
+| Харденинг: digest образа + Kyverno-admission на Job песочницы | ✅ (`deploy/stage1/60-kyverno-sandbox-jobs.yaml`) |
+| Харденинг: сужение egress сервисов, квоты/лимиты, rate limit | ✅ (`deploy/ingress/3*.yaml`, `deploy/stage1/10-quota.yaml`, сервис тестирования) |
+| Харденинг: нонс результата, digest конфигурации (fail-closed), срок ключей | ✅ (`poc/mlscan_poc.py`, `deploy/stage2`, `deploy/v2/auth`) |
+| Харденинг: HMAC-подпись evidence, single-writer, аттестация по cron | ✅ (`deploy/stage5/65-attest-cronjob.yaml`, аналитика) |
 | Учёт полноты покрытия в вердикте (`Inconclusive` вместо ложного `Safe`) | ✅ (`poc.decide`, аналитика, UI-баннер) |
 | Синтетический корпус примеров (141: 87 с закладками + 54 безопасных, включая ~198 МБ) | ✅ (`tests/vulnerabilities`, `REPORT.md`) |
 | Multipart/presigned direct-to-S3, mmap-профили, карантин object-lock, Keycloak/mTLS | ⏳ план |

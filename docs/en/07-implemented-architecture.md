@@ -577,6 +577,9 @@ The response language is selected as follows: `?lang=ru|en` → cookie `mlscan_l
 - **In the sandbox:** audit-hooks harness (L2/L3: files/processes/network/ctypes, state diff) —
   also works inside Kata.
 - **Host:** Falco (modern eBPF), rules `MLScan sandbox *` (exec/egress/write) for runc pods.
+- **Hardening:** `mlscan_integrity_ok{service}` (code integrity of services),
+  `mlscan_evidence_ok/signed/entries`, `mlscan_scans_inconclusive_ratio`; alerts `integrity_<service>`,
+  `coverage_low`, `evidence_broken`; CronJob `mlscan-attest` (evidence chain check every 6 h).
 - **Stack:** `/metrics` (Prometheus `mlscan_*`), `/health/stack`, `/quality` (TPR/FPR), `/sla`,
   `/alerts` (state of PostgreSQL/Garage and evidence integrity — messages in the request language).
 
@@ -612,6 +615,23 @@ evidence-chain — ok.
   identifiers (`verdict`, `severity`, `policy.action`, `check_id`) are not translated.
 
 ---
+
+## 12. Platform hardening (implemented)
+
+Measures protecting the system itself (full review and plan: [`14-security-review.md`](./14-security-review.md)):
+
+| Measure | Implementation | Evidence |
+|---------|----------------|----------|
+| Isolation | Kata microVM, egress allowlist (DNS/sinkhole/artifact), read-only FS, drop ALL, seccomp, honeypots, `default-deny` | red-team Job, `verify.sh 1` |
+| Image | digest published by the Kaniko build; Jobs only `@sha256:`; Kyverno `mlscan-sandbox-jobs` (Enforce): kata + digest + hardened SC | a Job with a foreign image is rejected by admission |
+| Platform egress | only PG/S3/DNS plus the K8s API address (ClusterIP and node); foreign services/ports blocked; manifests split per level | from the testing pod: PG/S3 OK, `istio-ingressgateway:443` unreachable |
+| Quotas | `ResourceQuota`/`LimitRange` for the sandbox; 30/min rate limit -> `429`; 5 in-flight scans cap | flood: 30x`202`, 10x`429`; quota 4/12 pods |
+| Coverage and findings | `Inconclusive` + banner on incomplete scans; 500-finding cap with a note | corpus; truncation 600->500 |
+| Result forgery | harness markers carry the scan nonce; only own markers accepted; summary/result cross-check | spoofer `vuln_result_spoof.pkl` ignored |
+| Code/config | CM digest via env; verified on start; fail-closed `503` | `/healthz` `integrity: true`; CM substitution test |
+| Evidence | append-only + hash chain + HMAC signatures (key in a Secret), per-generation check, single-writer (advisory lock) | `verify` -> ok/signed/generations 2; wrong key -> `HMAC mismatch` |
+| Attestation | CronJob `mlscan-attest` (6 h) plus the result in `/retest` and `mlscan_evidence_*` metrics | Job `succeeded`, `ATTEST {...}` |
+| Keys | API keys with `expires_at`; expired -> `401` | expired key test |
 
 ## 11. Related documents
 

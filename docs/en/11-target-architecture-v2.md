@@ -24,6 +24,10 @@ What is already in the perimeter (as-built, see §11):
 | Retention/TTL and quarantine | ✅ (`deploy/v2/lifecycle`, `mlscan-lifecycle`) |
 | Format adapters and detectors (model-as-code, Keras, ONNX, HDF5, GGUF, archives, XXE, tokenizers, prompt-injection, agent/MCP) | ✅ (`deploy/v2/formats`) |
 | Localisation of the UI and messages RU/EN, global language setting | ✅ (`deploy/i18n`, [`12-i18n.md`](./12-i18n.md)) |
+| Hardening: image digest + Kyverno admission for sandbox Jobs | ✅ (`deploy/stage1/60-kyverno-sandbox-jobs.yaml`) |
+| Hardening: narrowed service egress, quotas/limits, rate limiting | ✅ (`deploy/ingress/3*.yaml`, `deploy/stage1/10-quota.yaml`, testing service) |
+| Hardening: result nonce, config digest (fail-closed), key expiry | ✅ (`poc/mlscan_poc.py`, `deploy/stage2`, `deploy/v2/auth`) |
+| Hardening: evidence HMAC signing, single-writer, scheduled attestation | ✅ (`deploy/stage5/65-attest-cronjob.yaml`, analytics) |
 | Coverage completeness taken into account in the verdict (`Inconclusive` instead of a false `Safe`) | ✅ (`poc.decide`, analytics, UI banner) |
 | Synthetic corpus of samples (141: 87 malicious + 54 benign, including ~198 MB) | ✅ (`tests/vulnerabilities`, `REPORT.md`) |
 | Multipart/presigned direct-to-S3, mmap profiles, object-lock quarantine, Keycloak/mTLS | ⏳ plan |

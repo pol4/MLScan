@@ -567,6 +567,9 @@ ingress разделены по уровням (`20/21/22` — VirtualServices, 
 - **В песочнице:** audit-hooks harness (L2/L3: файлы/процессы/сеть/ctypes, diff состояния) —
   работает и внутри Kata.
 - **Хост:** Falco (modern eBPF), правила `MLScan sandbox *` (exec/egress/write) для runc-подов.
+- **Харденинг:** `mlscan_integrity_ok{service}` (целостность кода сервисов), `mlscan_evidence_ok/signed/entries`,
+  `mlscan_scans_inconclusive_ratio`; алерты `integrity_<service>`, `coverage_low`, `evidence_broken`;
+  CronJob `mlscan-attest` (проверка цепочки evidence каждые 6 ч).
 - **Стек:** `/metrics` (Prometheus `mlscan_*`), `/health/stack`, `/quality` (TPR/FPR), `/sla`,
   `/alerts` (состояние PostgreSQL/Garage и целостности evidence — сообщения на языке запроса).
 
@@ -602,6 +605,23 @@ evidence-chain — ok.
   идентификаторы (`verdict`, `severity`, `policy.action`, `check_id`) не переводятся.
 
 ---
+
+## 12. Харденинг платформы (реализовано)
+
+Меры защиты самой системы (подробный разбор и план — [`14-security-review.md`](./14-security-review.md)):
+
+| Мера | Реализация | Подтверждение |
+|------|-----------|---------------|
+| Изоляция | Kata microVM, egress allowlist (DNS/sinkhole/artifact), RO-FS, drop ALL, seccomp, honeypot, `default-deny` | red-team Job, `verify.sh 1` |
+| Образ | digest после сборки Kaniko; Job только `@sha256:`; Kyverno `mlscan-sandbox-jobs` (Enforce): kata + digest + безопасный SC | Job с чужим образом отклонён admission'ом |
+| Egress платформы | только PG/S3/DNS + адрес K8s API (ClusterIP и узел); чужие сервисы/порты заблокированы; манифесты по уровням | из пода testing: PG/S3 — OK, `istio-ingressgateway:443` — недоступен |
+| Квоты | `ResourceQuota`/`LimitRange` песочницы; rate limit 30/мин → `429`; лимит 5 сканов «в работе» | flood: 30×`202`, 10×`429`; квота 4/12 подов |
+| Покрытие и находки | `Inconclusive` + баннер при неполной проверке; лимит 500 находок с пометкой | корпус; усечение 600→500 |
+| Подмена результата | маркеры harness со нонсом скана; приём только своих маркеров; сверка summary/result | спуфер `vuln_result_spoof.pkl` игнорируется |
+| Код/конфигурация | digest CM в env; сверка при старте; fail-closed `503` | `/healthz` `integrity: true`; тест подмены CM |
+| Evidence | append-only + hash-chain + HMAC-подписи (ключ в Secret), проверка по генерациям, single-writer (advisory lock) | `verify` → ok/signed/generations 2; неверный ключ → `HMAC mismatch` |
+| Аттестация | CronJob `mlscan-attest` (6 ч) + результат в `/retest` и метриках `mlscan_evidence_*` | Job `succeeded`, `ATTEST {…}` |
+| Ключи | API-ключи с `expires_at`; истёкший → `401` | тест истёкшего ключа |
 
 ## 11. Связанные документы
 

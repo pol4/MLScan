@@ -243,6 +243,25 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 **метрики качества (TPR/FPR)**, непрерывный retest, red-team, бэкап БД с проверкой
 восстановления.
 
+### Харденинг платформы
+
+| Мера | Как реализовано | Проверка |
+|------|-----------------|----------|
+| Изоляция исполнения | Kata microVM на каждый скан, egress allowlist (DNS/sinkhole/артефакт-сервер), RO-FS, drop ALL, seccomp, honeypot, `default-deny` NetworkPolicy | `verify.sh 1`, red-team Job |
+| Целостность образа | сборка Kaniko публикует **digest**; Job запускается только как `image@sha256:…`; **Kyverno**-политика требует kata + digest + безопасный securityContext | `verify.sh 1`; Job с чужим образом отклоняется admission |
+| Egress платформы | сервисам разрешены только PG/S3/DNS и адрес K8s API (ClusterIP и узел); чужие сервисы и произвольные порты блокируются; манифесты VirtualService/egress разложены по уровням | `verify.sh 3` |
+| Квоты и лимиты | `ResourceQuota`/`LimitRange` namespace песочницы; rate limit загрузок (30/мин → `429` + `Retry-After`); лимит 5 сканов «в работе» | flood-тест: 30×`202`, 10×`429` |
+| Честность вердикта | неполнота покрытия → `Inconclusive` + баннер; лимит находок (500) с пометкой об усечении | корпус; `verify.sh 2` |
+| Защита от подмены результата | harness печатает маркеры **со нонсом скана**; сервис принимает только свои маркеры и сверяет summary/result | образец-спуфер `vuln_result_spoof.pkl` → подделка игнорируется |
+| Целостность кода/конфигурации | digest ConfigMap'ов кода и правил передаётся в env; сервис сверяет при старте и работает **fail-closed** (`503`) | `/healthz` → `integrity: true`; тест подмены ConfigMap |
+| Evidence | append-only (файл + триггеры БД), hash-chain + **HMAC-подписи** (ключ в Secret, вне БД/PVC), проверка по генерациям, **single-writer** (PG advisory lock) | `/api/evidence/verify` → `ok/signed/generations`; неверный ключ → `HMAC mismatch` |
+| Аттестация | CronJob `mlscan-attest` (каждые 6 ч) + результат проверки в `POST /retest` и в метриках `mlscan_evidence_ok/signed/entries` | Job `succeeded`, лог `ATTEST {…}` |
+| Доступы | API-ключи с `expires_at` (истёкший → `401`), пользователи UI (PBKDF2, 200k), HMAC-сессии 12 ч, роли `admin/ci-reader/service`, аудит в `audit_log` | тест истёкшего ключа |
+
+Полный разбор сценариев атак и план доработок — [`docs/14-security-review.md`](./docs/14-security-review.md)
+(статус: P0 и P1 реализованы; открыты P0-4 — мгновенный `Reject` для сети песочницы, P1-2 — DNS-политика,
+P1-8 — аудит изменений, P2).
+
 ### Проверка самой системы
 
 Синтетический корпус — [`tests/vulnerabilities/`](./tests/vulnerabilities): **141 образец**
@@ -393,7 +412,8 @@ cat model.pkl | python3 poc/mlscan_poc.py - --name model.pkl        # ввод �
 Реализованы и проверены: PoC, система для pickle (Этапы 0–5), целевая архитектура v2
 (Волна 0: S3/PostgreSQL/AuthN+audit/наблюдаемость+бэкап; волны форматов 1–3: адаптеры и
 детекторы, динамика model-as-code; retention/TTL и карантин), метрики качества по форматам
-(TPR=1.0, FPR=0.0) и синтетический корпус (87/87, 0 FP). UI и сообщения
+(TPR=1.0, FPR=0.0), синтетический корпус (87/87, 0 FP) и **харденинг платформы** — P0/P1 из ИБ-обзора
+([`docs/14`](./docs/14-security-review.md)). UI и сообщения
 сервисов локализованы RU/EN, есть глобальная настройка языка.
 
 Контекст: [`deploy/v2/README.md`](./deploy/v2/README.md), план — [`docs/10-plan-new-formats.md`](./docs/10-plan-new-formats.md),
