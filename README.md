@@ -363,6 +363,7 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 - `docs/09` анализ других форматов/закладок · `docs/10` план расширения (волны) · `docs/11` целевая архитектура v2
 - `docs/12` локализация UI и сообщений (RU/EN) — [`docs/12-i18n.md`](./docs/12-i18n.md)
 - `docs/13` план поэтапного развёртывания (уровни 0–5) — [`docs/13-deployment-plan.md`](./docs/13-deployment-plan.md)
+- `docs/14` анализ ИБ архитектуры и кода + план доработок — [`docs/14-security-review.md`](./docs/14-security-review.md)
 - английские версии — [`docs/en/`](./docs/en)
 
 ---

@@ -20,6 +20,7 @@ are in [`docs/`](../).
 | 11 | [v2 target architecture](11-target-architecture-v2.md) | v2 target design |
 | 12 | [UI and message localisation (RU/EN)](12-i18n.md) | language switch and global language setting |
 | 13 | [Staged deployment plan](13-deployment-plan.md) | deployment levels 0-5, acceptance criteria, upgrade paths |
+| 14 | [Security review + remediation plan](14-security-review.md) | attack scenarios (launchpad / untrustworthy verdicts), findings P0-P2 |
 
 Related:
 

@@ -364,6 +364,7 @@ See [`docs/en/05-architecture.md`](./docs/en/05-architecture.md),
 - `docs/06` implementation plan (implemented) · `docs/07` as-built architecture · `docs/08` test guide
 - `docs/09` analysis of other formats/backdoors · `docs/10` extension plan (waves) · `docs/11` v2 target architecture
 - `docs/12` UI and message localisation (RU/EN)
+- `docs/14` security review of the architecture and code + remediation plan (EN: docs/en/14-security-review.md)
 - English versions: [`docs/en/`](./docs/en)
 
 ---
