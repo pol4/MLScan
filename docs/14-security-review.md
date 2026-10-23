@@ -169,7 +169,11 @@
 
 Дополнительно подтверждён **P0-6 в реальной эксплуатации**: после правки кода без обновления digest сервис вернул `503 integrity check failed` и не принимал артефакты (fail-closed), после `stage2/apply.sh` — снова `integrity: true` и сканы работают.
 
-**Остались:** P0-4 (после починки `calico-node`), P1-2 (DNS-политика песочницы), P1-3 (admission-ограничения на Job), P1-5 (подпись evidence/policy), P1-6 (метрики целостности), P1-8 (аудит изменений), P2-1…P2-7.
+| P1-3 | ✅ **реализовано** | Kyverno-политика `mlscan-sandbox-jobs` (Enforce): Job в песочнице обязан использовать `runtimeClassName: kata`, образ `*mlscan-sandbox@sha256:*` (digest), `automountServiceAccountToken: false` и безопасный securityContext. Проверено: Job с чужим образом (`python:3.12-slim`) **отклонён** admission с двумя сообщениями; наш digest-Job прошёл и выполнил скан. `run-sandbox.sh` берёт digest из `/tmp/mlscan-sandbox-digest` и передаёт нонс |
+| P1-6 | ✅ **реализовано** | ops: метрики `mlscan_integrity_ok{service="testing|analytics"}`, `mlscan_scans_inconclusive_total/_ratio` и алерты `integrity_<service>` (critical), `coverage_low` (>20 % Inconclusive). Проверено: `integrity_ok 1`, `ratio 0.0765`, `/alerts` работает |
+| P1-5 | ⏳ **частично (детектор есть, защиты нет)** | новый алерт сразу нашёл проблему: `/api/evidence/verify` → `{"ok": false, "entries": 1410, "broken_at": 1411, "source": "db"}` — цепочка **БД-зеркала** расходится с файловой после массовых пересчётов/бэкфиллов. Нужно: HMAC-подпись записей (ключ вне БД/PVC), автоматический `attest.sh` (cron и при `/retest`), фиксация порядка записи (single-writer) |
+
+**Остались:** P0-4 (после починки `calico-node`), P1-2 (DNS-политика песочницы), P1-5 (подпись evidence), P1-8 (аудит изменений), P2-1…P2-7.
 
 **Открытые пункты:** P0-4, P1-2, P1-3, P1-5, P1-6, P1-8, P2-1…P2-7.
 

@@ -172,7 +172,11 @@ P0-6 was additionally confirmed in real operation: after a code change without r
 
 **Remaining:** P0-4 (after calico-node is fixed), P1-2 (sandbox DNS policy), P1-3 (admission constraints on Jobs), P1-5 (evidence/policy signing), P1-6 (integrity metrics), P1-8 (change audit), P2-1...P2-7.
 
-**Open items:** P0-4, P1-2, P1-3, P1-5, P1-6, P1-8, P2-1...P2-7.
+| P1-3 | ✅ **done** | Kyverno policy `mlscan-sandbox-jobs` (Enforce): a Job in the sandbox must use `runtimeClassName: kata`, an image matching `*mlscan-sandbox@sha256:*` (digest), `automountServiceAccountToken: false` and a hardened securityContext. Verified: a Job with a foreign image (`python:3.12-slim`) is **rejected** by admission with two messages, while our digest-pinned Job was admitted and ran a scan. `run-sandbox.sh` takes the digest from `/tmp/mlscan-sandbox-digest` and passes the nonce |
+| P1-6 | ✅ **done** | ops: `mlscan_integrity_ok{service="testing|analytics"}` metrics, `mlscan_scans_inconclusive_total/_ratio`, and alerts `integrity_<service>` (critical), `coverage_low` (>20% Inconclusive). Verified: `integrity_ok 1`, `ratio 0.0765`, `/alerts` works |
+| P1-5 | ⏳ **partial (detector only)** | the new alert immediately found a real issue: `/api/evidence/verify` -> `{"ok": false, "entries": 1410, "broken_at": 1411, "source": "db"}` - the **DB mirror** chain diverges from the file chain after mass re-analysis/backfills. Needs HMAC-signed records (key outside the DB/PVC), scheduled `attest.sh` (cron and on `/retest`) and single-writer ordering |
+
+**Open items:** P0-4 (Calico), P1-2 (DNS policy), P1-5 (evidence signing), P1-8 (audit), P2-1...P2-7.
 
 ## 5. Appendix: how to verify after the changes
 
