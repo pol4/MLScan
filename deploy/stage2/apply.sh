@@ -52,3 +52,11 @@ kubectl -n "$NS" rollout status deploy/mlscan-testing --timeout=240s
 echo
 echo "Готово. Тест:  $HERE/run-scan.sh poc/scan/evil0.pkl pickle"
 echo "Порт-форвард для API: kubectl -n $NS port-forward svc/mlscan-testing 18080:8080"
+
+# Digest кода/конфигурации анализа -> env сервиса (контроль целостности, docs/14 P0-6).
+# Файлы считаются ровно в том порядке, что и в INTEGRITY_PATHS сервиса.
+CM_DIGEST="sha256:$(cat \
+  "$HERE/../../poc/mlscan_poc.py" "$HERE/service/mlscan_testing.py" "$HERE/../../poc/formats.py" \
+  "$HERE/../v2/auth/authz.py" "$HERE/../v2/db/pgclient.py" "$HERE/../i18n/i18n.py" | sha256sum | cut -d' ' -f1)"
+kubectl -n "$NS" set env deploy/mlscan-testing MLSCAN_CM_DIGEST="$CM_DIGEST" >/dev/null
+echo "  Целостность: MLSCAN_CM_DIGEST=$CM_DIGEST"

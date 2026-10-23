@@ -1,0 +1,28 @@
+# Квоты и лимиты namespace песочницы (docs/14, P0-5): защита кластера и соседних проектов
+# от шторма sandbox-Job'ов. Ограничиваем число подов, суммарные ресурсы и объём диска.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mlscan-sandbox-quota
+  namespace: mlscan-sandbox
+spec:
+  hard:
+    pods: "12"
+    requests.cpu: "4"
+    requests.memory: 12Gi
+    limits.cpu: "8"
+    limits.memory: 24Gi
+    requests.ephemeral-storage: 24Gi
+    limits.ephemeral-storage: 48Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mlscan-sandbox-limits
+  namespace: mlscan-sandbox
+spec:
+  limits:
+  - type: Container
+    default: {cpu: "1", memory: 2Gi, ephemeral-storage: 2Gi}
+    defaultRequest: {cpu: 100m, memory: 128Mi, ephemeral-storage: 256Mi}
+    max: {cpu: "2", memory: 3Gi, ephemeral-storage: 8Gi}

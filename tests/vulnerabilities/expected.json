@@ -898,5 +898,13 @@
     "expect_checks": [],
     "kind": "benign",
     "note": "обычный zip без дубликатов записей"
+  },
+  "vuln_result_spoof.pkl": {
+    "expect_checks": [
+      "A-01",
+      "F-30"
+    ],
+    "kind": "malicious",
+    "note": "payload печатает поддельный MLSCAN_RESULT_JSON (без нонса) — вердикт не должен стать Safe"
   }
 }

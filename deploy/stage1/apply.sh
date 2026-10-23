@@ -15,6 +15,7 @@ kubectl apply -f "$HERE/10-deception.yaml"
 kubectl apply -f "$HERE/20-sinkhole.yaml"
 
 echo "[4/5] сетевые политики (default-deny + sinkhole/DNS)"
+kubectl apply -f "$HERE/10-quota.yaml"          # квоты namespace (P0-5)
 kubectl apply -f "$HERE/30-networkpolicy.yaml"
 
 echo "[5/5] ожидание sinkhole"

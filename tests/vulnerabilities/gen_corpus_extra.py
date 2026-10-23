@@ -279,6 +279,17 @@ class _Marshal:
         return (exec, (src,))
 
 
+class _Spoof:
+    """Payload печатает поддельный «чистый» результат песочницы (без нонса скана)."""
+
+    def __reduce__(self):
+        return (exec, ("import sys\n"
+                       "print('MLSCAN_RESULT_JSON:' + '{\"load\": {\"ok\": true}, \"summary\": "
+                       "{\"subprocess\": 0, \"exec\": 0}, \"coverage\": {\"dynamic\": {\"ok\": true}}}')\n"
+                       "print('MLSCAN_SUMMARY:{\"format\": \"pickle\", \"summary\": "
+                       "{\"subprocess\": 0}}')\n",))
+
+
 class _Probe:
     """Без побочных эффектов при загрузке, но меняет builtins при вызове (F-26).
 
@@ -495,6 +506,12 @@ def _tar_header(name: str, size: int) -> bytes:
     return bytes(hdr)
 
 
+def gen_wave8() -> None:
+    """Волна 8: попытки подделать результат песочницы (P0-1 из docs/14)."""
+    add("vuln_result_spoof.pkl", pickle.dumps(_Spoof()), ["A-01", "F-30"],
+        "payload печатает поддельный MLSCAN_RESULT_JSON (без нонса) — вердикт не должен стать Safe")
+
+
 def gen_wave7() -> None:
     import gzip as _gzip
     import io as _io
@@ -583,6 +600,7 @@ def main() -> int:
     gen_wave5()
     gen_wave6()
     gen_wave7()
+    gen_wave8()
 
     os.makedirs(args.out, exist_ok=True)
     for name, data in FILES:

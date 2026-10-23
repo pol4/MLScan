@@ -647,8 +647,11 @@ except Exception:
 _args = sys.argv[1:]
 NAME = _args[-1] if _args else "sample.pkl"
 FMT = _args[-2] if len(_args) >= 2 else "pickle"
-RESULT_MARKER = "MLSCAN_RESULT_JSON:"
-SUMMARY_MARKER = "MLSCAN_SUMMARY:"
+NONCE = os.environ.get("MLSCAN_NONCE", "").strip()
+# Маркеры содержат нонс скана: сервис принимает ТОЛЬКО строки со своим нонсом, поэтому
+# payload не может подделать результат, напечатав «чистый» JSON в stdout.
+RESULT_MARKER = ("MLSCAN_RESULT_JSON:" + NONCE + ":") if NONCE else "MLSCAN_RESULT_JSON:"
+SUMMARY_MARKER = ("MLSCAN_SUMMARY:" + NONCE + ":") if NONCE else "MLSCAN_SUMMARY:"
 
 
 def recv_target(name):
@@ -1592,8 +1595,10 @@ def dynamic_stage(path: Path, fmt: str, *, image: str, runtime: str | None,
     tmpfs_mb = max(128, (fsize * 2) // (1024 * 1024) + 64)
 
     name = f"mlscan-poc-{os.getpid()}-{int(time.time())}"
+    nonce = secrets.token_hex(8)          # защита от подделки результата (см. P0-1 в docs/14)
     cmd = [
         "docker", "run", "--rm", f"--name={name}",
+        "-e", f"MLSCAN_NONCE={nonce}",
         "--interactive",
         "--network", "none",
         "--read-only",
@@ -1630,10 +1635,12 @@ def dynamic_stage(path: Path, fmt: str, *, image: str, runtime: str | None,
               "timed_out": timed_out,
               "stdout": (stdout or "")[-4000:], "stderr": (stderr or "")[-4000:]}
 
+    result_marker = "MLSCAN_RESULT_JSON:%s:" % nonce
+
     payload = None
     for line in (stdout or "").splitlines():
-        if line.startswith("MLSCAN_RESULT_JSON:"):
-            payload = line[len("MLSCAN_RESULT_JSON:"):]
+        if line.startswith(result_marker):
+            payload = line[len(result_marker):]
     if payload is not None:
         try:
             result.update(json.loads(payload))

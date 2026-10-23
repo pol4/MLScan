@@ -241,6 +241,7 @@ def _scan_dockerfile(text: str, label: str) -> list[dict]:
 
 
 def _scan_nested_archive(data: bytes, label: str, depth: int = 0) -> list[dict]:
+    budget = _Budget()
     """Вложенные архивы (zip в zip): install-хуки, код и pickle-потоки внутри."""
     out: list[dict] = []
     if depth > 2:
@@ -254,7 +255,7 @@ def _scan_nested_archive(data: bytes, label: str, depth: int = 0) -> list[dict]:
         if info.file_size > 8 * 1024 * 1024:
             continue
         try:
-            blob = zf.read(info)
+            blob = _read_member(zf, info, budget)[0]
         except Exception:  # noqa: BLE001
             continue
         if nm.endswith(ARCHIVE_EXT):
@@ -405,6 +406,7 @@ def _scan_pmml(text: str, label: str) -> list[dict]:
 
 
 def _scan_mlflow(path: Path) -> list[dict]:
+    budget = _Budget()
     """MLflow-модель (zip с MLmodel): код и внешние источники в метаданных."""
     out: list[dict] = []
     try:
@@ -416,10 +418,10 @@ def _scan_mlflow(path: Path) -> list[dict]:
         ln = n.lower()
         try:
             if ln.endswith(".py"):
-                out.extend(_scan_python(_btext(zf.read(n)), f"{path.name}:{n}"))
+                out.extend(_scan_python(_btext(_read_member(zf, zf.getinfo(n), budget)[0]), f"{path.name}:{n}"))
             elif ln.endswith((".yaml", ".yml", ".json", ".txt")):
-                out.extend(_scan_python(_btext(zf.read(n)), f"{path.name}:{n}"))
-                t = _btext(zf.read(n))
+                out.extend(_scan_python(_btext(_read_member(zf, zf.getinfo(n), budget)[0]), f"{path.name}:{n}"))
+                t = _btext(_read_member(zf, zf.getinfo(n), budget)[0])
                 if "http://" in t or "https://" in t:
                     out.append(_f("INT-03", f"Внешние URL в метаданных MLflow ({path.name})",
                                   "medium", 0.5, f"{n}", cat="INT"))
@@ -429,6 +431,7 @@ def _scan_mlflow(path: Path) -> list[dict]:
 
 
 def _scan_zip(path: Path) -> tuple[list[dict], str]:
+    budget = _Budget()
     out: list[dict] = []
     fmt = "zip"
     try:
@@ -451,7 +454,7 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
         risky = []
         for n in has_py[:20]:
             try:
-                if any(h in _btext(zf.read(n)) for h in PY_CODE_HINTS):
+                if any(h in _btext(_read_member(zf, zf.getinfo(n), budget)[0]) for h in PY_CODE_HINTS):
                     risky.append(n)
             except Exception:  # noqa: BLE001
                 continue
@@ -464,7 +467,7 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
     for n in names:
         if _norm_name(n).endswith(ARCHIVE_EXT):
             try:
-                inner = zf.read(n)
+                inner = _read_member(zf, zf.getinfo(n), budget)[0]
             except Exception:  # noqa: BLE001
                 continue
             if len(inner) <= 16 * 1024 * 1024:
@@ -472,7 +475,7 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
     for n in names:
         if _norm_name(n).endswith(".pth"):
             try:
-                text = _btext(zf.read(n))
+                text = _btext(_read_member(zf, zf.getinfo(n), budget)[0])
             except Exception:  # noqa: BLE001
                 continue
             hits = _scan_sitepath(text, f"{path.name}:{n}")
@@ -494,7 +497,7 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
         ts_markers = ("__torch__", "torch.jit", "torch._C", "torch/csrc", "TorchScript")
         for n in code_files[:20]:
             try:
-                t = _btext(zf.read(n))
+                t = _btext(_read_member(zf, zf.getinfo(n), budget)[0])
             except Exception:  # noqa: BLE001
                 continue
             if ("os.system" in t or "subprocess" in t or "socket:" in t
@@ -503,7 +506,7 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
         bad_const = False
         for n in constants[:3]:
             try:
-                raw = zf.read(n)
+                raw = _read_member(zf, zf.getinfo(n), budget)[0]
             except Exception:  # noqa: BLE001
                 continue
             if any(g in raw for g in (b"posix", b"os.system", b"subprocess", b"system",
@@ -514,14 +517,14 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
                           "high", 0.85, "code/: " + ", ".join(suspicious[:3])))
             for n in suspicious[:5]:
                 try:
-                    out.extend(_scan_python(_btext(zf.read(n)), f"{path.name}:{n}"))
+                    out.extend(_scan_python(_btext(_read_member(zf, zf.getinfo(n), budget)[0]), f"{path.name}:{n}"))
                 except Exception:  # noqa: BLE001
                     pass
         elif bad_const:
             out.append(_f("EXEC-03", "torch.package: опасный pickle в constants.pkl",
                           "high", 0.8, "constants.pkl + os/system", cat="FMT"))
         elif not (code_files and all(
-                any(m in _btext(zf.read(n)) for m in ts_markers)
+                any(m in _btext(_read_member(zf, zf.getinfo(n), budget)[0]) for m in ts_markers)
                 for n in code_files[:20] if True)):
             if code_files:
                 out.append(_f("EXEC-03", "torch.package/TorchScript со сторонним кодом в архиве",
@@ -531,14 +534,14 @@ def _scan_zip(path: Path) -> tuple[list[dict], str]:
         ln = n.lower()
         if ln.endswith((".json", ".yaml", ".yml")):
             try:
-                txt = _btext(zf.read(n))
+                txt = _btext(_read_member(zf, zf.getinfo(n), budget)[0])
             except Exception:  # noqa: BLE001
                 continue
             if ln.endswith(".json"):
                 out.extend(_scan_json(txt, f"{path.name}:{n}"))
         if ln.endswith(".py"):
             try:
-                out.extend(_scan_python(_btext(zf.read(n)), f"{path.name}:{n}"))
+                out.extend(_scan_python(_btext(_read_member(zf, zf.getinfo(n), budget)[0]), f"{path.name}:{n}"))
             except Exception:  # noqa: BLE001
                 pass
     if path.suffix.lower() == ".keras":
@@ -904,6 +907,39 @@ def _scan_image_polyglot(blob: bytes, label: str) -> list[dict]:
                       "medium", 0.6, "polyglot image+zip", cat="STEG"))
     return out
 
+
+
+# Лимиты распаковки в доверенной зоне (docs/14, P0-3): защита от zip-бомб.
+MEMBER_LIMIT = 32 * 1024 * 1024
+TOTAL_LIMIT = 128 * 1024 * 1024
+MEMBER_COUNT_LIMIT = 2000
+
+
+class _Budget:
+    def __init__(self, total=TOTAL_LIMIT):
+        self.left = total
+
+    def take(self, n):
+        n = max(0, min(int(n), self.left))
+        self.left -= n
+        return n
+
+
+def _read_member(zf, info, budget, limit=MEMBER_LIMIT):
+    budget = _Budget()
+    """Член архива с ограничением по РАЗЖАТОМУ размеру (защита от бомб)."""
+    want = min(info.file_size or 0, limit, budget.left)
+    if want <= 0:
+        return b"", True
+    try:
+        with zf.open(info) as fh:
+            data = fh.read(want + 1)
+    except Exception:
+        return b"", True
+    truncated = len(data) > want
+    data = data[:want]
+    budget.take(len(data))
+    return data, truncated
 
 def _norm_name(name: str) -> str:
     """Имя члена архива без служебного префикса torch ("archive/")."""

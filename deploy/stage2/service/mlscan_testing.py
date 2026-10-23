@@ -27,6 +27,7 @@ import hashlib
 import http.client
 import json
 import os
+import secrets
 import re
 import ssl
 import sys
@@ -301,7 +302,7 @@ def stats() -> dict:
 # ----------------------------------------------------------------------------
 # Песочница
 # ----------------------------------------------------------------------------
-def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: str, fmt: str) -> dict:
+def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: str, fmt: str, nonce: str = "") -> dict:
     cmd = ('python -c "import urllib.request,sys;urllib.request.urlretrieve(sys.argv[1],sys.argv[2])" '
            '"$ARTIFACT_URL" "/tmp/$MODEL_NAME" '
            '&& exec python /opt/mlscan/harness.py "$MODEL_FMT" "$MODEL_NAME" < "/tmp/$MODEL_NAME"')
@@ -330,7 +331,8 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                                 {"name": "HOME", "value": "/deception"},
                                 {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
                                 {"name": "PYTHONUTF8", "value": "1"},
-                                {"name": "TMPDIR", "value": "/tmp"}],
+                                {"name": "TMPDIR", "value": "/tmp"},
+                                {"name": "MLSCAN_NONCE", "value": nonce}],
                         "securityContext": {"allowPrivilegeEscalation": False,
                                             "readOnlyRootFilesystem": True,
                                             "capabilities": {"drop": ["ALL"]}},
@@ -376,9 +378,12 @@ def wait_job(scan_id: str, job_name: str, timeout: int) -> tuple[str, bool]:
 
 
 def run_sandbox(scan_id: str, name: str, fmt: str, artifact_url: str) -> dict:
+    # Нонс результата: harness печатает маркеры со своим нонсом, сервис принимает только их
+    # (payload не может подделать «чистый» результат, напечатав свою строку — см. docs/14, P0-1).
+    nonce = secrets.token_hex(8)
     job = f"mlscan-scan-{scan_id[:20]}"
     k8s("POST", f"/apis/batch/v1/namespaces/{SANDBOX_NS}/jobs",
-        sandbox_job_manifest(job, scan_id, artifact_url, name, fmt))
+        sandbox_job_manifest(job, scan_id, artifact_url, name, fmt, nonce))
     status, timed_out = wait_job(scan_id, job, JOB_TIMEOUT)
     result: dict = {"status": status, "timed_out": timed_out}
     pod = pod_for_job(job)
@@ -391,9 +396,40 @@ def run_sandbox(scan_id: str, name: str, fmt: str, artifact_url: str) -> dict:
         except Exception as exc:  # noqa: BLE001
             logs, result["log_error"] = "", str(exc)
         payload = None
+        summary_raw = None
+        res_prefix = "MLSCAN_RESULT_JSON:" + nonce + ":"
+        sum_prefix = "MLSCAN_SUMMARY:" + nonce + ":"
+        forged = 0
         for line in (logs or "").splitlines():
             if line.startswith("MLSCAN_RESULT_JSON:"):
-                payload = line[len("MLSCAN_RESULT_JSON:"):]
+                if line.startswith(res_prefix):
+                    payload = line[len(res_prefix):]
+                else:
+                    forged += 1                      # маркер без нашего нонса — попытка подмены
+            elif line.startswith("MLSCAN_SUMMARY:"):
+                if line.startswith(sum_prefix):
+                    summary_raw = line[len(sum_prefix):]
+                else:
+                    forged += 1
+        if forged:
+            result.setdefault("errors", []).append(
+                f"обнаружен результат без нонса скана ({forged} стр.) — возможна попытка подделки")
+        if payload and summary_raw:
+            try:
+                sm = json.loads(summary_raw)
+                load_ok = (result.get("load") or {}).get("ok")
+                # сверяем только стабильные признаки: формат и факт загрузки
+                if (sm.get("format") and result.get("format") and sm["format"] != result["format"]) or \
+                        (sm.get("load_ok") is not None and load_ok is not None
+                         and bool(sm["load_ok"]) != bool(load_ok)):
+                    result.setdefault("errors", []).append("несоответствие summary и результата песочницы")
+                    result["status"] = "failed"
+            except Exception:  # noqa: BLE001
+                result.setdefault("errors", []).append("нечитаемый MLSCAN_SUMMARY")
+        elif summary_raw and not payload:
+            # summary есть, результата со своим нонсом нет — считать динамику неуспешной
+            result.setdefault("errors", []).append("результат песочницы не получен (есть только summary)")
+            result["status"] = "failed"
         if payload:
             try:
                 result.update(json.loads(payload))
@@ -637,7 +673,9 @@ class Handler(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         if u.path == "/healthz":
             lang = self._lang(q)
-            return self._json(200, {"status": "ok", "sandbox_ns": SANDBOX_NS, "language": lang})
+            return self._json(200, {"status": "ok" if INTEGRITY_OK else "degraded", "sandbox_ns": SANDBOX_NS,
+                                    "language": lang, "integrity": INTEGRITY_OK, "expected_digest": INTEGRITY_ENV,
+                                    "actual_digest": INTEGRITY_DIGEST})
         if self._require() is None:
             return
         lang = self._lang(q)
@@ -747,8 +785,74 @@ class Handler(BaseHTTPRequestHandler):
         if self._require() is None:
             return
         if u.path in ("/scans", "/scans/upload", "/upload"):
+            ident = getattr(self, "_subject", "") or (self.client_address[0] if self.client_address else "?")
+            ok, retry = rate_allow(ident)
+            if not ok:
+                self.send_response(429)
+                self.send_header("Retry-After", str(retry))
+                return self._json(429, {"error": f"слишком много загрузок: повторите через {retry} с",
+                                        "retry_after": retry})
+            if not INTEGRITY_OK:
+                print(f"[testing] CRITICAL: код/конфигурация не совпадают с ожидаемым digest "
+                      f"({INTEGRITY_DIGEST} != {INTEGRITY_ENV}) — приём артефактов заблокирован", file=sys.stderr)
+                return self._json(503, {"error": "integrity check failed", "actual": INTEGRITY_DIGEST,
+                                        "expected": INTEGRITY_ENV})
+            inflight = inflight_scans()
+            if inflight >= MAX_INFLIGHT_SCANS:
+                return self._json(429, {"error": f"слишком много проверок в работе ({inflight})",
+                                        "max_inflight": MAX_INFLIGHT_SCANS})
             return self._receive_upload(q)
         return self._json(404, {"error": "not found"})
+
+
+
+# Защита от шторма загрузок/скан-флуда (docs/14, P0-5)
+RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "30"))
+MAX_INFLIGHT_SCANS = int(os.environ.get("MAX_INFLIGHT_SCANS", "5"))
+_rate: dict = {}
+_rate_lock = threading.Lock()
+
+
+def rate_allow(ident: str) -> tuple[bool, int]:
+    """Скользящее окно: не больше RATE_LIMIT_PER_MIN запросов в минуту на клиента."""
+    now = time.time()
+    with _rate_lock:
+        hits = [t for t in _rate.get(ident, []) if now - t < 60.0]
+        if len(hits) >= RATE_LIMIT_PER_MIN:
+            return False, max(1, int(60.0 - (now - hits[0])))
+        hits.append(now)
+        _rate[ident] = hits
+    return True, 0
+
+
+def inflight_scans() -> int:
+    """Сканы, которые ещё выполняются (ограничение параллелизма = защита кластера)."""
+    return sum(1 for r in list_scans() if r.get("state") in ("queued", "running", "submitted"))
+
+
+
+# Контроль целостности кода/конфигурации анализа (docs/14, P0-6).
+# Digest ожидаемых файлов вычисляется при применении манифестов и передаётся в env;
+# при расхождении сервис работает fail-closed (не принимает артефакты) и громко алертит.
+INTEGRITY_ENV = os.environ.get("MLSCAN_CM_DIGEST", "")
+INTEGRITY_PATHS = ("/opt/mlscan/mlscan_poc.py", "/opt/svc/mlscan_testing.py", "/opt/formats/detector.py",
+                   "/opt/auth/authz.py", "/opt/pg/pgclient.py", "/opt/i18n/i18n.py")
+
+
+def compute_integrity_digest() -> str:
+    import hashlib as _h
+    d = _h.sha256()
+    for path in INTEGRITY_PATHS:
+        try:
+            with open(path, "rb") as fh:
+                d.update(fh.read())
+        except Exception:  # noqa: BLE001
+            d.update(f"missing:{path}".encode())
+    return "sha256:" + d.hexdigest()
+
+
+INTEGRITY_DIGEST = compute_integrity_digest()
+INTEGRITY_OK = (not INTEGRITY_ENV) or (INTEGRITY_ENV == INTEGRITY_DIGEST)
 
 
 def reap_stale_scans() -> int:

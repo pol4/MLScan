@@ -147,6 +147,20 @@ Invariants the system must provide:
 
 ---
 
+
+### P0 implementation status (2026-10-23)
+
+| ID | Status | What was done and how it was verified |
+|----|--------|---------------------------------------|
+| P0-1 | ✅ **done** | the harness prints `MLSCAN_RESULT_JSON:<nonce>:` / `MLSCAN_SUMMARY:<nonce>:`; the service generates a per-scan nonce, passes it to the Job (`MLSCAN_NONCE`) and accepts only its own markers. Verified with `vuln_result_spoof.pkl`: the forged "clean" result is **ignored**, the record notes "result without the scan nonce detected", and the verdict follows the real findings (`A-01/A-02/A-20/F-32`) |
+| P0-2 | ✅ **done** | `sandbox-image/build.sh` prints the image digest and stores it in `/tmp/mlscan-sandbox-digest`; `SANDBOX_IMAGE` is now `localhost:32000/mlscan-sandbox@sha256:...` (scans return `Malicious`/`Safe` with dynamics `succeeded`) |
+| P0-3 | ✅ **done** | in `poc/formats.py` every archive member read goes through `_read_member()` with a 32 MB per-member cap, a 128 MB total budget and a member-count cap; verified with a 200 MB zip bomb (204 KB on disk): scan 0.96 s, bomb cut off, finding `FMT-04` |
+| P0-4 | ⚠️ **open (environment blocker)** | a Calico GNP with an allowlist plus `Reject` was tested: with `Reject` present the sandbox **DNS stops working** (CIDR/port allow rules do not match the DNS flow) and `calico-node` is **0/1 Ready** (42 restarts) - policies may not be enforced at all. The experimental policy was removed (scans work; external egress is still DROP -> timeout). Needs calico-node fixing and semantics work (likely a tier or a resolver rule) |
+| P0-5 | ✅ **done** | `ResourceQuota`+`LimitRange` for `mlscan-sandbox` (4/12 pods observed), a 30 uploads/minute per-client rate limit and a 5 in-flight scans cap in the testing service (out of 40 concurrent uploads: 30x`202`, 10x`429`) |
+| P0-6 | ✅ **done** | the code/config digest is computed in `stage2/apply.sh` and passed via env (`MLSCAN_CM_DIGEST`); the service compares it with the actual files, exposes it in `/healthz` (`integrity`) and is **fail-closed** (`503`) on mismatch. `integrity: true` observed when consistent |
+
+**Open items:** P0-4 (after Calico is fixed), P1-1...P1-8, P2-1...P2-7.
+
 ## 5. Appendix: how to verify after the changes
 
 * **Result spoofer**: a sample that prints a fake `MLSCAN_RESULT_JSON:` - the verdict must not become
