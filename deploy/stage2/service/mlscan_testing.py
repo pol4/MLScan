@@ -514,7 +514,11 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
 
         update(scan_id, stage="collecting", progress=90)
         findings = normalize(scan_id, rec.get("sha256", ""), static, dynamic)
+        findings, _truncated = cap_findings(findings)
         verdict, reason = mlscan_poc.decide(static, dynamic)
+        if _truncated:
+            reason = f"{reason}; показаны первые {MAX_FINDINGS} находок из {MAX_FINDINGS + _truncated}"
+            print(f"[testing] {scan_id}: находок больше лимита, усечено {_truncated}", file=sys.stderr)
         # полнота покрытия: какие модули реально отработали (см. poc.coverage_of)
         coverage = mlscan_poc.coverage_of(static, dynamic)
         if not coverage.get("complete"):
@@ -811,6 +815,17 @@ RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "30"))
 MAX_INFLIGHT_SCANS = int(os.environ.get("MAX_INFLIGHT_SCANS", "5"))
 _rate: dict = {}
 _rate_lock = threading.Lock()
+
+
+
+MAX_FINDINGS = int(os.environ.get("MAX_FINDINGS", "500"))   # лимит находок (docs/14, P1-7)
+
+
+def cap_findings(findings):
+    """Ограничивает число находок (защита БД/UI), возвращает (список, сколько усечено)."""
+    if len(findings) <= MAX_FINDINGS:
+        return findings, 0
+    return findings[:MAX_FINDINGS], len(findings) - MAX_FINDINGS
 
 
 def rate_allow(ident: str) -> tuple[bool, int]:

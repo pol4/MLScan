@@ -159,7 +159,20 @@ Invariants the system must provide:
 | P0-5 | ✅ **done** | `ResourceQuota`+`LimitRange` for `mlscan-sandbox` (4/12 pods observed), a 30 uploads/minute per-client rate limit and a 5 in-flight scans cap in the testing service (out of 40 concurrent uploads: 30x`202`, 10x`429`) |
 | P0-6 | ✅ **done** | the code/config digest is computed in `stage2/apply.sh` and passed via env (`MLSCAN_CM_DIGEST`); the service compares it with the actual files, exposes it in `/healthz` (`integrity`) and is **fail-closed** (`503`) on mismatch. `integrity: true` observed when consistent |
 
-**Open items:** P0-4 (after Calico is fixed), P1-1...P1-8, P2-1...P2-7.
+
+### P1 implementation status (2026-10-23)
+
+| ID | Status | What was done and how it was verified |
+|----|--------|---------------------------------------|
+| P1-1 | ✅ **done** | platform namespace egress is narrowed: instead of the whole cluster CIDR on ports 443/8080/8090/3900/5432, only the required ports (PG/S3/sinkhole/testing service) plus a single rule for the API ClusterIP (`10.152.183.1/32:443`, substituted by `apply.sh`). Verified from the testing pod: PG/S3 reachable, `istio-ingressgateway:443` and `kubernetes.default.svc:443` (outside the rule) unreachable; scans and analytics sync work. Note: in this Calico egress is evaluated **pre-DNAT**, so `namespaceSelector` rules do not match ClusterIPs - narrowing is port-based |
+| P1-4 | ✅ **done** | `authz.authenticate()` honours `expires_at` (ISO-8601/unix) on a key record: an expired or unreadable deadline makes the key invalid (fail-closed). Verified: a key with `expires_at=2020-01-01` -> `401`, a normal key -> `200` |
+| P1-7 | ✅ **done** | `MAX_FINDINGS=500` in the testing service: extra findings are dropped and the reason notes "showing the first 500 findings of N" (protects the DB/UI from a finding explosion). Verified with 600 findings: 500 kept, 100 truncated |
+
+P0-6 was additionally confirmed in real operation: after a code change without refreshing the digest the service returned `503 integrity check failed` and refused artefacts (fail-closed); after `stage2/apply.sh` it reports `integrity: true` and scans work again.
+
+**Remaining:** P0-4 (after calico-node is fixed), P1-2 (sandbox DNS policy), P1-3 (admission constraints on Jobs), P1-5 (evidence/policy signing), P1-6 (integrity metrics), P1-8 (change audit), P2-1...P2-7.
+
+**Open items:** P0-4, P1-2, P1-3, P1-5, P1-6, P1-8, P2-1...P2-7.
 
 ## 5. Appendix: how to verify after the changes
 

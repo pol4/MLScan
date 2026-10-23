@@ -157,6 +157,21 @@ def authenticate(headers):
     ent = KEYS.get(key)
     if not ent:
         return None
+    # Срок жизни API-ключа (docs/14, P1-4): expires_at — ISO-8601 или unix-время.
+    # Истёкший или нечитаемый срок = ключ недействителен (fail-closed).
+    exp = ent.get("expires_at")
+    if exp:
+        import datetime as _dt
+        import time as _time
+        try:
+            if isinstance(exp, (int, float)) or str(exp).isdigit():
+                deadline = float(exp)
+            else:
+                deadline = _dt.datetime.fromisoformat(str(exp).replace("Z", "+00:00")).timestamp()
+        except Exception:  # noqa: BLE001
+            return None
+        if _time.time() > deadline:
+            return None
     return {"subject": ent.get("subject", "unknown"), "roles": ent.get("roles", [])}
 
 

@@ -48,11 +48,13 @@ API_IP=$(kubectl get endpointslices.discovery.k8s.io -n default kubernetes \
 [ -n "${API_IP:-}" ] || API_IP=$(kubectl -n default get endpoints kubernetes \
   -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
 if [ -z "${API_IP:-}" ]; then
-  API_IP=$(kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  API_IP=$(kubectl -n default get svc kubernetes -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
   [ -n "${API_IP:-}" ] && echo "  (EndpointSlice недоступен; использую ClusterIP API $API_IP, порт 443 уже разрешён правилом 10.152.0.0/16)"
 fi
+API_CLUSTER_IP=$(kubectl -n default get svc kubernetes -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+[ -n "${API_CLUSTER_IP:-}" ] || API_CLUSTER_IP=203.0.113.1
 if [ -n "${API_IP:-}" ]; then
-  sed "s#198\.51\.100\.10/32#${API_IP}/32#" "$HERE/30-egress-networkpolicies.yaml" | kubectl apply -f -
+  sed "s#198\.51\.100\.10/32#${API_IP}/32#; s#203\.0\.113\.1/32#${API_CLUSTER_IP}/32#" "$HERE/30-egress-networkpolicies.yaml" | kubectl apply -f -
 else
   # Заведомо неверный IP применять нельзя (это блокирует доступ сервисов к K8s API).
   # Оставляем правило-заглушку из зарезервированного диапазона и громко предупреждаем.
@@ -65,12 +67,12 @@ if kubectl -n mlscan-testing get networkpolicy mlscan-egress -o yaml 2>/dev/null
   exit 1
 fi
 if have_ns mlscan-integrations; then
-  kubectl apply -f "$HERE/31-egress-networkpolicies-l4.yaml"
+  sed "s#203\.0\.113\.1/32#${API_CLUSTER_IP}/32#" "$HERE/31-egress-networkpolicies-l4.yaml" | kubectl apply -f -
 else
   echo "  (egress-политика интеграций — уровень 4)"
 fi
 if have_ns mlscan-ops; then
-  kubectl apply -f "$HERE/32-egress-networkpolicies-l5.yaml"
+  sed "s#203\.0\.113\.1/32#${API_CLUSTER_IP}/32#" "$HERE/32-egress-networkpolicies-l5.yaml" | kubectl apply -f -
 else
   echo "  (egress-политика эксплуатации — уровень 5)"
 fi
