@@ -57,6 +57,7 @@ def _auth_headers() -> dict:
     return {"Authorization": f"Bearer {INTERNAL_KEY}"} if INTERNAL_KEY else {}
 
 
+_integrity_bad: list[str] = []   # сервисы с нарушенной целостностью кода/конфигурации (P1-6)
 ANALYTICS_URL = os.environ.get("ANALYTICS_URL", "http://mlscan-analytics.mlscan-analytics.svc.cluster.local:8080")
 TESTING_URL = os.environ.get("TESTING_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 INTEGRATIONS_URL = os.environ.get("INTEGRATIONS_URL", "http://mlscan-integrations.mlscan-integrations.svc.cluster.local:8080")
@@ -234,6 +235,25 @@ def storage_metrics() -> list[str]:
             out.append("mlscan_pg_up 0")
         finally:
             c.close()
+    # P1-6: целостность кода/конфигурации сервисов и качество покрытия вердиктов
+    for name, url in (("analytics", ANALYTICS_URL), ("testing", TESTING_URL)):
+        try:
+            hz = get_json(url + "/healthz")
+            val = 1 if hz.get("integrity", True) else 0
+            out.append(f'mlscan_integrity_ok{{service="{name}"}} {val}')
+            if hz.get("integrity") is False and name not in _integrity_bad:
+                _integrity_bad.append(name)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        by = (get_json(ANALYTICS_URL + "/api/stats").get("by_verdict") or {})
+        total = sum(by.values())
+        incon = by.get("Inconclusive", 0)
+        out.append(f"mlscan_scans_inconclusive_total {incon}")
+        out.append(f"mlscan_scans_total {total}")
+        out.append(f"mlscan_scans_inconclusive_ratio {(incon / max(1, total)):.4f}")
+    except Exception:  # noqa: BLE001
+        pass
     if GARAGE_ADMIN_URL:
         try:
             req = urllib.request.Request(GARAGE_ADMIN_URL.rstrip("/") + "/metrics",
@@ -283,6 +303,19 @@ def alerts(lang: str = "ru") -> list[dict]:
     except Exception:  # noqa: BLE001
         res.append({"id": "evidence_unavailable", "severity": "warning",
                     "summary": T("msg.alert_evidence_unchecked", lang)})
+    # P1-6: алерты по целостности кода/конфигурации и качеству покрытия
+    for name in _integrity_bad:
+        res.append({"id": "integrity_" + name, "severity": "critical",
+                    "summary": "integrity of code/config of service " + name + " is violated"})
+    try:
+        by = (get_json(ANALYTICS_URL + "/api/stats").get("by_verdict") or {})
+        total = sum(by.values())
+        ratio = by.get("Inconclusive", 0) / max(1, total)
+        if ratio > 0.2 and total > 20:
+            res.append({"id": "coverage_low", "severity": "warning",
+                        "summary": "share of incomplete scans (Inconclusive) is %.0f%%" % (ratio * 100)})
+    except Exception:  # noqa: BLE001
+        pass
     return res
 
 

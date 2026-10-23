@@ -1,0 +1,52 @@
+# P1-3: ограничение Job'ов в namespace песочницы (Kyverno).
+# Любой Job в mlscan-sandbox обязан: исполняться в Kata, использовать наш образ песочницы
+# ПО DIGEST, задавать безопасный securityContext и не запрашивать host* / privileged.
+# Это не даёт скомпрометированному сервису (или человеку с правом create job) запустить
+# произвольный код в кластере и подменить результат проверки (docs/14, P1-3).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mlscan-sandbox-jobs
+  annotations:
+    policies.kyverno.io/title: MLScan sandbox Jobs
+    policies.kyverno.io/description: "Job'ы в mlscan-sandbox: kata, digest-образ песочницы, безопасный securityContext"
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+  - name: require-kata-and-digest-image
+    match:
+      any:
+      - resources:
+          kinds: [Job]
+          namespaces: [mlscan-sandbox]
+    validate:
+      message: "Job в mlscan-sandbox должен использовать runtimeClassName=kata и образ mlscan-sandbox по digest"
+      pattern:
+        spec:
+          template:
+            spec:
+              runtimeClassName: kata
+              containers:
+              - image: "*mlscan-sandbox@sha256:*"
+  - name: require-hardened-security-context
+    match:
+      any:
+      - resources:
+          kinds: [Job]
+          namespaces: [mlscan-sandbox]
+    validate:
+      message: "Job в mlscan-sandbox должен задавать безопасный securityContext (non-root, drop ALL, RO-FS, seccomp, no privilege escalation)"
+      pattern:
+        spec:
+          template:
+            spec:
+              automountServiceAccountToken: false
+              securityContext:
+                runAsNonRoot: true
+                seccompProfile: {type: RuntimeDefault}
+              containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities: {drop: ["ALL"]}

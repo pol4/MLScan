@@ -14,7 +14,8 @@
 set -euo pipefail
 
 NS=mlscan-sandbox
-IMAGE="${SANDBOX_IMAGE:-localhost:32000/mlscan-sandbox:v4}"
+IMAGE="${SANDBOX_IMAGE:-$(cat /tmp/mlscan-sandbox-digest 2>/dev/null || echo localhost:32000/mlscan-sandbox:v4)}"
+NONCE="$(python3 -c 'import secrets;print(secrets.token_hex(8))')"
 TARGET="${1:-evil2.pkl}"
 FMT="${2:-pickle}"
 NAME="${3:-mlscan-run-$(date +%s)}"
@@ -85,6 +86,7 @@ spec:
         env:
         - {name: MODEL_FILE, value: /scan/${SAMPLE}}
         - {name: MODEL_FMT, value: ${FMT}}
+        - {name: MLSCAN_NONCE, value: ${NONCE}}
         - {name: HOME, value: /deception}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: PYTHONUTF8, value: "1"}
@@ -124,7 +126,7 @@ else
 fi
 
 echo "===== лог harness (MLSCAN_SUMMARY) ====="
-kubectl -n "$NS" logs "job/${NAME}" 2>&1 | grep -E "MLSCAN_SUMMARY|MLSCAN_RESULT_JSON" | head -5 || true
+kubectl -n "$NS" logs "job/${NAME}" 2>&1 | grep -E "MLSCAN_SUMMARY:${NONCE}:|MLSCAN_RESULT_JSON:${NONCE}:" | cut -c1-400 || true
 if [ "$state" != "complete" ]; then
   echo "===== ошибка: последние строки лога ====="
   kubectl -n "$NS" logs "job/${NAME}" 2>&1 | tail -15 || true
