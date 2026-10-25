@@ -35,6 +35,7 @@ import threading
 import time
 import uuid
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -88,6 +89,20 @@ REGISTRY_ALLOWLIST = [r.strip() for r in os.environ.get("REGISTRY_ALLOWLIST", ""
 # L1: ёмкость LLM-пула для ресурсного планировщика (0/пусто = без ограничений в этом измерении)
 ATTEST_KEY = os.environ.get("ATTEST_KEY", "mlscan-dev-attest")
 DETECTORS_VERSION = os.environ.get("MLSCAN_DETECTORS_VERSION", "det-1")
+# H1: Hugging Face (HF_MOCK=1 — встроенный mock-сервер для hermetic-тестов; иначе реальный HF)
+HF_BASE_URL = os.environ.get("HF_BASE_URL", "https://huggingface.co")
+HF_MOCK = os.environ.get("HF_MOCK", "0") == "1"
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+_hf_lock = threading.Lock()
+_HF_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_hf_cancel: set = set()
+# mock-каталог моделей (HF_MOCK)
+_HF_MOCK_MODELS = [
+    {"id": "Qwen/Qwen2-0.5B-Instruct-GGUF", "tags": ["text-generation", "gguf"],
+     "files": {"qwen2-0.5b-q4_k_m.gguf": 4096, "qwen2-0.5b-q8_0.gguf": 8192, "config.json": 64}},
+    {"id": "TheBloke/TinyLlama-1.1B-Chat-GGUF", "tags": ["text-generation", "gguf"],
+     "files": {"tinyllama-1.1b.Q5_K_M.gguf": 6144}},
+]
 LLM_POOL = {"gpu": int(os.environ.get("LLM_POOL_GPU", "8") or 0),
             "ram_gb": int(os.environ.get("LLM_POOL_RAM_GB", "1024") or 0),
             "disk_gb": int(os.environ.get("LLM_POOL_DISK_GB", "8192") or 0)}
@@ -162,6 +177,88 @@ def _dynamic_plan(size: int) -> dict | None:
                                       max_slices=DYNAMIC_MAX_SLICES)
     except Exception:  # noqa: BLE001
         return None
+
+
+_hf_mock_served: dict = {}
+
+
+def _hf_mock_bytes(name: str, size: int) -> bytes:
+    seed = hashlib.sha256(name.encode()).digest()
+    out = bytearray(); i = 0
+    while len(out) < size:
+        out += hashlib.sha256(seed + i.to_bytes(4, "big")).digest(); i += 1
+    return bytes(out[:size])
+
+
+def _hf_mock_search(search: str, type_: str) -> list[dict]:
+    res = []
+    for m in _HF_MOCK_MODELS:
+        if search and search.lower() not in m["id"].lower():
+            continue
+        if type_ and type_.lower() not in [t.lower() for t in m["tags"]] and type_.lower() not in m["id"].lower():
+            continue
+        res.append({"id": m["id"], "tags": m["tags"], "files": list(m["files"].keys())})
+    return res
+
+
+def _hf_download_worker(dl_id: str) -> None:
+    try:
+        rows = db_query("SELECT repo_id,revision,files FROM hf_downloads WHERE id=" + _lit(dl_id))
+        if not rows:
+            return
+        repo, revision, files_json = rows[0][0], rows[0][1], rows[0][2]
+        files = json.loads(files_json or "[]")
+        done = 0
+        for fname in files:
+            if dl_id in _hf_cancel:
+                raise RuntimeError("cancelled")
+            size = 4096
+            for m in _HF_MOCK_MODELS:
+                if m["id"] == repo and fname in m["files"]:
+                    size = int(m["files"][fname])
+            url = f"{HF_BASE_URL}/{repo}/resolve/{revision or 'main'}/{fname}"
+            dest = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(fname)}")
+            os.makedirs(DATA_TMP, exist_ok=True)
+            got = 0; attempts = 0; etag = ""
+            with open(dest, "ab" if os.path.exists(dest) else "wb") as fh:
+                while got < size and attempts < 8:
+                    attempts += 1
+                    req = urllib.request.Request(url, headers={"Range": f"bytes={got}-"})
+                    if etag:
+                        req.add_header("If-Range", etag)
+                    if HF_TOKEN:
+                        req.add_header("Authorization", f"Bearer {HF_TOKEN}")
+                    try:
+                        with _HF_OPENER.open(req, timeout=60) as resp:
+                            etag = resp.headers.get("ETag", etag) or etag
+                            while got < size:
+                                chunk = resp.read(min(65536, size - got))
+                                if not chunk:
+                                    break
+                                fh.write(chunk); got += len(chunk)
+                    except Exception:  # noqa: BLE001 — обрыв: повтор с докачкой (Range)
+                        time.sleep(0.2)
+                        continue
+            if got < size:
+                raise RuntimeError(f"incomplete {fname}: {got}/{size}")
+            if S3_ENABLED and _s3 is not None:
+                sha = hashlib.sha256(open(dest, "rb").read()).hexdigest()
+                with open(dest, "rb") as fh:
+                    _s3.put_stream_multipart(f"hf/{repo}/{fname}", fh, size, sha,
+                                             part_size=1024 * 1024, workers=4)
+            done += size
+            db_exec("UPDATE hf_downloads SET bytes_done=" + str(done) + ", updated=now() WHERE id=" + _lit(dl_id))
+        db_exec("UPDATE hf_downloads SET status='done', updated=now() WHERE id=" + _lit(dl_id))
+    except Exception as exc:  # noqa: BLE001
+        st = "cancelled" if dl_id in _hf_cancel else "error"
+        try:
+            db_exec("UPDATE hf_downloads SET status=" + _lit(st) + ", error=" + _lit(str(exc)[:200]) +
+                    ", updated=now() WHERE id=" + _lit(dl_id))
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        with _hf_lock:
+            _hf_cancel.discard(dl_id)
 
 
 def _active_tenants() -> list[str]:
@@ -406,6 +503,11 @@ except Exception:  # noqa: BLE001
     v3slices = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3obs")
+try:  # H1: планирование HF (выбор файлов/квантизации)
+    import hf as v3hf
+except Exception:  # noqa: BLE001
+    v3hf = None  # type: ignore
+
 try:  # v3 (P7): метрики/SLO
     import metrics as v3metrics  # noqa: E402
     import slo as v3slo  # noqa: E402
@@ -1079,6 +1181,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        # H1: встроенный mock-HF доступен без авторизации (только при HF_MOCK=1)
+        if HF_MOCK and u.path.startswith("/__mockhf/"):
+            return self._hf_mock_serve(u.path, q)
         if u.path == "/healthz":
             lang = self._lang(q)
             return self._json(200, {"status": "ok" if INTEGRITY_OK else "degraded", "sandbox_ns": SANDBOX_NS,
@@ -1097,6 +1202,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._tenants_fairshare()
         if u.path == "/domain-class":
             return self._domain_class_list()
+        if u.path.startswith("/__mockhf/"):
+            return self._hf_mock_serve(u.path, q)
+        if u.path == "/hf/downloads":
+            return self._hf_downloads_list()
+        if u.path.startswith("/hf/downloads/"):
+            return self._hf_download_get(u.path.split("/", 3)[3])
         if u.path == "/v3/metrics":
             return self._v3_metrics()
         if u.path == "/v3/slo":
@@ -1665,6 +1776,140 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
 
+    def _hf_search(self) -> None:
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        items = []
+        if HF_MOCK:
+            items = _hf_mock_search(body.get("query", ""), body.get("type", ""))
+        else:
+            try:
+                qs = urllib.parse.urlencode({"search": body.get("query", ""), "limit": "20"})
+                req = urllib.request.Request(f"{HF_BASE_URL}/api/models?{qs}")
+                if HF_TOKEN:
+                    req.add_header("Authorization", f"Bearer {HF_TOKEN}")
+                with _HF_OPENER.open(req, timeout=30) as r:
+                    for it in (json.loads(r.read()) or []):
+                        items.append({"id": it.get("modelId") or it.get("id"),
+                                      "tags": it.get("tags") or [],
+                                      "files": [f.get("rfilename") for f in (it.get("siblings") or [])]})
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"hf: {type(exc).__name__}: {exc}"})
+        if v3hf is not None:
+            items = v3hf.filter_search(items, type_=body.get("type", ""), vendor=body.get("vendor", ""),
+                                       name=body.get("name", ""), quantization=body.get("quantization", ""))
+        return self._json(200, {"items": items, "count": len(items), "mock": HF_MOCK})
+
+    def _hf_download_create(self) -> None:
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        repo = (body.get("repo_id") or "").strip()
+        if not repo:
+            return self._json(400, {"error": "repo_id обязателен"})
+        files = body.get("files") or []
+        sizes = {}
+        for m in _HF_MOCK_MODELS:
+            if m["id"] == repo:
+                sizes = dict(m["files"])
+        if not files:
+            files = [f for f in sizes] or ["model.gguf"]
+        if v3hf is not None and body.get("quantization"):
+            sel = v3hf.select_files(files, quantization=body.get("quantization"))
+            files = sel or files
+        total = sum(int(sizes.get(f, 4096)) for f in files)
+        dl_id = uuid.uuid4().hex
+        tenant = self._tenant()
+        try:
+            db_exec("INSERT INTO hf_downloads(id,tenant,repo_id,revision,quantization,files,bytes_total,status) "
+                    "VALUES (" + ",".join([_lit(dl_id), _lit(tenant), _lit(repo),
+                                           _lit(body.get("revision", "main")),
+                                           _lit(body.get("quantization", "")),
+                                           _lit(json.dumps(files, ensure_ascii=False)),
+                                           str(total), _lit("queued")]) + ")")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        threading.Thread(target=_hf_download_worker, args=(dl_id,), daemon=True).start()
+        return self._json(201, {"id": dl_id, "repo_id": repo, "files": files,
+                                "bytes_total": total, "status": "queued"})
+
+    def _hf_downloads_list(self) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT id,repo_id,revision,quantization,files,bytes_total,bytes_done,status,error "
+                        "FROM hf_downloads ORDER BY created DESC LIMIT 100") or []
+        return self._json(200, {"downloads": [
+            {"id": r[0], "repo_id": r[1], "revision": r[2], "quantization": r[3],
+             "files": json.loads(r[4] or "[]"), "bytes_total": r[5], "bytes_done": r[6],
+             "status": r[7], "error": r[8]} for r in rows]})
+
+    def _hf_download_get(self, dl_id: str) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT id,repo_id,revision,quantization,files,bytes_total,bytes_done,status,error "
+                        "FROM hf_downloads WHERE id=" + _lit(dl_id))
+        if not rows:
+            return self._json(404, {"error": "not found"})
+        r = rows[0]
+        return self._json(200, {"id": r[0], "repo_id": r[1], "revision": r[2], "quantization": r[3],
+                                "files": json.loads(r[4] or "[]"), "bytes_total": r[5],
+                                "bytes_done": r[6], "status": r[7], "error": r[8]})
+
+    def _hf_download_cancel(self, dl_id: str) -> None:
+        with _hf_lock:
+            _hf_cancel.add(dl_id)
+        if DB_ENABLED:
+            try:
+                db_exec("UPDATE hf_downloads SET status='cancelling', updated=now() WHERE id=" + _lit(dl_id))
+            except Exception:  # noqa: BLE001
+                pass
+        return self._json(200, {"id": dl_id, "status": "cancelling"})
+
+    def _hf_mock_serve(self, path: str, q: dict) -> None:
+        if path.rstrip("/").endswith("/api/models"):
+            items = _hf_mock_search(q.get("search", [""])[0], q.get("type", [""])[0])
+            return self._json(200, items)
+        rest = path[len("/__mockhf/"):]
+        parts = rest.split("/resolve/", 1)
+        if len(parts) != 2:
+            return self._json(404, {"error": "mock: bad path"})
+        repo, tail = parts[0], parts[1]
+        fname = tail.split("/", 1)[1] if "/" in tail else tail
+        size = 4096
+        for m in _HF_MOCK_MODELS:
+            if m["id"] == repo and fname in m["files"]:
+                size = int(m["files"][fname])
+        data = _hf_mock_bytes(repo + "/" + fname, size)
+        etag = hashlib.md5(data).hexdigest()
+        rng = self.headers.get("Range")
+        start = int(rng[6:].split("-")[0] or 0) if (rng and rng.startswith("bytes=")) else 0
+        flaky = q.get("flaky", ["0"])[0] == "1"
+        key = (repo, fname, etag)
+        attempts = _hf_mock_served.get(key, 0) + 1
+        _hf_mock_served[key] = attempts
+        chunk = data[start:]
+        if flaky and attempts == 1 and len(chunk) > 1024:
+            self.send_response(206 if start else 200)
+            self.send_header("Content-Length", str(len(chunk)))
+            self.send_header("ETag", etag)
+            self.end_headers()
+            self.wfile.write(chunk[:1024]); self.wfile.flush()
+            try:
+                self.connection.close()
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        self.send_response(206 if start else 200)
+        self.send_header("Content-Length", str(len(chunk)))
+        self.send_header("ETag", etag)
+        self.end_headers()
+        self.wfile.write(chunk)
+
     def _domain_class_set(self) -> None:
         n = int(self.headers.get("Content-Length", "0") or "0")
         try:
@@ -1969,6 +2214,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._images_import()
         if u.path == "/domain-class":
             return self._domain_class_set()
+        if u.path == "/hf/search":
+            return self._hf_search()
+        if u.path == "/hf/downloads":
+            return self._hf_download_create()
+        if u.path.startswith("/hf/downloads/") and u.path.endswith("/cancel"):
+            return self._hf_download_cancel(u.path.split("/", 3)[3])
         if u.path == "/detectors":
             return self._detectors_register()
         if u.path == "/llm/precheck":

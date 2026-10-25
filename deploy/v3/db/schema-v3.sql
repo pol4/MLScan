@@ -142,3 +142,11 @@ CREATE TABLE IF NOT EXISTS domain_class_map (
   domain TEXT PRIMARY KEY, policy_class TEXT, reviewed BOOLEAN DEFAULT true,
   updated TIMESTAMPTZ DEFAULT now()
 );
+
+-- H1/U11: фоновые загрузки с HF (не зависят от браузера, с докачкой)
+CREATE TABLE IF NOT EXISTS hf_downloads (
+  id TEXT PRIMARY KEY, tenant TEXT, repo_id TEXT, revision TEXT, quantization TEXT,
+  files TEXT, bytes_total BIGINT DEFAULT 0, bytes_done BIGINT DEFAULT 0,
+  status TEXT DEFAULT 'queued', error TEXT, created TIMESTAMPTZ DEFAULT now(),
+  updated TIMESTAMPTZ DEFAULT now()
+);

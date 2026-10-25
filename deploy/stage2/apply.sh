@@ -19,6 +19,7 @@ kubectl -n "$NS" create configmap mlscan-v3-ingest \
   --from-file=quota.py="$HERE/../v3/ingest/quota.py" \
   --from-file=pool.py="$HERE/../v3/data/pool.py" \
   --from-file=objectrefs.py="$HERE/../v3/data/objectrefs.py" \
+  --from-file=hf.py="$HERE/../v3/ingest/hf.py" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap mlscan-v3-control \
   --from-file=pq.py="$HERE/../v3/control/pq.py" \

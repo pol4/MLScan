@@ -788,6 +788,25 @@ document.getElementById('f').addEventListener('submit',e=>{
   xhr.onerror=()=>{alert(L.upload_error);};
   xhr.send(file);
 });
+(function(){const sb=document.getElementById('hfsearch-btn');if(!sb)return;
+  const res=document.getElementById('hfresults'), st=document.getElementById('hfstatus');
+  const poll=id=>fetch('/hf/downloads/'+id).then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
+    st.textContent='download '+id.slice(0,8)+': '+d.status+' '+d.bytes_done+'/'+d.bytes_total;
+    if(d.status==='queued'||d.status==='running'||d.status==='cancelling')setTimeout(()=>poll(id),700);}).catch(()=>{});
+  sb.addEventListener('click',()=>{const q=document.getElementById('hfquery').value.trim();
+    const t=document.getElementById('hftype').value.trim(); const qz=document.getElementById('hfquant').value;
+    res.textContent='…';
+    fetch('/hf/search',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:q,type:t,quantization:qz})})
+      .then(r=>r.json().then(j=>({ok:r.ok,j})))
+      .then(({ok,j})=>{ if(!ok){res.textContent='ERR '+(j.error||'');return;}
+        res.innerHTML=(j.items||[]).map(it=>`<div>${it.id} <button data-repo="${it.id}">download</button></div>`).join('')||'нет результатов';
+        res.querySelectorAll('button[data-repo]').forEach(b=>b.addEventListener('click',()=>{
+          document.getElementById('hfquant').value=qz||'';
+          fetch('/hf/downloads',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({repo_id:b.dataset.repo,quantization:qz})})
+            .then(r=>r.json()).then(d=>{ if(d.id){st.textContent='queued '+d.id.slice(0,8);poll(d.id);} else st.textContent='ERR '+(d.error||''); });}));})
+      .catch(()=>{res.textContent='ERR';});});})();
 (function(){const b=document.getElementById('dcsave');if(!b)return;
   const st=document.getElementById('dcstatus');
   const show=t=>{st.textContent=t;};
@@ -864,6 +883,15 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
             + "</div>"
             f"<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>{T('dash.upload_hint', lang)}</div>"
             "</form>"
+            + ("<div class='upload' id='hfpanel' style='margin-top:0'>"
+               + "<b>" + ("Hugging Face: поиск и загрузка" if lang == "ru" else "Hugging Face: search & download") + "</b><br><br>"
+               + "<input id='hfquery' type='text' placeholder='name/query' style='width:25%'> "
+               + "<input id='hftype' type='text' placeholder='type (text-generation)' style='width:18%'> "
+               + "<select id='hfquant'><option value=''>quant: any</option><option>Q4_K_M</option><option>Q5_K_M</option><option>Q8_0</option><option>F16</option></select> "
+               + "<button id='hfsearch-btn' type='button'>" + ("Найти" if lang == "ru" else "Search") + "</button>"
+               + "<div id='hfresults' style='margin-top:6px;font-size:12px'></div>"
+               + "<div id='hfstatus' style='color:#9aa4b2;font-size:12px'></div>"
+               + "</div>" if "admin" in (roles or []) else "")
             + ("<div class='upload' id='dcs' style='margin-top:0'>"
                + "<b>" + ("Домен → класс policy (переопределение)" if lang == "ru" else "Domain → policy class (override)") + "</b><br><br>"
                + "<input id='dcdomain' type='text' placeholder='Домен вопроса' style='width:35%'> "
@@ -1177,6 +1205,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/prompt-sets":
             return self._prompt_sets_proxy(q)
+        if p == "/hf/downloads":
+            code, body = self._test_request("GET", "/hf/downloads")
+            return self._send(code, body, "application/json; charset=utf-8")
+        if p.startswith("/hf/downloads/"):
+            code, body = self._test_request("GET", p)
+            return self._send(code, body, "application/json; charset=utf-8")
         if p == "/domain-class":
             code, body = self._test_request("GET", "/domain-class")
             return self._send(code, body, "application/json; charset=utf-8")
@@ -1331,6 +1365,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._proxy_upload(q)
         if u.path == "/prompt-sets":
             return self._prompt_sets_proxy(q)
+        if u.path in ("/hf/search", "/hf/downloads"):
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", u.path, data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        if u.path.startswith("/hf/downloads/") and u.path.endswith("/cancel"):
+            code, body = self._test_request("POST", u.path, b"{}")
+            return self._send(code, body, "application/json; charset=utf-8")
         if u.path == "/domain-class":
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"
