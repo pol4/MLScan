@@ -622,6 +622,7 @@ th{color:#9aa4b2;font-weight:600} code{background:#1d2330;padding:1px 5px;border
 .v-Malicious{color:#ff6b6b}.v-Dangerous{color:#ffb057}.v-Needs{color:#ffd166}.v-Safe{color:#5dd39e}.v-Inconclusive{color:#9aa4b2}
 .pbar{background:#232a36;border-radius:5px;height:14px;position:relative;overflow:hidden;min-width:120px}
 .pbar>span{display:block;height:100%;background:#3d7dd8}
+.badge{background:#2b3a55;color:#cfe3ff;border-radius:6px;padding:1px 6px;font-size:11px}
 form.upload{background:#161a23;border:1px solid #232a36;border-radius:10px;padding:16px;margin-bottom:20px}
 input[type=file]{color:#e6e6e6} button{background:#3d7dd8;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
 .uprog{background:#232a36;border-radius:5px;height:12px;margin-top:10px;display:none}
@@ -713,7 +714,8 @@ function renderRows(){
   document.getElementById('rows').innerHTML = shown.length
     ? shown.map(r=>{
         const v=r.verdict||'';
-        return `<tr><td><a href="/artifact/${r.scan_id}">${esc(r.name)}</a></td>`
+        const badge=(r.kind==='engine_image')?'<span class="badge">Engine image</span> ':'';
+        return `<tr><td>${badge}<a href="/artifact/${r.scan_id}">${esc(r.name)}</a></td>`
           +`<td>${shortDate(r.created||r.updated)}</td>`
           +`<td>${fmtBytes(r.size)}</td><td><code>${(r.sha256||'').slice(0,12)}…</code></td>`
           +`<td>${esc(r.state)}${r.stage&&r.stage!=='done'?' / '+esc(r.stage):''}<div class="pbar"><span style="width:${r.progress||0}%"></span></div></td>`
@@ -758,6 +760,15 @@ document.getElementById('f').addEventListener('submit',e=>{
   xhr.onerror=()=>{alert(L.upload_error);};
   xhr.send(file);
 });
+(function(){const b=document.getElementById('imgimport-btn');if(!b)return;
+  const st=document.getElementById('imgstatus');
+  b.addEventListener('click',()=>{const ref=document.getElementById('imgref').value.trim();
+    const key=document.getElementById('imgtarkey').value.trim();
+    fetch('/images/import',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ref:ref,oci_tar_key:key})})
+      .then(r=>r.json().then(j=>({ok:r.ok,j})))
+      .then(({ok,j})=>{st.textContent=ok?('registered '+j.digest+(j.stored_key?' stored/'+j.stored_key:'')):('ERR '+(j.error||'bad'));})
+      .catch(()=>{st.textContent='ERR';});});})();
 (function(){const el=document.getElementById('psfile');if(!el)return;
   const st=document.getElementById('psstatus');
   const show=t=>{st.textContent=t;};
@@ -813,6 +824,13 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
             + "</div>"
             f"<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>{T('dash.upload_hint', lang)}</div>"
             "</form>"
+            + ("<div class='upload' id='imgs' style='margin-top:0'>"
+               + "<b>" + ("Импорт образа движка" if lang == "ru" else "Engine image import") + "</b><br><br>"
+               + "<input id='imgref' type='text' placeholder='mlscan-registry/…@sha256:…' style='width:60%'> "
+               + "<input id='imgtarkey' type='text' placeholder='oci_tar_key (опц.)' style='width:20%'> "
+               + "<button id='imgimport-btn' type='button'>" + ("Импорт" if lang == "ru" else "Import") + "</button>"
+               + "<div id='imgstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div>"
+               + "</div>" if "admin" in (roles or []) else "")
             + ("<div class='upload' id='psset' style='margin-top:0'>"
                + "<b>" + ("Набор тестов (XLSX)" if lang == "ru" else "Prompt set (XLSX)") + "</b><br><br>"
                + "<input type='file' id='psfile' accept='.xlsx' name='psfile'> "
@@ -1259,6 +1277,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._proxy_upload(q)
         if u.path == "/prompt-sets":
             return self._prompt_sets_proxy(q)
+        if u.path == "/images/import":
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", "/images/import", data)
+            return self._send(code, body, "application/json; charset=utf-8")
         return self._json(404, {"error": T("msg.not_found", lang)})
 
 

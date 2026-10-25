@@ -496,6 +496,7 @@ def _invalidate_scans_cache() -> None:
 
 _LIST_SQL = (
     "SELECT s.scan_id, a.filename, a.size, a.sha256, s.status, s.stage, s.progress, s.verdict, "
+    "s.kind, "
     "to_char(s.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS'), "
     "to_char(COALESCE(s.finished_at, s.created_at), 'YYYY-MM-DD\"T\"HH24:MI:SS') "
     "FROM scans s LEFT JOIN artifacts a ON a.id = s.artifact_id "
@@ -507,7 +508,7 @@ def list_scans() -> list[dict]:
     rows = db_query(_LIST_SQL)
     if rows:
         keys = ("scan_id", "name", "size", "sha256", "state", "stage", "progress",
-                "verdict", "created", "updated")
+                "verdict", "kind", "created", "updated")
         return [dict(zip(keys, r)) for r in rows]
     # Фолбэк (БД недоступна): файлы /data/scans/*.json
     now = time.time()
@@ -526,7 +527,7 @@ def list_scans() -> list[dict]:
         except Exception:  # noqa: BLE001
             continue
         out.append({k: r.get(k) for k in ("scan_id", "name", "size", "sha256", "state",
-                                          "stage", "progress", "verdict", "created", "updated")})
+                                          "stage", "progress", "verdict", "kind", "created", "updated")})
     with _lock:
         _scans_cache["data"] = out
         _scans_cache["ts"] = time.time()
@@ -1148,10 +1149,11 @@ class Handler(BaseHTTPRequestHandler):
             if art_id is not None:
                 rec["artifact_id"] = art_id
                 save_scan(rec)
-            db_exec("INSERT INTO scans(scan_id,artifact_id,status,stage,progress) VALUES "
+            db_exec("INSERT INTO scans(scan_id,artifact_id,status,stage,progress,kind) VALUES "
                     f"({_lit(scan_id)},{art_id if art_id is not None else 'NULL'},"
-                    f"'queued','queued',0) "
-                    "ON CONFLICT (scan_id) DO UPDATE SET artifact_id=EXCLUDED.artifact_id")
+                    f"'queued','queued',0,{_lit(kind)}) "
+                    "ON CONFLICT (scan_id) DO UPDATE SET artifact_id=EXCLUDED.artifact_id, "
+                    "kind=EXCLUDED.kind")
             db_exec("INSERT INTO uploads(artifact_id,request_id,bytes,status,finished_at) "
                     f"SELECT id,{_lit(scan_id)},{int(got)},'received',now() FROM artifacts WHERE sha256={_lit(sha)}")
         if authz is not None:
@@ -1338,9 +1340,11 @@ class Handler(BaseHTTPRequestHandler):
             if art_id is not None:
                 rec["artifact_id"] = art_id
                 save_scan(rec)
-            db_exec("INSERT INTO scans(scan_id,artifact_id,status,stage,progress) VALUES "
-                    f"({_lit(scan_id)},{art_id if art_id is not None else 'NULL'},'queued','queued',0) "
-                    "ON CONFLICT (scan_id) DO UPDATE SET artifact_id=EXCLUDED.artifact_id")
+            db_exec("INSERT INTO scans(scan_id,artifact_id,status,stage,progress,kind) VALUES "
+                    f"({_lit(scan_id)},{art_id if art_id is not None else 'NULL'},'queued','queued',0,"
+                    f"{_lit(rec.get('kind', 'model'))}) "
+                    "ON CONFLICT (scan_id) DO UPDATE SET artifact_id=EXCLUDED.artifact_id, "
+                    "kind=EXCLUDED.kind")
             db_exec("INSERT INTO uploads(artifact_id,request_id,bytes,status,finished_at) "
                     f"SELECT id,{_lit(scan_id)},{int(size)},'received',now() FROM artifacts "
                     f"WHERE sha256={_lit(info['sha256'])}")

@@ -128,3 +128,6 @@ CREATE TABLE IF NOT EXISTS bundle_verdicts (
   signature TEXT,
   created TIMESTAMPTZ DEFAULT now()
 );
+
+-- L0/U1: тип артефакта в скане (badge «Engine image» и т.п.)
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS kind TEXT;
