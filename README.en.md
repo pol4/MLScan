@@ -437,7 +437,7 @@ Docs are split by version (live code `deploy/`, `poc/`, `tests/` stays at root):
 | [`PoC/`](PoC/README.md) | v0 | Concept, pickle risks, testing strategy, isolation, decisions |
 | [`Arch_v1/`](Arch_v1/README.md) | v1 | Working MVP: service+sandbox+Kata+Ingress, formats, i18n, deployment, security |
 | [`Arch_v2/`](Arch_v2/README.md) | v2 | S3 (Garage), PostgreSQL, ingest, large files, **work description** and **v2 limitations analysis** |
-| [`Arch_v3/`](Arch_v3/README.md) | v3 | **Target architecture for 1 TB+**: distributed S3, streaming analysis, archives, multi-tenancy, **new implementation plan** |
+| [`Arch_v3/`](Arch_v3/README.md) | v3 | **Target architecture for 1 TB+** + **implementation (as-built)**: phases P0–P10 and L0–L4 done on the stand (see [status](Arch_v3/19-implementation-as-built.md)) |
 
 Index — [`ARCHITECTURES.md`](ARCHITECTURES.md). **Future development follows v3.**
 Old `docs/NN-*.md` paths are redirect stubs (link compatibility).

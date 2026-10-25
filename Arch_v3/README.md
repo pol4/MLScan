@@ -31,6 +31,7 @@
 | 16 | [`16-llm-inference-testing.md`](16-llm-inference-testing.md) | **LLM-инференс как отдельный тип теста**: Kata + кастомное ядро/eBPF-Tetragon + OpenAI-API пробы и эталоны |
 | 17 | [`17-engine-images-and-provenance.md`](17-engine-images-and-provenance.md) | **Образы движков**: импорт, хранение (внутренний реестр на S3), привязка образ+модель (bundle), фиксация вердикта и аттестации |
 | 18 | [`18-ui-binding-and-test-env.md`](18-ui-binding-and-test-env.md) | **UI-типизация** (образ инференса явно), классификатор LLM, связывание модель↔образ, **единая среда Kata** (движок+модель+in-guest Tetragon+probe) |
+| 19 | [`19-implementation-as-built.md`](19-implementation-as-built.md) | **Реализация v3: статус (as-built)** — фазы P0–P10/L0–L4, артефакты, тесты, границы |
 
 Диаграммы: диаграмма развёртывания — `02-architecture.md`/`10-deployment.md`; диаграммы состояния
 для (a) загрузки и анализа модели 1 ТБ и (b) комплексного анализа архива 1 ТБ — `02-architecture.md`.
