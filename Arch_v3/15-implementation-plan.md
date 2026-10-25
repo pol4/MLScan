@@ -438,3 +438,45 @@ Kata-нагрузки, требует перезапуска runtime и акку
   тот же маппинг в `LLM-B-*` (слабее по точности, но работает сегодня);
 - **non-Kata hardened pod** с движком: eBPF на **хосте** через BTF хост-ядра видит syscalls контейнера
   (работает сразу, без правок `kube-system`) — хорошо для проверки механизма, но без изоляции Kata.
+
+### 8.10 Отдельное BTF-ядро Kata для LLM-песочницы (при сохранении стандартного ядра)
+
+**Ответ: да, реализуемо штатно и аддитивно.** В Kata можно держать несколько конфигураций и несколько
+containerd-runtime-хендлеров; разные RuntimeClass → разные ядра. Остальные приложения продолжают
+использовать `kata` (стандартное ядро) без изменений.
+
+**Факты по узлу (recon).**
+- Активный файл: `configuration.toml → configuration-qemu.toml` (`kernel = …/vmlinux.container`, BTF=0).
+- BTF-вариант ядра Kata на узле **есть**: `config-6.18.35-197-debug` (`CONFIG_DEBUG_INFO_BTF=y`) и `vmlinuz-debug.container`.
+- Хендлер `kata` регистрируется в `/var/snap/microk8s/current/args/containerd-template.toml`
+  (`runtime_type=io.containerd.kata.v2`, `BinaryName=kata-runtime`).
+- В кластере есть только RuntimeClass `kata` (handler `kata`).
+
+**Дизайн (два класса сосуществуют).**
+1. Новый файл конфигурации Kata `configuration-qemu-btf.toml` = копия `configuration-qemu.toml` с
+   `kernel = "/opt/kata/share/kata-containers/vmlinuz-debug.container"` (BTF=1; при необходимости — собственный
+   `vmlinux` с BTF). Стандартный `configuration-qemu.toml` **не меняется**.
+2. В `containerd-template.toml` добавить **второй хендлер**:
+   ```toml
+   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-btf]
+     runtime_type = "io.containerd.kata.v2"
+     [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-btf.options]
+       BinaryName = "kata-runtime"
+       ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-qemu-btf.toml"
+   ```
+   MicroK8s генерирует `containerd.toml` из шаблона; нужен короткий рестарт containerd-демона узла
+   (поды не перезапускаются).
+3. Новый `RuntimeClass kata-btf { handler: kata-btf }` — **аддитивно**, остальным приложениям ничего менять
+   не нужно (они на `kata`).
+4. Наша Kyverno-политика `mlscan-sandbox-jobs` расширяется: допустимые `runtimeClassName ∈ {kata, kata-btf}`.
+5. LLM-Job песочницы использует `runtimeClassName` из env (`LLM_RUNTIME_CLASS=kata-btf`) и in-guest
+   Tetragon-контейнер; проверка перед запуском: в guest присутствует `/sys/kernel/btf/vmlinux`.
+
+**Проверка после внедрения.**
+- Тест-под с `kata-btf`: внутри guest `/sys/kernel/btf/vmlinux` есть; `uname -r` = debug-ядро.
+- Tetragon-агент выдаёт события (тест: `execve /bin/sh` в `engine`) → `LLM-B-01`.
+- Затем — полный H3: HF→llama.cpp→Kata(kata-btf)+eBPF→10 вопросов→вердикт.
+
+**Риски.** Правки: (а) новый файл в `/opt/kata/share/defaults` и (б) шаблон containerd узла + рестарт демона —
+это host-level, но **аддитивные**; стандартное ядро и хендлер `kata` не затрагиваются. При проблемах —
+откат: удалить хендлер/файл и рестартнуть containerd.
