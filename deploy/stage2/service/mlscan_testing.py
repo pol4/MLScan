@@ -82,6 +82,10 @@ MAX_BYTES_PER_DAY = int(os.environ.get("MAX_BYTES_PER_DAY", "0"))
 MAX_CONCURRENT_UPLOADS = int(os.environ.get("MAX_CONCURRENT_UPLOADS", "8"))
 # L1a: разрешённые реестры образов (через запятую; пусто = любой, но всё равно только по digest)
 REGISTRY_ALLOWLIST = [r.strip() for r in os.environ.get("REGISTRY_ALLOWLIST", "").split(",") if r.strip()]
+# L1: ёмкость LLM-пула для ресурсного планировщика (0/пусто = без ограничений в этом измерении)
+LLM_POOL = {"gpu": int(os.environ.get("LLM_POOL_GPU", "8") or 0),
+            "ram_gb": int(os.environ.get("LLM_POOL_RAM_GB", "1024") or 0),
+            "disk_gb": int(os.environ.get("LLM_POOL_DISK_GB", "8192") or 0)}
 _pending_uploads: dict = {}
 _pending_lock = threading.Lock()
 
@@ -357,9 +361,11 @@ sys.path.insert(0, "/opt/v3llm")
 try:  # v3 (L0): классификатор LLM + binding/bundle
     import classifier as v3classifier  # noqa: E402
     import binding as v3binding  # noqa: E402
+    import llm_env as v3llmenv  # noqa: E402
 except Exception:  # noqa: BLE001
     v3classifier = None  # type: ignore
     v3binding = None  # type: ignore
+    v3llmenv = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3control")
 try:  # v3 (P2): персистентная очередь + orchestrator + тенанты
@@ -1325,6 +1331,21 @@ class Handler(BaseHTTPRequestHandler):
                                 "sha256": info["sha256"], "s3_key": info["key"],
                                 "tenant": info["tenant"]})
 
+    def _llm_precheck(self) -> None:
+        """L1: ресурсный планировщик — хватает ли ресурсов LLM-пула для запуска инференса."""
+        if v3llmenv is None:
+            return self._json(503, {"error": "v3 llm_env module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        required = body.get("resources") or {}
+        ok, why = v3llmenv.resource_check(required, LLM_POOL)
+        return self._json(200, {"ok": ok, "reason": why, "required": required,
+                                "available": LLM_POOL,
+                                "decision": "accept" if ok else "rejected"})
+
     def _images_import(self) -> None:
         """L1a: регистрация образа движка (по digest) + server-side copy OCI-архива в registry/."""
         if v3images is None:
@@ -1508,6 +1529,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._bundles_create()
         if u.path == "/images/import":
             return self._images_import()
+        if u.path == "/llm/precheck":
+            return self._llm_precheck()
         if u.path in ("/scans", "/scans/upload", "/upload"):
             ident = getattr(self, "_subject", "") or (self.client_address[0] if self.client_address else "?")
             ok, retry = rate_allow(ident)
