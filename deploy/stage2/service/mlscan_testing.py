@@ -80,6 +80,9 @@ SANDBOX_DYNAMIC_MAX_BYTES = int(os.environ.get("SANDBOX_DYNAMIC_MAX_BYTES",
 MAX_OBJECT_BYTES = int(os.environ.get("MAX_OBJECT_BYTES", "0"))
 MAX_BYTES_PER_DAY = int(os.environ.get("MAX_BYTES_PER_DAY", "0"))
 MAX_CONCURRENT_UPLOADS = int(os.environ.get("MAX_CONCURRENT_UPLOADS", "8"))
+# U7: бюджет сэмплированной динамики (срезы)
+DYNAMIC_SLICE_BYTES = int(os.environ.get("DYNAMIC_SLICE_BYTES", str(64 * 1024 ** 2)))
+DYNAMIC_MAX_SLICES = int(os.environ.get("DYNAMIC_MAX_SLICES", "8"))
 # L1a: разрешённые реестры образов (через запятую; пусто = любой, но всё равно только по digest)
 REGISTRY_ALLOWLIST = [r.strip() for r in os.environ.get("REGISTRY_ALLOWLIST", "").split(",") if r.strip()]
 # L1: ёмкость LLM-пула для ресурсного планировщика (0/пусто = без ограничений в этом измерении)
@@ -151,6 +154,16 @@ def _classify_and_record(name: str, fmt: str, size: int, family: str = "",
     return v3classifier.classify(filenames=[name], config=cfg, gguf_meta=gguf_meta, size_bytes=size)
 
 
+def _dynamic_plan(size: int) -> dict | None:
+    if v3slices is None or size <= 0:
+        return None
+    try:
+        return v3slices.select_slices(size, max_slice_bytes=DYNAMIC_SLICE_BYTES,
+                                      max_slices=DYNAMIC_MAX_SLICES)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _active_tenants() -> list[str]:
     tenants = []
     if DB_ENABLED:
@@ -188,6 +201,10 @@ def _enqueue_scan_task(rec: dict, subject: str) -> str | None:
             strategy = v3orch.choose_strategy(kind="model", fmt=rec.get("format", ""),
                                               size=int(rec.get("size") or 0),
                                               dynamic_max_bytes=SANDBOX_DYNAMIC_MAX_BYTES)["strategy"]
+        if strategy == "dynamic":
+            plan = _dynamic_plan(int(rec.get("size") or 0))
+            if plan:
+                rec["dynamic_plan"] = plan
         priority = _task_priority(subject)
         rank = v3pq.RANK.get(priority, 1) if v3pq is not None else 1
         task_id = rec["scan_id"]
@@ -381,6 +398,12 @@ try:
 except Exception:  # noqa: BLE001
     v3pool = None  # type: ignore
     v3refs = None  # type: ignore
+
+sys.path.insert(0, "/opt/v3analysis")
+try:  # v3 (P5): selector срезов для сэмплированной динамики
+    import slice_selector as v3slices  # noqa: E402
+except Exception:  # noqa: BLE001
+    v3slices = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3obs")
 try:  # v3 (P7): метрики/SLO
