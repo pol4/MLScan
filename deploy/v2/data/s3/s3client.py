@@ -165,6 +165,35 @@ class S3:
         """Потоковый GET: возвращает (status, headers, response) для чтения тела чанками."""
         return self._send("GET", key, read=False)
 
+    # --- Range-чтение (P0): анализ читает только нужные диапазоны объекта ---
+    @staticmethod
+    def _range_header(offset: int, length: int | None) -> str:
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
+        if length is None:
+            return f"bytes={offset}-"
+        if length <= 0:
+            raise ValueError("length must be > 0")
+        return f"bytes={offset}-{offset + length - 1}"
+
+    def range_get(self, key: str, offset: int = 0, length: int | None = None) -> bytes:
+        st, _, data = self._send("GET", key, extra={"range": self._range_header(offset, length)})
+        if st not in (200, 206):
+            raise RuntimeError(f"range_get status {st}")
+        return data
+
+    def range_get_stream(self, key: str, offset: int = 0, length: int | None = None):
+        """Потоковое range-чтение: возвращает (status, headers, response)."""
+        st, hd, resp = self._send("GET", key, extra={"range": self._range_header(offset, length)},
+                                  read=False)
+        if st not in (200, 206):
+            try:
+                resp.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise RuntimeError(f"range_get_stream status {st}")
+        return st, hd, resp
+
     def read_prefix(self, key: str, nbytes: int) -> bytes:
         """Прочитать первые nbytes объекта (без полной загрузки) — для потоковой статики."""
         st, _, resp = self.get_stream(key)

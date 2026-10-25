@@ -250,3 +250,14 @@ P2/P6/P7/P8 частично параллельны после P1; P9 — пос
   contract (загрузка/версии набора), e2e (прогон на мини-модели), quality (golden-набор ответов),
   UI (загрузка XLSX админом, карточка прогона). Синтетический шаблон — `samples/prompt-set.template.xlsx`.
 - **L4**: unit (bundle-id/hash), contract (attestation/gate), security (verify), quality (воспроизводимость N15).
+
+## 7. Статус выполнения
+
+| Фаза | Статус | Что сделано / осталось |
+|------|--------|------------------------|
+| P0 (data-plane) | **в работе** | Сделано: `range_get`/`range_get_stream` в `s3client` (+ unit/e2e на реальном Garage); общий пул `pool.pool_key` и `object_refs` (DDL + SQL + unit/e2e refcount на реальном PostgreSQL, `deploy/v3/db/schema-v3.sql`). Осталось: прототип многоузлового S3 (RF≥2/EC/шардинг), TLS-egress для S3, интеграция пула в ingest. |
+| P1…P10, L0…L4 | не начато | По порядку плана. |
+
+Артефакты P0 (шаг 1): `deploy/v2/data/s3/s3client.py` (range), `deploy/v3/data/pool.py`,
+`deploy/v3/data/objectrefs.py`, `deploy/v3/db/schema-v3.sql`; тесты `tests/s3/test_range.py`,
+`tests/v3/test_pool_objectrefs.py`, `tests/e2e/range_get_e2e.sh`, `tests/e2e/object_refs_e2e.sh`.

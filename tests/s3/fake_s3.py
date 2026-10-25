@@ -224,6 +224,28 @@ class MultipartS3(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
+        rng = self.headers.get("Range") or self.headers.get("range")
+        if rng and rng.startswith("bytes="):
+            spec = rng[len("bytes="):].split(",")[0].strip()
+            a, _, b = spec.partition("-")
+            start = int(a) if a else 0
+            if b:
+                end = int(b)
+            else:
+                end = len(obj) - 1
+            end = min(end, len(obj) - 1)
+            if start > end or start >= len(obj):
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{len(obj)}")
+                self.end_headers()
+                return
+            chunk = obj[start:end + 1]
+            self.send_response(206)
+            self.send_header("Content-Length", str(len(chunk)))
+            self.send_header("Content-Range", f"bytes {start}-{end}/{len(obj)}")
+            self.end_headers()
+            self.wfile.write(chunk)
+            return
         self.send_response(200)
         self.send_header("Content-Length", str(len(obj)))
         self.end_headers()
