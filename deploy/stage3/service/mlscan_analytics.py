@@ -736,6 +736,9 @@ async function refresh(){
     if(r2.ok) renderCards(await r2.json());
   }catch(e){}
 }
+(function(){const k=document.getElementById('kind'),n=document.getElementById('kindnotice');
+  if(k){const upd=()=>{n.style.display=(k.value==='engine_image')?'block':'none';};
+    k.addEventListener('change',upd);upd();}})();
 ['q','vf','sort'].forEach(id=>{const e=document.getElementById(id);
   e.addEventListener('input',renderRows);e.addEventListener('change',renderRows);});
 document.getElementById('f').addEventListener('submit',e=>{
@@ -744,8 +747,10 @@ document.getElementById('f').addEventListener('submit',e=>{
   const fmt={pt:'torch',pth:'torch',bin:'torch',ckpt:'torch',npy:'numpy',npz:'numpy',
              joblib:'joblib',dill:'dill',cloudpickle:'cloudpickle',
              zip:'zip',tar:'tar',gz:'tar',tgz:'tar'}[ext]||'pickle';
+  const kindEl=document.getElementById('kind');
+  const kind=kindEl?kindEl.value:'model';
   const xhr=new XMLHttpRequest();
-  xhr.open('POST','/upload?name='+encodeURIComponent(file.name)+'&fmt='+fmt);
+  xhr.open('POST','/upload?name='+encodeURIComponent(file.name)+'&fmt='+fmt+'&kind='+encodeURIComponent(kind));
   const box=document.getElementById('uprog'),bar=document.getElementById('ubar');
   box.style.display='block';
   xhr.upload.onprogress=ev=>{bar.style.width=Math.round(ev.loaded/ev.total*100)+'%';};
@@ -778,8 +783,23 @@ def _login_page(error: str = "", lang: str = "ru", notice: str = "") -> bytes:
 def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> bytes:
     body = ("<div class='cards' id='cards'></div>"
             f"<form class='upload' id='f'><b>{T('dash.upload', lang)}</b><br><br>"
+            + "<label style='color:#9aa4b2;font-size:12px'>"
+            + ("Тип артефакта" if lang == "ru" else "Artifact kind") + ": </label>"
+            + "<select id='kind' name='kind'>"
+            + ("<option value='model'>Модель</option>"
+               "<option value='engine_image'>Образ инференс-движка</option>"
+               if lang == "ru" else
+               "<option value='model'>Model</option>"
+               "<option value='engine_image'>Engine image</option>")
+            + "</select><br><br>"
             f"<input type='file' name='file'> <button type='submit'>{T('dash.upload_btn', lang)}</button>"
             "<div class='uprog' id='uprog'><span id='ubar'></span></div>"
+            + "<div id='kindnotice' style='display:none;color:#f0c674;font-size:12px;margin-top:6px'>"
+            + ("Это контейнерный образ (engine image) — он будет запущен вместе с моделью "
+               "в изолированной среде Kata." if lang == "ru" else
+               "This is a container image (engine image) — it will be run together with the model "
+               "in an isolated Kata environment.")
+            + "</div>"
             f"<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>{T('dash.upload_hint', lang)}</div>"
             "</form>"
             "<div class='controls'>"
@@ -990,7 +1010,9 @@ class Handler(BaseHTTPRequestHandler):
         if n <= 0:
             return self._json(400, {"error": T("msg.empty_body_cl", self._lang(q))})
         cx = http.client.HTTPConnection(TEST_HOST, TEST_PORT, timeout=1800)
-        path = f"/scans/upload?name={urllib.parse.quote(name)}&fmt={urllib.parse.quote(fmt)}"
+        kind = q.get("kind", ["model"])[0]
+        path = (f"/scans/upload?name={urllib.parse.quote(name)}&fmt={urllib.parse.quote(fmt)}"
+                f"&kind={urllib.parse.quote(kind)}")
         cx.putrequest("POST", path)
         cx.putheader("Content-Length", str(n))
         cx.putheader("Content-Type", "application/octet-stream")
