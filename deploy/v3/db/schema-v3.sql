@@ -66,3 +66,17 @@ CREATE TABLE IF NOT EXISTS registry_images (
   status TEXT NOT NULL DEFAULT 'registered',
   created TIMESTAMPTZ DEFAULT now()
 );
+
+-- L2: события eBPF/Tetragon (наблюдение за LLM-инференсом) и смапленные находки
+CREATE TABLE IF NOT EXISTS llm_events (
+  id BIGSERIAL PRIMARY KEY,
+  scan_id TEXT,
+  check_id TEXT,
+  severity TEXT,
+  phase TEXT,
+  probe_id TEXT,
+  evidence TEXT,
+  nonce TEXT,
+  created TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_llm_events_scan ON llm_events(scan_id);

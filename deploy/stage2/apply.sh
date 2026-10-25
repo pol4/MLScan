@@ -30,6 +30,7 @@ kubectl -n "$NS" create configmap mlscan-v3-llm \
   --from-file=classifier.py="$HERE/../v3/llm/classifier.py" \
   --from-file=binding.py="$HERE/../v3/llm/binding.py" \
   --from-file=llm_env.py="$HERE/../v3/llm/llm_env.py" \
+  --from-file=tetragon.py="$HERE/../v3/llm/tetragon.py" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap mlscan-v3-registry \
   --from-file=images.py="$HERE/../v3/registry/images.py" \

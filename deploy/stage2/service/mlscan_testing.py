@@ -362,10 +362,12 @@ try:  # v3 (L0): классификатор LLM + binding/bundle
     import classifier as v3classifier  # noqa: E402
     import binding as v3binding  # noqa: E402
     import llm_env as v3llmenv  # noqa: E402
+    import tetragon as v3tetragon  # noqa: E402
 except Exception:  # noqa: BLE001
     v3classifier = None  # type: ignore
     v3binding = None  # type: ignore
     v3llmenv = None  # type: ignore
+    v3tetragon = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3control")
 try:  # v3 (P2): персистентная очередь + orchestrator + тенанты
@@ -1008,6 +1010,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"scans": list_scans(), "language": lang})
         if u.path == "/stats":
             return self._json(200, stats())
+        if u.path.startswith("/llm/events/"):
+            return self._llm_events_get(u.path.split("/", 3)[3])
         if u.path == "/images/verify":
             return self._images_verify((q.get("ref", [""])[0]))
         if u.path.startswith("/images/"):
@@ -1331,6 +1335,42 @@ class Handler(BaseHTTPRequestHandler):
                                 "sha256": info["sha256"], "s3_key": info["key"],
                                 "tenant": info["tenant"]})
 
+    def _llm_events(self) -> None:
+        """L2: принять события eBPF/Tetragon, смапить в findings (LLM-B-*), сохранить и вернуть."""
+        if v3tetragon is None:
+            return self._json(503, {"error": "v3 tetragon module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        scan_id = body.get("scan_id") or ""
+        nonce = body.get("nonce") or ""
+        events = body.get("events") or []
+        findings, rejected = v3tetragon.map_findings(events, nonce)
+        if DB_ENABLED and scan_id:
+            for f in findings:
+                try:
+                    db_exec("INSERT INTO llm_events(scan_id,check_id,severity,phase,probe_id,evidence,nonce) "
+                            "VALUES (" + ",".join([
+                                _lit(scan_id), _lit(f.get("check_id", "")), _lit(f.get("severity", "")),
+                                _lit(f.get("phase", "")), _lit(f.get("probe_id", "")),
+                                _lit(f.get("evidence", "")), _lit(nonce)]) + ")")
+                except Exception:  # noqa: BLE001
+                    pass
+        return self._json(200, {"findings": findings, "rejected": rejected,
+                                "max_severity": v3tetragon.max_severity(findings),
+                                "count": len(findings)})
+
+    def _llm_events_get(self, scan_id: str) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT check_id,severity,phase,probe_id,evidence FROM llm_events WHERE scan_id="
+                        + _lit(scan_id) + " ORDER BY id")
+        return self._json(200, {"scan_id": scan_id, "count": len(rows or []),
+                                "findings": [{"check_id": r[0], "severity": r[1], "phase": r[2],
+                                              "probe_id": r[3], "evidence": r[4]} for r in (rows or [])]})
+
     def _llm_precheck(self) -> None:
         """L1: ресурсный планировщик — хватает ли ресурсов LLM-пула для запуска инференса."""
         if v3llmenv is None:
@@ -1531,6 +1571,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._images_import()
         if u.path == "/llm/precheck":
             return self._llm_precheck()
+        if u.path == "/llm/events":
+            return self._llm_events()
         if u.path in ("/scans", "/scans/upload", "/upload"):
             ident = getattr(self, "_subject", "") or (self.client_address[0] if self.client_address else "?")
             ok, retry = rate_allow(ident)
