@@ -441,3 +441,54 @@ Docs are split by version (live code `deploy/`, `poc/`, `tests/` stays at root):
 
 Index — [`ARCHITECTURES.md`](ARCHITECTURES.md). **Future development follows v3.**
 Old `docs/NN-*.md` paths are redirect stubs (link compatibility).
+
+
+---
+
+## Project status (current)
+
+### Deployed
+- **Working system**: v2 (testing service + Kata sandbox + analytics + ops + integrations + ingress)
+  plus the **v3 implementation** on top. Namespaces `mlscan-*`; UI `http://analytics.mlscan.local:30217`;
+  API `http://api.mlscan.local:30217` (HTTPS `:30921`); S3 (Garage) TLS egress `s3.mlscan.local:30921`;
+  PostgreSQL; ops `/metrics`; integrations `/gate`.
+
+### v3: implemented and verified on the stand
+- **Data-plane/ingest**: range-read, shared content-addressed pool `objects/<sha…>` + `object_refs`
+  (dedup), S3 TLS egress, 3×Garage **RF=2** prototype (durability on node loss); server-side copy /
+  `/objects/import`, ingest **quotas** (403/429), resume across restart, **fair-share** weights.
+- **Analysis**: streaming **index-driven** static from S3 for safetensors/**GGUF/ONNX**; archive walk
+  (zip central directory / tar) over range with **depth budget**, zip-slip/bomb protection; deterministic
+  **slice selector**, dynamic plan recorded in the scan.
+- **Control plane**: persistent priority queue `tasks` (SKIP LOCKED), orchestrator, **signed policy
+  fail-closed**, **detector version registry**, tenants.
+- **Security**: evidence **HMAC chain + WORM anchor**, per-tenant **KMS** (fail-closed); image registry
+  by digest (allowlist/admission), signature/SBOM record.
+- **Observability**: `/v3/metrics` (per-tenant) and `/v3/slo`; per-tenant metrics exported to ops
+  `/metrics`; single-writer/leader-election (PG advisory lock).
+- **LLM**: UI typing (`kind`) + “Engine image” badge + image import; LLM classifier (auto for GGUF);
+  single Kata environment (`model-fetcher`+`engine`+`tetragon`+`probe`) passing Kyverno, resource
+  `precheck`; eBPF events → `LLM-B-01..05` (nonce); **XLSX prompt set `questions_v9`** → DB/versions,
+  rules+judge+tolerances 90/75/50, domain→class editor; **bundle verdict + attestation** and **CI gate**
+  (`/gate?image&model`); **background HF downloads with resume** (browser-independent, mock-HF);
+  **llama.cpp CPU inference**: E2E “HF → llama.cpp → 10 random customer questions → score”
+  (`total=10, passed=5, safety_fail=5, pass_rate=0.5`).
+- **v2→v3 migration**: copy into pool + refs + reconcile + readiness (idempotent).
+
+### Tests
+- **190** unit (`tests/v3` 167, `tests/s3` 22, `tests/formats` 1), **6** browser (puppeteer),
+  **42** e2e scripts on real Garage/PostgreSQL/cluster — all green.
+- Run: `python3 -m unittest discover -s tests/v3` · `bash tests/ui/run_ui_tests.sh` · `bash tests/e2e/<name>.sh`.
+
+### Remaining (priority)
+1. **Separate RuntimeClass `kata-btf`** (BTF Kata kernel) for **in-guest eBPF/Tetragon** + Kyverno update —
+   then full H3 (HF→llama.cpp→Kata+eBPF→10 questions). Design and node facts — `Arch_v3/15` §8.9/§8.10.
+2. **GPU pool** (hardware + `nvidia-device-plugin`).
+3. **HF**: real token and egress allowlist to huggingface.co/CDN (mock-HF for now).
+4. Harbor + cosign/SBOM, Vault/TSA/WORM, mTLS, multi-node HA/DR, GitOps controller, trusted judge model,
+   HDF5 adapter, full analysis-in-scan-flow integration, 1 TB perf.
+
+### Environment note
+The **node** has internet; **pod** egress is restricted by our NetworkPolicy (`mlscan-egress`), so HF/ghcr are
+unreachable from pods, but **image pulls are done by kubelet** (outside policies) — that is how the llama.cpp
+image was obtained. Kata guest kernel is **without BTF** by default (host kernel has BTF).

@@ -1,47 +1,61 @@
 # 19. Реализация v3: статус (as-built)
 
-Итог последовательной реализации плана `15-implementation-plan.md` на текущем стенде (microk8s,
-одиночный узел). Код — каталог `deploy/v3/**` (+ доработки `deploy/stage2`), тесты — `tests/**`.
+Актуально на текущий стенд (microk8s, одиночный узел `rtx-cluster`, namespace’ы `mlscan-*`).
+Код — `deploy/v3/**` (+ изменения `deploy/stage2..stage5`), тесты — `tests/**`.
 
 ## 1. Статус по фазам
 
-| Фаза | Статус | Основные артефакты | Тесты |
-|------|--------|--------------------|-------|
-| P0 data-plane | завершено (стенд) | `s3client.range_get`, `deploy/v3/data/pool.py`, `objectrefs.py`, TLS-egress S3, прототип 3×Garage RF=2 (`deploy/v3/data/multinode/`) | `tests/s3/test_range.py`, `tests/v3/test_pool_objectrefs.py`, e2e range/object_refs/arm-tls/multinode |
-| P1 ingest | завершено (стенд) | `s3client.copy_object`, `deploy/v3/ingest/quota.py`, сервисные `/objects/import`, квоты на `/uploads/initiate` | `tests/v3/test_quota.py`, e2e import/quota/resume-restart |
-| P2 control plane | завершено (стенд) | `deploy/v3/control/{pq,tasks_sql,orchestrator,policy,tenants}.py`, очередь в БД, интеграция в рантайм | `tests/v3/test_control.py`, e2e tasks/queue-runtime |
-| P3 статика | завершено (стенд) | `deploy/v3/analysis/static_stream.py` (index-driven, range-read, sampling, coverage) | `tests/v3/test_static_stream.py`, e2e static_stream |
-| P4 архивы | завершено (стенд) | `deploy/v3/analysis/archive_walk.py` (zip CD/tar, member ranges, бюджеты, zip-slip/bomb) | `tests/v3/test_archive_walk.py`, e2e archive_walk |
-| P5 динамика | завершено (стенд) | `deploy/v3/analysis/slice_selector.py` (срезы, покрытие, выбор членов) | `tests/v3/test_slice_selector.py`, e2e slice_selector |
-| P6 безопасность/evidence | завершено (стенд) | `deploy/v3/security/{evidence,kms}.py` (HMAC-цепочка, анкор, per-tenant KMS) | `tests/v3/test_security.py`, e2e security_evidence |
-| P7 наблюдаемость/SLO | завершено (стенд) | `deploy/v3/obs/{metrics,slo}.py`, `/v3/metrics`, `/v3/slo` | `tests/v3/test_obs.py`, e2e v3_metrics |
-| P8 HA/DR/GitOps | завершено (стенд) | `deploy/v3/control/leader.py`, `deploy/v3/gitops/README.md`, `deploy/v3/ops/DR-RUNBOOK.md` | `tests/v3/test_control.py` (leader), e2e ha_leader |
-| P9 миграция | завершено (стенд) | `deploy/v3/migration/migrate.py` (пул/refs/reconcile/readiness) | `tests/v3/test_migration.py`, e2e migration |
-| P10 документация | завершено | этот документ, обновление `Arch_v3/*`, README | — |
-| L0 UI/LLM | завершено (стенд) | `deploy/v3/llm/{classifier,binding}.py`, UI `kind`+уведомление, intake `model_profiles`/`bundles` | `tests/v3/test_llm_classifier.py`, `tests/ui/kind_ui_test.js`, e2e binding |
-| L1a реестр образов | завершено (стенд) | `deploy/v3/registry/{images,sbom}.py`, `/images/import|verify` | `tests/v3/test_registry.py`, e2e registry_images |
-| L1 среда Kata | завершено (стенд) | `deploy/v3/llm/llm_env.py`, `/llm/precheck` | `tests/v3/test_llm_env.py`, e2e llm_env (admission Kyverno) |
-| L2 eBPF/Tetragon | завершено (стенд) | `deploy/v3/llm/tetragon.py`, `/llm/events` | `tests/v3/test_tetragon.py`, e2e llm_events |
-| L3 пробы/XLSX | завершено (стенд) | `deploy/v3/llm/{xlsx,promptset,evaluators}.py`, `/prompt-sets`, `/llm/score`, UI загрузки | `tests/v3/test_promptset.py`, `tests/ui/promptset_ui_test.js`, e2e promptset |
-| L4 bundle/аттестации | завершено (стенд) | `deploy/v3/control/attest.py`, `/bundles/<id>/verdict`, `/gate` | `tests/v3/test_control.py` (attest), e2e gate_attest |
+| Фаза | Статус | Ключевое |
+|------|--------|----------|
+| P0 data-plane | завершено (стенд) | `range_get`, общий пул `objects/<sha…>` + `object_refs`; TLS-egress S3 (`s3.mlscan.local:30921`); прототип 3×Garage RF=2 (долговечность при выводе узла) |
+| P1 ingest | завершено (стенд) | `copy_object`/`/objects/import`, квоты на `/uploads/initiate` (403/429), части до 1 ГиБ, resume после рестарта, **fair-share** веса (`/tenants/fairshare`, метрика) |
+| P2 control plane | завершено (стенд) | приоритетная очередь `tasks` (SKIP LOCKED), orchestrator, **подписанная политика fail-closed**, **регистр версий детекторов** (`detector_versions`, версия в скане), tenants |
+| P3 статика | завершено (стенд) | index-driven потоковый анализ по range-read: safetensors + **GGUF/ONNX** (`analyze_gguf`/`analyze_onnx`), sampling, coverage |
+| P4 архивы | завершено (стенд) | zip (центральный каталог)/tar по range, **рекурсивный обход с depth-бюджетом**, бюджеты, zip-slip/bomb |
+| P5 динамика | завершено (стенд) | детерминированный selector срезов; **план срезов фиксируется в записи скана** (`dynamic_plan`); выбор членов |
+| P6 безопасность/evidence | завершено (стенд) | evidence HMAC-цепочка + **WORM-анкор**; **per-tenant KMS** (fail-closed) |
+| P7 наблюдаемость/SLO | завершено (стенд) | `/v3/metrics` (per-tenant) и `/v3/slo`; **per-tenant метрики экспортируются в ops `/metrics`** |
+| P8 HA/DR/GitOps | завершено (стенд) | single-writer/leader-election (PG advisory-lock); GitOps/DR-runbook (доки) |
+| P9 миграция | завершено (стенд) | v2-ключи → пул (server-side copy) + refs + reconcile + readiness; идемпотентность |
+| P10 документация | завершено | этот документ, обновление README/плана |
+| L0 UI/LLM | завершено (стенд) | UI `kind`+уведомление; бейдж «Engine image»; **UI импорта образа движка**; классификатор LLM (в т.ч. **авто для GGUF**); binding/bundle; intake `model_profiles`/`bundles` |
+| L1a реестр образов | завершено (стенд) | импорт по digest + allowlist/admission, server-side copy OCI-tar, подпись/SBOM-запись |
+| L1 среда Kata | завершено (стенд) | единый pod (`model-fetcher`+`engine`+`tetragon`+`probe`), hardened Job проходит Kyverno, `POST /llm/precheck` (accept/rejected) |
+| L2 eBPF/Tetragon | завершено (стенд, механика) | события → `LLM-B-01..05`, нонс-антиспуф; реальный in-guest агент — после `kata-btf` (см. §8.9/§8.10) |
+| L3 пробы/XLSX | завершено (стенд) | XLSX `questions_v9` → БД/версии; правила+judge+допуск 90/75/50; **редактор «домен→класс»**; UI загрузки XLSX |
+| L4 bundle/аттестации | завершено (стенд) | вердикт уровня bundle + подписанная аттестация + воспроизводимость; **CI-gate в integrations** (`/gate?image&model`) |
+| H1 HF-загрузки | завершено (стенд) | фоновые серверные загрузки с докачкой (Range/ETag), не зависят от браузера; `hf_downloads`; встроенный mock-HF; API+UI |
+| H2 образ llama.cpp | завершено (стенд) | образ `ghcr.io/ggml-org/llama.cpp@sha256:1fa7…` (CPU, `/v1`), запускается с args |
+| H3 E2E HF→llama.cpp | **частично (CPU, без Kata/eBPF)** | 10 случайных вопросов из файла заказчика через llama.cpp; `/llm/score`: total=10, passed=5, safety_fail=5, pass_rate=0.5 |
 
-## 2. Тесты (сводка последнего прогона)
+## 2. Тесты (сводка)
 
-- unit `tests/v3`: **148 OK**; `tests/s3`: OK; `tests/formats`: OK.
-- UI (браузер, puppeteer): `kind_ui_test`, `promptset_ui_test`, `upload_ui_test` — OK.
-- e2e (реальные сервисы): range, object_refs, import, quota, resume-restart, static_stream,
-  archive_walk, slice_selector, security_evidence, v3_metrics, ha_leader, migration, binding,
-  registry_images, llm_env, llm_events, promptset, gate_attest — OK.
-- Прототип многоузлового S3: 3 узла RF=2, долговечность при выводе узла — OK.
+- Unit: `tests/v3` — **167**, `tests/s3` — 22, `tests/formats` — 1 (итого **190 OK**).
+- Браузерные (puppeteer): `kind`, `engine_image`, `promptset`, `domain_class`, `hf`, `upload` — OK.
+- E2E на реальных сервисах: **42** скрипта `tests/e2e/*.sh` (S3/Garage, PostgreSQL, кластер) — OK,
+  включая `llama_cpp_e2e.sh` (HF→llama.cpp→10 вопросов→score), `multinode_rf_e2e.sh` (RF=2).
 
-Запуск: `python3 -m unittest discover -s tests/v3`; браузерные — `bash tests/ui/run_ui_tests.sh`;
-e2e — `bash tests/e2e/<name>.sh`.
+Запуск: `python3 -m unittest discover -s tests/v3`; `bash tests/ui/run_ui_tests.sh`;
+`bash tests/e2e/<name>.sh`.
 
-## 3. Честные границы (на целевой стенд)
+## 3. Ключевые API (v3, сервис тестирования, помимо v2)
 
-Отдельные свойства требуют целевого железа (multi-node/GPU/custom kernel) и явно отмечены в §7 плана:
-Harbor+cosign/SBOM, реальный in-guest Tetragon на кастомном ядре, доверенная judge-модель,
-редактор domain→class, WORM-анкор/TSA, многоузловой HA/DR и cross-site, GitOps-контроллер,
-реальные index-адаптеры ONNX/HDF5/GGUF, интеграция статики/архивов/динамики в единый поток скана.
-Каждый такой пункт выполнен кодом/тестами настолько, насколько это возможно на одиночном стенде,
-остальное — с готовыми интерфейсами и планом.
+`/objects/import`, `/uploads/*` (+квоты), `/images/import|verify`, `/llm/precheck|events|score`,
+`/prompt-sets`, `/prompt-sets/active`, `/domain-class`, `/detectors`, `/tenants/fairshare`,
+`/v3/metrics`, `/v3/slo`, `/bundles[/<id>][/verdict]`, `/gate`, `/hf/search`, `/hf/downloads[/<id>][/cancel]`,
+`/__mockhf/*` (HF_MOCK=1). В integrations — `/gate?image=&model=`.
+
+## 4. Осталось (блокеры и целевое железо)
+
+- **Отдельный RuntimeClass `kata-btf`** (BTF-ядро Kata для in-guest eBPF) + правки Kyverno → затем **H3 с eBPF**.
+  Дизайн и факты — план §8.9/§8.10 (BTF-вариант ядра на узле есть: `config-…-debug`, `vmlinuz-debug.container`).
+- **GPU-пул** (железо + `nvidia-device-plugin`).
+- **HF**: реальный токен и egress-allowlist к huggingface.co/CDN (сейчас mock-HF).
+- **Harbor + cosign/SBOM**, **Vault/TSA/WORM**, **mTLS**, **multi-node HA/DR**, **GitOps-контроллер**,
+  **доверенная judge-модель**, **HDF5-адаптер**, **полная интеграция анализа в поток скана**, **перф 1 ТБ**.
+
+## 5. Важные уточнения по среде
+
+- Интернет у узла **есть**; egress подов ограничен **нашей NetworkPolicy** (`mlscan-egress`), поэтому HF/ghcr
+  недоступны из подов, но **pull образов делает kubelet** (вне политик) — так получен образ llama.cpp.
+- Host kernel имеет BTF (`/sys/kernel/btf/vmlinux`); **guest-ядро Kata по умолчанию — без BTF** (отсюда §8.9/§8.10).

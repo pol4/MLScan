@@ -441,3 +441,57 @@ MIT — см. [`LICENSE`](./LICENSE).
 
 Сводный индекс — [`ARCHITECTURES.md`](ARCHITECTURES.md). **Дальнейшая разработка ведётся по v3.**
 Старые пути `docs/NN-*.md` оставлены заглушками-редиректами (совместимость ссылок).
+
+
+---
+
+## Состояние проекта (актуально)
+
+### Что развёрнуто
+- **Рабочая система**: v2 (сервис тестирования + песочница Kata + аналитика + ops + integrations + ingress)
+  и **реализация v3** поверх неё. Namespace’ы `mlscan-*`; UI `http://analytics.mlscan.local:30217`;
+  API `http://api.mlscan.local:30217` (HTTPS `:30921`); S3 (Garage) c TLS-egress `s3.mlscan.local:30921`;
+  PostgreSQL; ops `/metrics`; integrations `/gate`.
+
+### v3: реализовано и проверено на стенде
+- **Data-plane/ingest**: range-read, общий пул `objects/<sha…>` + `object_refs` (дедуп), TLS-egress S3,
+  прототип 3×Garage **RF=2** (долговечность при выводе узла); server-side copy/`/objects/import`,
+  **квоты** ingest (403/429), resume после рестарта, **fair-share** веса.
+- **Aнализ**: потоковая **index-driven** статика из S3 для safetensors/**GGUF/ONNX**; обход архивов
+  (zip CD/tar) по range с **depth-бюджетом**, zip-slip/bomb; детерминированный **selector срезов**,
+  план динамики фиксируется в скане.
+- **Control plane**: приоритетная очередь `tasks` (SKIP LOCKED), orchestrator, **подписанная политика
+  fail-closed**, **регистр версий детекторов**, tenants.
+- **Безопасность**: evidence **HMAC-цепочка + WORM-анкор**, per-tenant **KMS** (fail-closed);
+  реестр образов по digest (allowlist/admission), подпись/SBOM-запись.
+- **Наблюдаемость**: `/v3/metrics` (per-tenant) и `/v3/slo`; per-tenant метрики в ops `/metrics`;
+  single-writer/leader-election (PG advisory-lock).
+- **LLM**: UI-типизация (`kind`) + бейдж «Engine image» + импорт образа; классификатор LLM (авто для GGUF);
+  единая Kata-среда (`model-fetcher`+`engine`+`tetragon`+`probe`), Job проходит Kyverno, ресурсный
+  `precheck`; события eBPF → `LLM-B-01..05` (нонс); **XLSX-набор `questions_v9`** → БД/версии,
+  правила+judge+допуск 90/75/50, редактор «домен→класс»; вердикт **bundle + аттестация** и **CI-gate**
+  (`/gate?image&model`); **фоновые HF-загрузки с докачкой** (не зависят от браузера, mock-HF);
+  **CPU-инференс llama.cpp**: E2E «HF → llama.cpp → 10 случайных вопросов заказчика → score»
+  (`total=10, passed=5, safety_fail=5, pass_rate=0.5`).
+- **Миграция v2→v3**: копия в пул + refs + reconcile + readiness (идемпотентно).
+
+### Тесты
+- **190** unit (`tests/v3` 167, `tests/s3` 22, `tests/formats` 1), **6** браузерных (puppeteer),
+  **42** e2e-скрипта на реальных Garage/PostgreSQL/кластере — все зелёные.
+- Запуск: `python3 -m unittest discover -s tests/v3` · `bash tests/ui/run_ui_tests.sh` · `bash tests/e2e/<name>.sh`.
+
+### Осталось (по приоритету)
+1. **Отдельный RuntimeClass `kata-btf`** (BTF-ядро Kata) для **in-guest eBPF/Tetragon** + правки Kyverno —
+   затем полный H3 (HF→llama.cpp→Kata+eBPF→10 вопросов). Дизайн и факты — `Arch_v3/15` §8.9/§8.10.
+2. **GPU-пул** (железо + `nvidia-device-plugin`).
+3. **HF**: реальный токен и egress-allowlist к huggingface.co/CDN (сейчас mock-HF).
+4. Harbor + cosign/SBOM, Vault/TSA/WORM, mTLS, multi-node HA/DR, GitOps-контроллер, доверенная
+   judge-модель, HDF5-адаптер, полная интеграция анализа в поток скана, перф-замеры 1 ТБ.
+
+### Уточнение по среде
+Интернет у **узла** есть; egress **подов** ограничен нашей NetworkPolicy (`mlscan-egress`) — поэтому HF/ghcr
+недоступны из подов, но **pull образов делает kubelet** (вне политик) — так получен образ llama.cpp.
+Guest-ядро Kata по умолчанию **без BTF** (host-ядро — с BTF).
+
+Сводный статус фаз — [`Arch_v3/15-implementation-plan.md`](Arch_v3/15-implementation-plan.md) §7 и
+[`Arch_v3/19-implementation-as-built.md`](Arch_v3/19-implementation-as-built.md).
