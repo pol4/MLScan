@@ -108,6 +108,79 @@ def _daily_bytes(subject: str) -> int:
         return 0
 
 
+def _task_priority(subject: str) -> str:
+    if v3pq is None:
+        return "interactive"
+    return v3pq.CLASS_CI if (subject or "").startswith("ci") else v3pq.CLASS_INTERACTIVE
+
+
+def _enqueue_scan_task(rec: dict, subject: str) -> str | None:
+    """Поставить скан в персистентную очередь (P2). Возвращает task_id или None."""
+    if v3tasks is None or not DB_ENABLED:
+        return None
+    try:
+        strategy = "static"
+        if v3orch is not None:
+            strategy = v3orch.choose_strategy(kind="model", fmt=rec.get("format", ""),
+                                              size=int(rec.get("size") or 0),
+                                              dynamic_max_bytes=SANDBOX_DYNAMIC_MAX_BYTES)["strategy"]
+        priority = _task_priority(subject)
+        rank = v3pq.RANK.get(priority, 1) if v3pq is not None else 1
+        task_id = rec["scan_id"]
+        payload = json.dumps({"scan_id": rec["scan_id"], "name": rec.get("name", ""),
+                              "fmt": rec.get("format", ""), "size": rec.get("size", 0),
+                              "strategy": strategy}, ensure_ascii=False)
+        db_exec(v3tasks.enqueue_sql(task_id, subject or "shared", priority, rank, payload))
+        rec["strategy"] = strategy
+        rec["task_id"] = task_id
+        save_scan(rec)
+        return task_id
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] enqueue task failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return None
+
+
+def _task_set_running(task_id: str) -> None:
+    if v3tasks is None or not DB_ENABLED or not task_id:
+        return
+    try:
+        db_exec("UPDATE tasks SET status='running', started_at=now() WHERE task_id="
+                + _lit(task_id))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _run_scan_with_task(scan_id: str, name: str, fmt: str, path: str,
+                        task_id: str | None = None) -> None:
+    _task_set_running(task_id)
+    try:
+        process_scan(scan_id, name, fmt, path)
+        _task_status(task_id, True)
+    except Exception as exc:  # noqa: BLE001
+        _task_status(task_id, False, f"{type(exc).__name__}: {exc}"[:200])
+        raise
+
+
+def _run_direct_with_task(scan_id: str, name: str, fmt: str, key: str, size: int,
+                          task_id: str | None = None) -> None:
+    _task_set_running(task_id)
+    try:
+        _materialize_and_scan(scan_id, name, fmt, key, size)
+        _task_status(task_id, True)
+    except Exception as exc:  # noqa: BLE001
+        _task_status(task_id, False, f"{type(exc).__name__}: {exc}"[:200])
+        raise
+
+
+def _task_status(task_id: str, ok: bool = True, error: str = "") -> None:
+    if v3tasks is None or not DB_ENABLED or not task_id:
+        return
+    try:
+        db_exec(v3tasks.complete_sql(task_id, ok, error))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _quota_ok(subject: str, size: int) -> tuple[bool, str, int]:
     """Проверить квоту загрузки. Возвращает (ok, code, http_status)."""
     if v3quota is None:
@@ -242,6 +315,17 @@ try:
 except Exception:  # noqa: BLE001
     v3pool = None  # type: ignore
     v3refs = None  # type: ignore
+
+sys.path.insert(0, "/opt/v3control")
+try:  # v3 (P2): персистентная очередь + orchestrator + тенанты
+    import pq as v3pq  # noqa: E402
+    import tasks_sql as v3tasks  # noqa: E402
+    import orchestrator as v3orch  # noqa: E402
+    import tenants as v3tenants  # noqa: E402
+    _v3q = v3tenants.TenantRegistry()
+except Exception:  # noqa: BLE001
+    v3pq = v3tasks = v3orch = v3tenants = None  # type: ignore
+    _v3q = None  # type: ignore
 
 
 def T(key: str, lang: str = "ru", **fmt) -> str:
@@ -980,7 +1064,10 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         pipe_add(t_recv - t0, max(time.monotonic() - t_recv, 0.0), 0, got,
                  bool(rec.get("s3_multipart")))
-        threading.Thread(target=process_scan, args=(scan_id, name, fmt, local), daemon=True).start()
+        _tid = _enqueue_scan_task(rec, getattr(self, "_subject", ""))
+        save_scan(rec)
+        threading.Thread(target=_run_scan_with_task, args=(scan_id, name, fmt, local, _tid),
+                         daemon=True).start()
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": got,
                                 "sha256": sha, "s3_key": rec.get("s3_key"),
                                 "multipart": bool(rec.get("s3_multipart")),
@@ -1168,8 +1255,10 @@ class Handler(BaseHTTPRequestHandler):
         info["upload_id"] = uid
         _save_session(info, "completed")
         pipe_add(0.0, round(time.monotonic() - t0, 3), 0.0, size, True)
-        threading.Thread(target=_materialize_and_scan,
-                         args=(scan_id, info["name"], info["fmt"], info["key"], size),
+        _tid = _enqueue_scan_task(rec, getattr(self, "_subject", ""))
+        save_scan(rec)
+        threading.Thread(target=_run_direct_with_task,
+                         args=(scan_id, info["name"], info["fmt"], info["key"], size, _tid),
                          daemon=True).start()
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": size,
                                 "sha256": info["sha256"], "s3_key": info["key"],

@@ -20,6 +20,12 @@ kubectl -n "$NS" create configmap mlscan-v3-ingest \
   --from-file=pool.py="$HERE/../v3/data/pool.py" \
   --from-file=objectrefs.py="$HERE/../v3/data/objectrefs.py" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$NS" create configmap mlscan-v3-control \
+  --from-file=pq.py="$HERE/../v3/control/pq.py" \
+  --from-file=tasks_sql.py="$HERE/../v3/control/tasks_sql.py" \
+  --from-file=orchestrator.py="$HERE/../v3/control/orchestrator.py" \
+  --from-file=tenants.py="$HERE/../v3/control/tenants.py" \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 # Реквизиты S3 (Secret mlscan-s3 из mlscan-data -> mlscan-testing)
 if kubectl -n mlscan-data get secret mlscan-s3 >/dev/null 2>&1; then
   kubectl -n mlscan-data get secret mlscan-s3 -o json \
