@@ -13,3 +13,19 @@ CREATE TABLE IF NOT EXISTS object_refs (
 );
 CREATE INDEX IF NOT EXISTS idx_object_refs_sha ON object_refs(sha256);
 CREATE INDEX IF NOT EXISTS idx_object_refs_tenant ON object_refs(tenant_id);
+
+-- tasks: персистентная очередь сканов с приоритетами (P2)
+CREATE TABLE IF NOT EXISTS tasks (
+  task_id TEXT PRIMARY KEY,
+  tenant TEXT NOT NULL,
+  priority TEXT NOT NULL,
+  rank INT NOT NULL,
+  seq BIGSERIAL,
+  payload TEXT,
+  status TEXT NOT NULL DEFAULT 'queued',
+  created TIMESTAMPTZ DEFAULT now(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_dequeue ON tasks(status, rank, seq);

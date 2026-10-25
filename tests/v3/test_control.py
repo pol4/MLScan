@@ -15,6 +15,8 @@ import pq  # noqa: E402
 import policy  # noqa: E402
 import tenants  # noqa: E402
 import quota  # noqa: E402
+import tasks_sql  # noqa: E402
+import orchestrator  # noqa: E402
 
 
 class QueueTest(unittest.TestCase):
@@ -104,6 +106,74 @@ class TenantTest(unittest.TestCase):
         reg = tenants.TenantRegistry()
         reg.upsert(tenants.Tenant("a")); reg.upsert(tenants.Tenant("b"))
         self.assertEqual(sorted(t.tenant_id for t in reg.all()), ["a", "b"])
+
+
+
+
+class TasksSqlTest(unittest.TestCase):
+    def test_ddl(self):
+        self.assertIn("CREATE TABLE IF NOT EXISTS tasks", tasks_sql.DDL_TASKS)
+        self.assertIn("idx_tasks_dequeue", tasks_sql.DDL_TASKS)
+
+    def test_enqueue_and_dequeue_sql(self):
+        e = tasks_sql.enqueue_sql("t-1", "ci", pq.CLASS_CI, pq.RANK[pq.CLASS_CI], '{"a":1}')
+        self.assertIn("INSERT INTO tasks", e)
+        self.assertIn("ON CONFLICT (task_id) DO NOTHING", e)
+        d = tasks_sql.dequeue_sql()
+        self.assertIn("ORDER BY rank, seq", d)
+        self.assertIn("FOR UPDATE SKIP LOCKED", d)
+        self.assertIn("RETURNING", d)
+
+    def test_complete_and_requeue(self):
+        self.assertIn("status='done'", tasks_sql.complete_sql("t", True))
+        self.assertIn("status='failed'", tasks_sql.complete_sql("t", False, "boom"))
+        self.assertIn("status='queued'", tasks_sql.requeue_sql("t"))
+
+    def test_escaping(self):
+        self.assertIn("'o''brien'", tasks_sql.enqueue_sql("t", "o'brien", "ci", 0))
+
+
+class OrchestratorTest(unittest.TestCase):
+    def test_archive_detected_by_ext(self):
+        self.assertEqual(orchestrator.choose_strategy(fmt="model.tar.gz")["strategy"], "archive")
+        self.assertEqual(orchestrator.choose_strategy(kind="archive")["strategy"], "archive")
+
+    def test_llm_with_engine(self):
+        r = orchestrator.choose_strategy(is_llm=True, has_engine_image=True)
+        self.assertEqual(r["strategy"], "llm-inference"); self.assertTrue(r["dynamic"])
+
+    def test_llm_without_engine(self):
+        r = orchestrator.choose_strategy(is_llm=True, has_engine_image=False)
+        self.assertEqual(r["strategy"], "static"); self.assertFalse(r["dynamic"])
+
+    def test_dynamic_vs_static_by_size(self):
+        self.assertEqual(orchestrator.choose_strategy(size=1024)["strategy"], "dynamic")
+        self.assertEqual(orchestrator.choose_strategy(size=10 ** 13, dynamic_max_bytes=10 ** 12)["strategy"], "static")
+
+    def test_engine_image(self):
+        self.assertEqual(orchestrator.choose_strategy(kind="engine_image")["strategy"], "static")
+
+
+class PolicyLoadTest(unittest.TestCase):
+    POL = {"version": 7, "rules": [
+        {"id": "r1", "when": {"check_id_in": ["A-01"]}, "action": "block"}]}
+
+    def test_load_ok(self):
+        pv = policy.load(self.POL)
+        self.assertEqual(pv.version, "7")
+
+    def test_load_requires_valid_signature(self):
+        sig = policy.sign(self.POL, "k")
+        pv = policy.load(self.POL, key="k", require_signature=True, signature=sig)
+        self.assertEqual(pv.version, "7")
+        with self.assertRaises(ValueError):
+            policy.load(self.POL, key="k", require_signature=True, signature="deadbeef")
+        with self.assertRaises(ValueError):
+            policy.load(self.POL, require_signature=True)
+
+    def test_load_invalid_schema(self):
+        with self.assertRaises(ValueError):
+            policy.load({"rules": [{"id": "x", "when": {}, "action": "nope"}]})
 
 
 if __name__ == "__main__":

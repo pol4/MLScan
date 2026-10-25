@@ -58,6 +58,21 @@ class PolicyVersion:
             object.__setattr__(self, "digest", content_hash(self.content))
 
 
+def load(content: dict, key: str = "", require_signature: bool = False,
+         signature: str = "") -> PolicyVersion:
+    """Загрузить политику: валидировать и (опц.) проверить подпись. Возвращает PolicyVersion."""
+    ok, why = validate(content)
+    if not ok:
+        raise ValueError(why)
+    if require_signature:
+        if not key:
+            raise ValueError("policy signature verification requires key")
+        if not verify(content, signature, key):
+            raise ValueError("policy signature invalid")
+    return PolicyVersion(version=str(content.get("version", "")), content=content,
+                         signature=signature)
+
+
 def make_policy(version: str, content: dict, key: str = "") -> PolicyVersion:
     ok, why = validate(content)
     if not ok:
