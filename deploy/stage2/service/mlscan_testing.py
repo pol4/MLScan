@@ -614,8 +614,48 @@ def _materialize_and_scan(scan_id: str, name: str, fmt: str, key: str, size: int
         except Exception as exc:  # noqa: BLE001
             print(f"[testing] {scan_id}: материализация не удалась: {type(exc).__name__}: {exc}",
                   file=sys.stderr)
+    # Крупный объект: потоковая статика по префиксу (P1-6) — без полной загрузки.
+    prefix_bytes = int(os.environ.get("STATIC_PREFIX_BYTES", str(64 * 1024 ** 2)))
+    try:
+        blob = _s3.read_prefix(key, min(prefix_bytes, size))
+        tmp = os.path.join(DATA_TMP, "pfx-" + scan_id + "-" + name)
+        os.makedirs(DATA_TMP, exist_ok=True)
+        with open(tmp, "wb") as fh:
+            fh.write(blob)
+        rec = load_scan(scan_id) or {}
+        static = mlscan_poc.static_stage(Path(tmp), total_size=size)
+        if format_adapter is not None and "adapter_format" not in static:
+            try:
+                fa = format_adapter.static_scan(Path(tmp), total_size=size)
+                if fa.get("findings"):
+                    static.setdefault("findings", []).extend(fa["findings"])
+                if fa.get("format"):
+                    static["adapter_format"] = fa["format"]
+                    if fa["format"] != "pickle":
+                        static["format"] = fa["format"]
+            except Exception as exc:  # noqa: BLE001
+                static.setdefault("findings", []).append(
+                    {"check_id": "FMT-00", "category": "FMT", "title": "Ошибка адаптера формата",
+                     "severity": "low", "confidence": 0.3, "evidence": str(exc)})
+        static["static_prefix_bytes"] = len(blob)
+        dynamic = {"status": "skipped", "reason": "объект больше лимита локальной материализации"}
+        findings = normalize(scan_id, rec.get("sha256", ""), static, dynamic)
+        findings, _tr = cap_findings(findings)
+        verdict, reason = mlscan_poc.decide(static, dynamic)
+        coverage = mlscan_poc.coverage_of(static, dynamic)
+        reason = f"{reason}; статика по префиксу {len(blob)} из {size} Б (P1-6)"
+        update(scan_id, state="done", stage="done", progress=100, verdict=verdict, reason=reason,
+               findings=findings, static=static, sandbox=dynamic, coverage=coverage)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] {scan_id}: потоковая статика не удалась: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
     update(scan_id, state="done", stage="done", progress=100, verdict="Inconclusive",
-           reason="объект больше лимита локальной материализации — анализ будет потоковым (P1-6)",
+           reason="объект больше лимита локальной материализации, потоковая статика недоступна",
            coverage={"complete": False, "failed": ["static", "dynamic", "behavior"],
                      "modules": {m: {"ok": False, "reason": "ожидает потокового анализа (P1-6)"}
                                  for m in ("static", "dynamic", "behavior")}})
@@ -938,8 +978,16 @@ class Handler(BaseHTTPRequestHandler):
         tenant = self._tenant()
         key = f"tenant/{tenant}/{sha}/{name}"
         if _s3.exists(key):
-            return self._json(200, {"dedup": True, "key": key, "sha256": sha,
-                                    "size": size, "tenant": tenant})
+            uid = "dedup-" + uuid.uuid4().hex
+            info = {"upload_id": uid, "key": key, "name": name, "fmt": fmt, "sha256": sha,
+                    "size": size, "tenant": tenant, "part_size": DIRECT_PART_SIZE,
+                    "status": "dedup", "created": time.time(),
+                    "subject": getattr(self, "_subject", "")}
+            with _pending_lock:
+                _pending_uploads[uid] = info
+            _save_session(info, "dedup")
+            return self._json(200, {"dedup": True, "upload_id": uid, "key": key, "sha256": sha,
+                                    "size": size, "tenant": tenant, "count": 0, "parts": []})
         part = DIRECT_PART_SIZE
         n_parts = (size + part - 1) // part
         if n_parts > 10000:                    # лимит числа частей S3

@@ -90,7 +90,8 @@ def main():
             print("[direct] dedup=true — объект уже в S3")
             st, rec = _req("POST", f"{args.base}/scans/complete", args.key,
                            {"upload_id": uid, "parts": []})
-            print("[direct] registered", st, rec.get("scan_id"))
+            print(f"[direct] registered scan_id={rec.get('scan_id')} tenant={rec.get('tenant')}")
+            print("[direct] OK" if st == 202 else f"[direct] FAIL complete {st} {rec}")
             return sys.exit(0 if st == 202 else 1)
 
     st, st_info = _req("GET", f"{args.base}/uploads/{uid}/parts", args.key)

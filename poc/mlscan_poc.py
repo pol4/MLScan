@@ -486,9 +486,11 @@ def _format_adapter():
         return None
 
 
-def static_stage(path: Path) -> dict[str, Any]:
+def static_stage(path: Path, total_size: int | None = None) -> dict[str, Any]:
+    """Статический этап. total_size — реальный размер объекта, если path это
+    префикс (потоковый анализ больших файлов, P1-6)."""
     try:
-        result = _static_stage_impl(path)
+        result = _static_stage_impl(path, total_size)
     except Exception as e:  # noqa: BLE001
         result = {"format": "unknown", "size": 0, "findings": [], "members": [],
                   "ok": False, "error": "%s: %s" % (type(e).__name__, e)}
@@ -497,7 +499,7 @@ def static_stage(path: Path) -> dict[str, Any]:
     adapter = _format_adapter()
     if adapter is not None:
         try:
-            extra = adapter.static_scan(path)
+            extra = adapter.static_scan(path, total_size=total_size)
         except Exception as e:  # noqa: BLE001
             extra = {"findings": [{"check_id": "FMT-00", "category": "FMT",
                                    "title": "Ошибка адаптера формата", "severity": "low",
@@ -519,8 +521,8 @@ def static_stage(path: Path) -> dict[str, Any]:
 MAX_STATIC_BYTES = 64 * 1024 * 1024
 
 
-def _static_stage_impl(path: Path) -> dict[str, Any]:
-    size = path.stat().st_size
+def _static_stage_impl(path: Path, total_size: int | None = None) -> dict[str, Any]:
+    size = total_size or path.stat().st_size
     with path.open("rb") as fh:
         data = fh.read(MAX_STATIC_BYTES)
     fmt = detect_format(path)

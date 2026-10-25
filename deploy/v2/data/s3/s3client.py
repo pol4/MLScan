@@ -153,6 +153,25 @@ class S3:
         """Потоковый GET: возвращает (status, headers, response) для чтения тела чанками."""
         return self._send("GET", key, read=False)
 
+    def read_prefix(self, key: str, nbytes: int) -> bytes:
+        """Прочитать первые nbytes объекта (без полной загрузки) — для потоковой статики."""
+        st, _, resp = self.get_stream(key)
+        if st != 200:
+            raise RuntimeError(f"read_prefix GET status {st}")
+        buf = bytearray()
+        try:
+            while len(buf) < nbytes:
+                chunk = resp.read(min(1 << 20, nbytes - len(buf)))
+                if not chunk:
+                    break
+                buf += chunk
+        finally:
+            try:
+                resp.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return bytes(buf)
+
     def exists(self, key: str) -> bool:
         try:
             status, _, _ = self.head(key)

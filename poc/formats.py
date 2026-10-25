@@ -1038,13 +1038,23 @@ def _read_bounded(path: Path, limit: int = MAX_STATIC_BYTES) -> bytes:
         return fh.read(limit)
 
 
-def static_scan(path: Path) -> dict:
-    """Адаптер: вернуть {format, findings, details} для не-pickle форматов."""
+def static_scan(path: Path, total_size: int | None = None) -> dict:
+    """Адаптер: вернуть {format, findings, details} для не-pickle форматов.
+
+    total_size — реальный размер исходного объекта, если анализируется префикс
+    (потоковый статический анализ больших файлов, P1-6): границы тензоров и
+    trailing-данные считаются от него, а не от длины префикса.
+    """
     try:
         with path.open("rb") as fh:
             head = fh.read(4096)
     except Exception as exc:  # noqa: BLE001
         return {"format": "unknown", "findings": [], "error": str(exc)}
+    if total_size is None:
+        try:
+            total_size = path.stat().st_size
+        except OSError:
+            total_size = None
     fmt = detect(path, head)
     findings: list[dict] = []
     try:
@@ -1072,7 +1082,8 @@ def static_scan(path: Path) -> dict:
         elif fmt == "gguf":
             findings.extend(_scan_gguf(_read_bounded(path), path.name))
         elif fmt == "safetensors":
-            findings.extend(_scan_safetensors(_read_bounded(path), path.name, path.stat().st_size))
+            findings.extend(_scan_safetensors(_read_bounded(path), path.name,
+                                              total_size or path.stat().st_size))
         elif fmt == "tar":
             findings.extend(_scan_tar(path))
         elif fmt == "xml":
