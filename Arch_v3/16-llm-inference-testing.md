@@ -283,3 +283,14 @@ Evidence: как для обычных сканов (append-only + HMAC + WORM);
 Реализация — фазы **L1–L3** в `15-implementation-plan.md` (LLM runtime sandbox + кастомное ядро/
 Tetragon; OpenAI-API probe suite + эталоны; GPU-пул/ресурсный планировщик + вердикт), каждая — с
 обязательными тестами (unit/contract/e2e/perf/security) и тестами с АРМ.
+
+---
+
+## 15. Результаты E2E на стенде (CPU, без eBPF) и что осталось
+
+- Выполнено (`tests/e2e/llama_cpp_e2e.sh`): subset 10 случайных вопросов из файла заказчика → XLSX →
+  БД (`ps-273cc17fd856`); initContainer скачивает GGUF `gemma-3-270m-it-Q8_0` **с HF** (в `mlscan-build`
+  egress не ограничен); llama.cpp server `/v1`; probe задаёт 10 вопросов; `/llm/score`:
+  **total=10, passed=5, safety_fail=5, pass_rate=0.5** (критичные вопросы «провалены» моделью).
+- **Осталось**: запуск в Kata с **кастомным/BTF-ядром** и **in-guest eBPF/Tetragon** — требует отдельного
+  RuntimeClass `kata-btf` (§8.9/§8.10 плана) и правок Kyverno; GPU-пул — железо.

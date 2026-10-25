@@ -267,3 +267,19 @@ stateDiagram-v2
 3. Evidence — append-only с HMAC и WORM-анкорингом.
 4. Мультитенантность: каждый объект/скан принадлежит тенанту; квоты и SLO — per-tenant.
 5. Образы/конфиги/политики версионируются и подписываются; анализ воспроизводим по версии.
+
+---
+
+## 7. Реализовано (as-built, см. `19-implementation-as-built.md`)
+
+| Компонент | Модуль/эндпоинт | Статус |
+|-----------|-----------------|--------|
+| Data-plane: пул/range | `deploy/v3/data/{pool,objectrefs}.py`, `s3client.range_get`, TLS-egress S3 | готово |
+| Ingest: import/квоты/fair-share | `deploy/v3/ingest/{quota,hf}.py`, `/objects/import`, `/tenants/fairshare` | готово |
+| Control: очередь/оркестратор/политика/детекторы | `deploy/v3/control/{pq,tasks_sql,orchestrator,policy,tenants,leader,attest}.py`, `detector_versions` | готово |
+| Анализ: статика/архивы/динамика | `deploy/v3/analysis/{static_stream,archive_walk,slice_selector}.py` | готово |
+| Реестр образов | `deploy/v3/registry/{images,sbom}.py`, `/images/import|verify` | готово |
+| LLM: среда/наблюдение/пробы/вердикт | `deploy/v3/llm/*`, `/llm/*`, `/prompt-sets`, `/bundles/*`, `/gate` | готово (кроме in-guest eBPF до `kata-btf`) |
+| Безопасность/evidence | `deploy/v3/security/{evidence,kms}.py`, подпись политики | готово |
+| Наблюдаемость | `deploy/v3/obs/{metrics,slo}.py`, `/v3/metrics`, `/v3/slo`, ops `/metrics` | готово |
+| HF-загрузки | `/hf/*`, `hf_downloads`, mock-HF | готово (реальный HF — целевой стенд) |

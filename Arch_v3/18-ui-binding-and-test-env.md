@@ -200,3 +200,12 @@ perf (ресурсы/готовность).
 - **Статус**: таблица `hf_downloads` (repo/revision/files/quantization/bytes/status/etag/attempts/tenant);
   в UI — очередь загрузок, прогресс, ошибки, повтор.
 - Детали фаз — `15-implementation-plan.md` (H1–H3).
+
+---
+
+## As-built (актуально)
+
+См. сводку `19-implementation-as-built.md`: соответствующие возможности реализованы на стенде и
+покрыты тестами (190 unit, 42 e2e, 6 браузерных). Осталось — целевое железо/согласования
+(BTF-ядро `kata-btf` для in-guest eBPF, GPU-пул, Harbor+cosign/SBOM, Vault/TSA/WORM, mTLS,
+multi-node HA/DR, GitOps-контроллер, доверенная judge-модель, HDF5-адаптер, перф 1 ТБ, реальный HF).

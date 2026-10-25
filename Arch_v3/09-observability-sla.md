@@ -74,3 +74,12 @@ v2 давал базовые `mlscan_*`/`mlscan_upload_*` и `/quality` без p
 - События eBPF/Tetragon по типам (exec/net/file/mmap), задержка событие→finding (N14).
 - Ресурсы: GPU-утилизация/ожидание, RAM/диск, длительность прогонов.
 - SLO: N12–N14 (`01-requirements.md`); алёрт на рост `Rejected`/`safety_fail`.
+
+---
+
+## As-built (актуально)
+
+См. сводку `19-implementation-as-built.md`: соответствующие возможности реализованы на стенде и
+покрыты тестами (190 unit, 42 e2e, 6 браузерных). Осталось — целевое железо/согласования
+(BTF-ядро `kata-btf` для in-guest eBPF, GPU-пул, Harbor+cosign/SBOM, Vault/TSA/WORM, mTLS,
+multi-node HA/DR, GitOps-контроллер, доверенная judge-модель, HDF5-адаптер, перф 1 ТБ, реальный HF).

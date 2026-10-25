@@ -65,3 +65,13 @@
 - Добавлены: range-read тесты, archive member-walk, sampled dynamic, per-tenant изоляция, TLS/mTLS,
   chaos/DR, capacity-тесты и 1 ТБ harness’ы.
 - Сохранены: строгий цикл «тесты → реализация → тесты», тесты с АРМ, golden-набор качества.
+
+---
+
+## 9. Реализовано: инвентарь тестов (as-built)
+
+- Unit: `tests/v3` — **167** (control/analysis/llm/security/obs/migration/registry/ingest), `tests/s3` — 22, `tests/formats` — 1.
+- Браузерные (puppeteer): `kind`, `engine_image`, `promptset`, `domain_class`, `hf`, `upload` (6).
+- E2E: **42** скрипта `tests/e2e/*.sh` на реальных Garage/PostgreSQL/кластере (в т.ч. `llama_cpp_e2e.sh`,
+  `multinode_rf_e2e.sh`, `security_evidence_e2e.sh`, `policy_signed_e2e.sh`, `hf_download_e2e.sh`).
+- Запуск: `python -m unittest discover -s tests/v3`; `bash tests/ui/run_ui_tests.sh`; `bash tests/e2e/<name>.sh`.

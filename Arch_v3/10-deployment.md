@@ -144,3 +144,16 @@ graph TB
 - **Сборка образов**: `deploy/v3/images/llama-cpp/` — сборка в `mlscan-build`, публикация в
   `mlscan-registry` **по digest** + SBOM/подпись; admission допускает только digest-образы из реестра.
 - **HF-загрузки**: серверные задачи (worker/Job) с докачкой; хосты HF/CDN — в egress-allowlist.
+
+---
+
+## 11. Реализовано: CPU-пул и два RuntimeClass (as-built)
+
+- **CPU-инференс** (llama.cpp/GGUF) работает как Job в `mlscan-build` (egress не ограничен) — образ
+  `ghcr.io/ggml-org/llama.cpp@sha256:1fa7…` (pull делает kubelet).
+- **Два RuntimeClass** (дизайн, §8.10 плана): `kata` (стандартное ядро) и `kata-btf` (BTF-ядро для
+  in-guest eBPF). Хендлер `kata-btf` регистрируется в `/var/snap/microk8s/current/args/containerd-template.toml`
+  с `ConfigPath=/opt/kata/share/defaults/kata-containers/configuration-qemu-btf.toml`
+  (`kernel=vmlinuz-debug.container`, BTF=1). Откат — удалить хендлер/файл и рестартнуть containerd.
+- **HF-egress**: для реального Hugging Face требуется allowlist к `huggingface.co`/CDN (сейчас mock-HF);
+  pull образов не требует изменений egress-политик.

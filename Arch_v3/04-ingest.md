@@ -84,3 +84,12 @@
 Прямой presigned-ingest v2 (`/uploads/initiate`, `/uploads/<id>/parts`, `/scans/complete`) сохраняется
 по духу; меняются: ключи (общий пул + refs), TLS, квоты, адаптивный part size, персистентность в БД,
 range-read. Клиентский протокол совместим с расширениями (см. `11-migration-v2-to-v3.md`).
+
+---
+
+## As-built (актуально)
+
+См. сводку `19-implementation-as-built.md`: соответствующие возможности реализованы на стенде и
+покрыты тестами (190 unit, 42 e2e, 6 браузерных). Осталось — целевое железо/согласования
+(BTF-ядро `kata-btf` для in-guest eBPF, GPU-пул, Harbor+cosign/SBOM, Vault/TSA/WORM, mTLS,
+multi-node HA/DR, GitOps-контроллер, доверенная judge-модель, HDF5-адаптер, перф 1 ТБ, реальный HF).
