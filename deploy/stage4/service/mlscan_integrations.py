@@ -343,6 +343,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, "".join(to_cef(e) + "\n" for e in read_events()).encode(),
                              "text/plain; charset=utf-8")
         if p == "/gate":
+            # U10: v3 bundle-level gate по паре (image digest, model sha) — прокси к сервису тестирования
+            if "image" in q and "model" in q:
+                img, mdl = q["image"][0], q["model"][0]
+                url = (f"{TESTING_URL}/gate?image={urllib.parse.quote(img)}"
+                       f"&model={urllib.parse.quote(mdl)}")
+                try:
+                    res = http_get_json(url)
+                except Exception as exc:  # noqa: BLE001
+                    return self._json(502, {"decision": "review",
+                                            "error": f"testing: {type(exc).__name__}"})
+                dec = {"decision": res.get("decision") or "unknown",
+                       "bundle_id": res.get("bundle_id", ""),
+                       "verdict": res.get("verdict", ""),
+                       "attestation_digest": res.get("attestation_digest", ""),
+                       "signature": res.get("signature", ""),
+                       "image": img, "model": mdl}
+                _log_event({"kind": "gate", "image": img, "model": mdl,
+                            "decision": dec["decision"], "bundle_id": dec["bundle_id"]})
+                code = 200 if dec["decision"] in ("allow", "block", "quarantine") else 404
+                return self._json(code, dec)
             if "sha256" in q:
                 e = _registry.get(q["sha256"][0])
                 if not e:
