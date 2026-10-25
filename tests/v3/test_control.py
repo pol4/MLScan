@@ -18,6 +18,7 @@ import quota  # noqa: E402
 import tasks_sql  # noqa: E402
 import orchestrator  # noqa: E402
 import attest  # noqa: E402
+import leader  # noqa: E402
 
 
 class QueueTest(unittest.TestCase):
@@ -218,6 +219,36 @@ class AttestTest(unittest.TestCase):
 
     def test_gate_pass_rate_threshold(self):
         self.assertEqual(attest.gate_decision("Safe", pass_rate=0.5, block_rate=0.8)[0], "quarantine")
+
+
+
+
+class LeaderTest(unittest.TestCase):
+    def test_lock_id_stable(self):
+        self.assertEqual(leader.lock_id("evidence"), leader.lock_id("evidence"))
+        self.assertNotEqual(leader.lock_id("evidence"), leader.lock_id("lifecycle"))
+        self.assertGreaterEqual(leader.lock_id("x"), 0)
+
+    def test_acquire_release(self):
+        state = {"locked": False}
+
+        def q(_sql):
+            return [(not state["locked"],)]
+
+        def e(_sql):
+            state["locked"] = False
+
+        ld = leader.Leader("evidence", q, e, owner="pod-1")
+        self.assertTrue(ld.acquire()); self.assertTrue(ld.is_leader())
+        state["locked"] = True
+        ld2 = leader.Leader("evidence", q, e, owner="pod-2")
+        self.assertFalse(ld2.acquire()); self.assertFalse(ld2.is_leader())
+        ld.release(); self.assertFalse(ld.is_leader())
+        self.assertTrue(ld2.acquire())
+
+    def test_hold_key(self):
+        ld = leader.Leader("lifecycle", lambda s: [(True,)], lambda s: None)
+        self.assertEqual(ld.hold_key(), "mlscan:leader:lifecycle")
 
 
 if __name__ == "__main__":

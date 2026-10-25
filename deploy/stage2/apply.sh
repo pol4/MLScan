@@ -26,6 +26,7 @@ kubectl -n "$NS" create configmap mlscan-v3-control \
   --from-file=orchestrator.py="$HERE/../v3/control/orchestrator.py" \
   --from-file=tenants.py="$HERE/../v3/control/tenants.py" \
   --from-file=attest.py="$HERE/../v3/control/attest.py" \
+  --from-file=leader.py="$HERE/../v3/control/leader.py" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap mlscan-v3-llm \
   --from-file=classifier.py="$HERE/../v3/llm/classifier.py" \
