@@ -101,5 +101,39 @@ class TarWalkTest(unittest.TestCase):
         self.assertTrue(plan["total"] >= 1)
 
 
+class NestedWalkTest(unittest.TestCase):
+    def test_walk_nested_zip(self):
+        inner = make_zip({"inside.bin": b"I" * 2000})
+        outer = make_zip({"model.bin": b"M" * 4096, "inner.zip": inner, "notes.txt": b"n"})
+        rd, _ = reader_of(outer)
+        tree = archive_walk.walk_archive(rd, len(outer), depth=4)
+        self.assertEqual(tree["kind"], "zip")
+        names = [c.get("name") for c in tree["children"]]
+        self.assertIn("inner.zip", names)
+        child = next(c for c in tree["children"] if c["name"] == "inner.zip")
+        self.assertTrue(any(m["name"] == "inside.bin" for m in child["members"]), child["members"])
+        st = archive_walk.walk_stats(tree)
+        self.assertGreaterEqual(st["children"], 1); self.assertFalse(st["depth_truncated"])
+
+    def test_depth_budget_stops_recursion(self):
+        lvl2 = make_zip({"deep.bin": b"D" * 100})
+        lvl1 = make_zip({"nested2.zip": lvl2, "a.bin": b"A" * 500})
+        outer = make_zip({"nested1.zip": lvl1, "root.bin": b"R" * 100})
+        rd, _ = reader_of(outer)
+        tree = archive_walk.walk_archive(rd, len(outer), depth=1)
+        # при depth=1 вложенные уровни не раскрываются
+        self.assertTrue(archive_walk.walk_stats(tree)["depth_truncated"])
+        child = tree["children"][0]
+        self.assertEqual(child.get("children"), [])
+
+    def test_member_bytes_decompress(self):
+        blob = make_zip({"x.bin": b"Z" * 1234})
+        rd, _ = reader_of(blob)
+        r = archive_walk.list_members_zip(rd, len(blob))
+        m = r["members"][0]
+        data = archive_walk.member_bytes(rd, m)
+        self.assertEqual(data, b"Z" * 1234)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

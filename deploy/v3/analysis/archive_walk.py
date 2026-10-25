@@ -9,14 +9,17 @@
 """
 from __future__ import annotations
 
+import io
 import struct
+import zlib
 
 ZIP_EOCD = b"PK\x05\x06"
 ZIP_EOCD64 = b"PK\x06\x06"
 ZIP_EOCD64_LOC = b"PK\x06\x07"
 ZIP_CD = b"PK\x01\x02"
 DEFAULT_BUDGET = {"max_members": 100000, "max_member_bytes": 8 * 1024 ** 3,
-                  "total_budget_bytes": 64 * 1024 ** 3, "depth": 4, "bomb_ratio": 100.0}
+                  "total_budget_bytes": 64 * 1024 ** 3, "depth": 4, "bomb_ratio": 100.0,
+                  "max_inflate_bytes": 256 * 1024 ** 2}
 
 
 def _finding(check_id, title, severity, conf, evidence):
@@ -149,3 +152,82 @@ def plan_members(members: list[dict], *, budgets=None) -> dict:
     return {"total": len(members), "analyzable": len(analyzable),
             "skipped": len(members) - len(analyzable),
             "budget": b, "plan": [m["name"] for m in analyzable]}
+
+
+def _looks_like_archive(name: str, data: bytes) -> str:
+    n = (name or "").lower()
+    if data[:4] == ZIP_CD or data[:2] == b"PK":
+        return "zip"
+    if data[:2] == b"\x1f\x8b":
+        return "gzip"
+    if len(data) > 262 and data[257:262] == b"ustar":
+        return "tar"
+    if n.endswith((".zip", ".tar", ".tgz", ".tar.gz", ".gz")):
+        return "byext"
+    return ""
+
+
+def member_bytes(reader, member: dict, *, decompress: bool = True, max_inflate: int = 256 * 1024 ** 2) -> bytes:
+    """Прочитать данные члена zip по диапазону (local header -> data) и (опц.) распаковать (raw deflate)."""
+    lh = reader(member["header_off"], 30)
+    if len(lh) < 30:
+        return b""
+    nlen, elen = struct.unpack("<HH", lh[26:30])
+    data_off = member["header_off"] + 30 + nlen + elen
+    comp = int(member.get("compressed") or 0)
+    raw = reader(data_off, comp) if comp else b""
+    if not decompress:
+        return raw
+    if raw[:2] == b"PK" or raw.startswith(b"\x1f\x8b"):
+        return raw
+    try:
+        out = zlib.decompress(raw, -15)
+        return out if len(out) <= max_inflate else raw
+    except Exception:  # noqa: BLE001
+        return raw
+
+
+def walk_archive(reader, total_size: int, *, depth: int = 4, budgets=None,
+                 kind: str = "auto", _level: int = 0) -> dict:
+    """Рекурсивный обход архива по range-read: члены + вложенные контейнеры до depth-бюджета."""
+    b = {**DEFAULT_BUDGET, **(budgets or {})}
+    b["depth"] = int(depth)          # аргумент depth имеет приоритет над budgets
+    k = kind
+    if k == "auto":
+        head = reader(0, 8)
+        k = "zip" if head[:2] == b"PK" else ("tar" if head[257:262] == b"ustar" else "zip")
+    res = list_members_zip(reader, total_size, budgets=b) if k == "zip" else list_members_tar(reader, total_size, budgets=b)
+    tree = {"kind": k, "members": res.get("members", []), "findings": list(res.get("findings", [])),
+            "children": [], "level": _level}
+    if _level >= int(b["depth"]):
+        tree["truncated_depth"] = True
+        return tree
+    for m in res.get("members", []):
+        # zip-slip и превышения бюджетов — не раскрываем; "bomb" допускается к разбору в пределах
+        # inflate-бюджета (bounded inflate безопасен), finding при этом сохраняется
+        if k != "zip" or m.get("skip_reason") in ("zip-slip", "member_bytes", "total_budget", "max_members"):
+            continue
+        try:
+            data = member_bytes(reader, m, decompress=True, max_inflate=int(b["max_inflate_bytes"]))
+        except Exception:  # noqa: BLE001
+            continue
+        ik = _looks_like_archive(m.get("name", ""), data)
+        if not ik or ik in ("gzip", "byext"):
+            continue
+        buf = io.BytesIO(data)
+        child = walk_archive(lambda o, l: buf.getvalue()[o:o + l], len(data), depth=depth,
+                             budgets=b, kind="zip" if ik == "zip" else "tar", _level=_level + 1)
+        child["name"] = m.get("name")
+        tree["children"].append(child)
+    return tree
+
+
+def walk_stats(tree: dict) -> dict:
+    """Сводка обхода: число членов/детей по уровням и срабатывания depth-бюджета."""
+    members = len(tree.get("members") or [])
+    children = tree.get("children") or []
+    total_children = sum(1 + (walk_stats(c)["children_total"] if c.get("children") else 0)
+                         for c in children)
+    return {"members": members, "children": len(children), "children_total": total_children,
+            "depth_truncated": any(c.get("truncated_depth") for c in children) or bool(tree.get("truncated_depth")),
+            "max_level": max([c.get("level", 0) for c in children] + [tree.get("level", 0)])}
