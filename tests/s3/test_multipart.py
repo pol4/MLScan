@@ -105,6 +105,15 @@ class MultipartTest(unittest.TestCase):
         self.assertEqual(got, body, "order of parallel parts must be preserved")
         os.unlink(tmp.name)
 
+    def test_list_parts_for_resume(self):
+        s3 = self.make()
+        uid = s3.create_multipart("res.bin")
+        s3.upload_part("res.bin", uid, 1, b"aaaa")
+        s3.upload_part("res.bin", uid, 2, b"bbbb")
+        parts = dict(s3.list_parts("res.bin", uid))
+        self.assertEqual(sorted(parts), [1, 2])
+        self.assertEqual(parts[1], hashlib.md5(b"aaaa").hexdigest())
+
     def test_abort(self):
         s3 = self.make()
         uid = s3.create_multipart("abort.bin")

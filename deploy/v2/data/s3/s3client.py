@@ -14,6 +14,7 @@ import datetime
 import hashlib
 import hmac
 import http.client
+import re
 import urllib.parse
 
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
@@ -196,6 +197,22 @@ class S3:
 
     def abort_multipart(self, key: str, upload_id: str):
         return self._send("DELETE", key, query=[("uploadId", upload_id)])
+
+    def list_parts(self, key: str, upload_id: str):
+        """Список уже загруженных частей (для возобновления загрузки, P0-3)."""
+        st, _, data = self._send("GET", key, query=[("uploadId", upload_id)])
+        if st != 200:
+            raise RuntimeError(f"list_parts status {st}: {data[:200]!r}")
+        parts = []
+        for m in re.finditer(rb"<Part>(.*?)</Part>", data, re.S):
+            blk = m.group(1)
+            pn = re.search(rb"<PartNumber>(\d+)</PartNumber>", blk)
+            et = re.search(rb"<ETag>(.*?)</ETag>", blk)
+            if pn:
+                val = et.group(1).decode() if et else ""
+                val = val.replace("&quot;", "").replace("&amp;", "&").strip('"')
+                parts.append((int(pn.group(1)), val))
+        return parts
 
     # --- Presigned URL (query-подпись, P0-2) --------------------------------
     def presign(self, method: str, key: str, query=None, expires: int = 3600,

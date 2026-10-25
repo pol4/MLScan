@@ -74,6 +74,30 @@ DIRECT_MATERIALIZE_MAX = int(os.environ.get("DIRECT_MATERIALIZE_MAX", str(4 * 10
 _pending_uploads: dict = {}
 _pending_lock = threading.Lock()
 
+
+def _save_session(info: dict, status: str) -> None:
+    if not DB_ENABLED:
+        return
+    db_exec("INSERT INTO upload_sessions(upload_id,s3_key,name,fmt,sha256,size,tenant,"
+            "part_size,status,subject) VALUES "
+            f"({_lit(info.get('upload_id'))},{_lit(info.get('key'))},{_lit(info.get('name'))},"
+            f"{_lit(info.get('fmt'))},{_lit(info.get('sha256'))},{int(info.get('size') or 0)},"
+            f"{_lit(info.get('tenant'))},{int(info.get('part_size') or 0)},"
+            f"{_lit(status)},{_lit(info.get('subject'))}) "
+            "ON CONFLICT (upload_id) DO UPDATE SET status=EXCLUDED.status, updated_at=now(), "
+            "s3_key=EXCLUDED.s3_key, part_size=EXCLUDED.part_size")
+
+
+def _load_session_from_db(upload_id: str) -> dict | None:
+    rows = db_query("SELECT upload_id,s3_key,name,fmt,sha256,size,tenant,part_size,status,subject "
+                    f"FROM upload_sessions WHERE upload_id={_lit(upload_id)}")
+    if not rows:
+        return None
+    r = rows[0]
+    return {"upload_id": r[0], "key": r[1], "name": r[2], "fmt": r[3], "sha256": r[4],
+            "size": int(r[5] or 0), "tenant": r[6], "part_size": int(r[7] or 0),
+            "status": r[8], "subject": r[9]}
+
 # --- PostgreSQL (dual-write; не критично для работы сервиса) ---
 PG_HOST = os.environ.get("PGHOST", "")
 DB_ENABLED = bool(PG_HOST)
@@ -731,6 +755,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"scans": list_scans(), "language": lang})
         if u.path == "/stats":
             return self._json(200, stats())
+        if u.path.startswith("/uploads/") and u.path.endswith("/parts"):
+            return self._uploads_parts(u.path.split("/")[2])
         if u.path.startswith("/scans/"):
             rec = load_scan(u.path.split("/", 2)[2])
             if not rec:
@@ -842,6 +868,52 @@ class Handler(BaseHTTPRequestHandler):
         t = re.sub(r"[^A-Za-z0-9._-]+", "-", subj).strip("-.")[:64]
         return t or "shared"
 
+    def _session(self, upload_id: str) -> dict | None:
+        with _pending_lock:
+            info = _pending_uploads.get(upload_id)
+        if info:
+            return info
+        return _load_session_from_db(upload_id)
+
+    def _uploads_parts(self, upload_id: str) -> None:
+        if not (S3_ENABLED and _s3 is not None):
+            return self._json(503, {"error": "S3 не сконфигурирован"})
+        info = self._session(upload_id)
+        if not info:
+            return self._json(404, {"error": "unknown upload_id"})
+        try:
+            parts = _s3.list_parts(info["key"], upload_id)
+        except Exception as exc:  # noqa: BLE001
+            return self._json(502, {"error": f"S3 list_parts: {type(exc).__name__}: {exc}"})
+        part_size = int(info.get("part_size") or DIRECT_PART_SIZE)
+        size = int(info.get("size") or 0)
+        count = (size + part_size - 1) // part_size if size else len(parts)
+        urls = {}
+        for i in range(1, count + 1):
+            try:
+                urls[i] = _s3.presign_upload_part(info["key"], upload_id, i, expires=DIRECT_URL_TTL)
+            except Exception:  # noqa: BLE001
+                pass
+        return self._json(200, {"upload_id": upload_id, "status": info.get("status", "active"),
+                                "part_size": part_size, "size": size, "count": count,
+                                "parts": [{"part_number": n, "etag": et} for n, et in parts],
+                                "urls": {str(k): v for k, v in urls.items()}})
+
+    def _uploads_abort(self, upload_id: str) -> None:
+        info = self._session(upload_id)
+        if not info:
+            return self._json(404, {"error": "unknown upload_id"})
+        if S3_ENABLED and _s3 is not None:
+            try:
+                _s3.abort_multipart(info["key"], upload_id)
+            except Exception:  # noqa: BLE001
+                pass
+        with _pending_lock:
+            _pending_uploads.pop(upload_id, None)
+        info["upload_id"] = upload_id
+        _save_session(info, "aborted")
+        return self._json(200, {"upload_id": upload_id, "status": "aborted"})
+
     def _uploads_initiate(self) -> None:
         if not (S3_ENABLED and _s3 is not None):
             return self._json(503, {"error": "S3 не сконфигурирован"})
@@ -880,10 +952,12 @@ class Handler(BaseHTTPRequestHandler):
                      for i in range(1, n_parts + 1)]
         except Exception as exc:  # noqa: BLE001
             return self._json(502, {"error": f"S3: {type(exc).__name__}: {exc}"})
+        info = {"upload_id": uid, "key": key, "name": name, "fmt": fmt, "sha256": sha,
+                "size": size, "tenant": tenant, "part_size": part, "status": "active",
+                "created": time.time(), "subject": getattr(self, "_subject", "")}
         with _pending_lock:
-            _pending_uploads[uid] = {"key": key, "name": name, "fmt": fmt, "sha256": sha,
-                                     "size": size, "tenant": tenant, "created": time.time(),
-                                     "subject": getattr(self, "_subject", "")}
+            _pending_uploads[uid] = info
+        _save_session(info, "active")
         return self._json(200, {"upload_id": uid, "key": key, "part_size": part,
                                 "count": n_parts, "parts": parts, "dedup": False,
                                 "tenant": tenant, "expires_in": DIRECT_URL_TTL})
@@ -897,8 +971,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             return self._json(400, {"error": f"bad json: {exc}"})
         uid = body.get("upload_id") or ""
-        with _pending_lock:
-            info = _pending_uploads.get(uid)
+        info = self._session(uid)
         if not info:
             return self._json(404, {"error": "unknown upload_id"})
         parts_in = body.get("parts") or []
@@ -956,12 +1029,22 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         with _pending_lock:
             _pending_uploads.pop(uid, None)
+        info["upload_id"] = uid
+        _save_session(info, "completed")
         threading.Thread(target=_materialize_and_scan,
                          args=(scan_id, info["name"], info["fmt"], info["key"], size),
                          daemon=True).start()
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": size,
                                 "sha256": info["sha256"], "s3_key": info["key"],
                                 "tenant": info["tenant"]})
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        u = urllib.parse.urlparse(self.path)
+        if self._require() is None:
+            return
+        if u.path.startswith("/uploads/"):
+            return self._uploads_abort(u.path.split("/")[2])
+        return self._json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)

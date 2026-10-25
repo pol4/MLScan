@@ -200,6 +200,20 @@ class MultipartS3(http.server.BaseHTTPRequestHandler):
         path, qpairs = self._split()
         if not self._verify("GET", path, qpairs, hashlib.sha256(b"").hexdigest()):
             return self._deny()
+        q = dict(qpairs)
+        if "uploadId" in q:
+            with self.store.lock:
+                up = self.store.uploads.get(q["uploadId"])
+            if not up:
+                return self._xml(404, b"<Error><Code>NoSuchUpload</Code></Error>")
+            rows = ""
+            for n in sorted(up["parts"]):
+                et = hashlib.md5(up["parts"][n]).hexdigest()
+                rows += (f"<Part><PartNumber>{n}</PartNumber><ETag>&quot;{et}&quot;</ETag>"
+                         f"<Size>{len(up['parts'][n])}</Size></Part>")
+            xml = (f"<?xml version='1.0'?><ListPartsResult><UploadId>{q['uploadId']}</UploadId>"
+                   f"{rows}</ListPartsResult>").encode()
+            return self._xml(200, xml)
         with self.store.lock:
             obj = self.store.objects.get(path)
         if obj is None:

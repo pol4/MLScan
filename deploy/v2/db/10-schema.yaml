@@ -85,6 +85,11 @@ data:
       user_id BIGINT, request_id TEXT, ip TEXT, user_agent TEXT, bytes BIGINT,
       status TEXT, started_at TIMESTAMPTZ DEFAULT now(), finished_at TIMESTAMPTZ
     );
+    CREATE TABLE IF NOT EXISTS upload_sessions (
+      upload_id TEXT PRIMARY KEY, s3_key TEXT, name TEXT, fmt TEXT, sha256 TEXT,
+      size BIGINT, tenant TEXT, part_size BIGINT, status TEXT, subject TEXT,
+      created TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS connections (
       id BIGSERIAL PRIMARY KEY, user_id BIGINT, request_id TEXT, ip TEXT, user_agent TEXT,
       path TEXT, method TEXT, status INT, ts TIMESTAMPTZ DEFAULT now()
