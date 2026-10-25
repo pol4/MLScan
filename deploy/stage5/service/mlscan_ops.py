@@ -76,6 +76,12 @@ def get_json(url, timeout=15):
         return json.loads(r.read().decode("utf-8"))
 
 
+def get_text(url, timeout=15):
+    req = urllib.request.Request(url, headers=_auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
+
+
 def post_bytes(url, data, timeout=90):
     req = urllib.request.Request(url, data=data, method="POST", headers=_auth_headers())
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -359,6 +365,13 @@ def metrics_text() -> str:
         L.append(f'mlscan_verdict_total{{verdict="{v}"}} {n}')
     try:
         L.append(f'mlscan_evidence_entries {get_json(ANALYTICS_URL + "/api/evidence/verify").get("entries", 0)}')
+    except Exception:  # noqa: BLE001
+        pass
+    # U8: per-tenant метрики v3 из сервиса тестирования (/v3/metrics)
+    try:
+        for line in get_text(TESTING_URL + "/v3/metrics").splitlines():
+            if line.startswith("mlscan_v3_"):
+                L.append(line)
     except Exception:  # noqa: BLE001
         pass
     try:
