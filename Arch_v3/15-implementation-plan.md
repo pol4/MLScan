@@ -320,8 +320,8 @@ P2/P6/P7/P8 частично параллельны после P1; P9 — пос
 | P9 (миграция v2→v3) | **завершено (на стенде)** | `deploy/v3/migration/migrate.py`: `dst_key` (v3-пул), `plan_object_migration` (v2-ключи `sha256/…`/`tenant/…` → пул), **реконсиляция** множеств sha (missing/extra), `readiness()` чек-лист cutover. e2e `migration_e2e.sh`: v2-объект → **server-side copy** в пул + `refs`, чтение совпало, реконсиляция ok, **идемпотентность** (повтор не копирует), readiness ok. Тесты: `tests/v3/test_migration.py`. Осталось (целевой стенд): перенос/анкор evidence на реальных данных, поэтапное переключение тенантов, вывод v2 из эксплуатации. |
 | P10 (документация/финализация) | **завершено** | `Arch_v3/19-implementation-as-built.md` (статус фаз P0–P10/L0–L4, артефакты, тесты, границы); обновлены `Arch_v3/README`, корневые README; сводный прогон тестов (unit v3 148, UI, e2e) — зелёный. |
 | H1 (HF-загрузка) | **завершено (на стенде)** | `deploy/v3/ingest/hf.py` (выбор файлов/квантизации, фильтры поиска, план докачки); сервис: `POST /hf/search` (mock или HF API), `POST /hf/downloads` (**серверная фоновая задача** + таблица `hf_downloads`), `GET /hf/downloads[/<id>]`, `POST .../cancel`; **встроенный mock-HF** (`HF_MOCK=1`, Range/ETag, `HF_FLAKY` для проверки докачки); **докачка по Range/ETag**, не зависит от браузера; UI-панель HF (поиск+загрузка+статус). Тесты: `tests/v3/test_hf.py`, e2e `hf_download_e2e.sh`, `tests/ui/hf_ui_test.js`. Осталось (целевой стенд): реальный HF-токен/egress-allowlist и rate-limit. |
-| H2 (образ llama.cpp) | **заблокировано средой** | Артефакты сборки готовы (`deploy/v3/images/llama-cpp/`); сборка/публикация невозможны: **нет egress в кластере** (ghcr.io/docker.io/huggingface.co — TCP 443 timeout) и **не запущен docker-демон** на рабочей станции. Выполнить на целевом стенде с интернетом/локальным базовым образом: `bash deploy/v3/images/llama-cpp/build.sh`. |
-| H3 (E2E HF→llama.cpp) | **заблокировано (зависит от H2)** | После H2: полный цикл HF→llama.cpp→Kata(eBPF/Tetragon)→10 случайных вопросов `questions_v9`→вердикт; требует GPU/CPU-пул и кастомное ядро (целевой стенд). |
+| H2 (образ llama.cpp) | **завершено (на стенде)** | Блокер снят: интернет у узла есть, блокировала **pod-egress NetworkPolicy** (pull делает kubelet — вне политик). Использован официальный образ `ghcr.io/ggml-org/llama.cpp@sha256:1fa7f8f0…` (OpenAI `/v1`, CPU). Сборка собственного слоя не нужна — образ запускается с args (`-m … --jinja`); артефакты `deploy/v3/images/llama-cpp/` остаются для полной сборки/подписи на целевом стенде. |
+| H3 (E2E HF→llama.cpp) | **выполнено частично (CPU, без Kata/eBPF)** | `tests/e2e/llama_cpp_e2e.sh`: subset 10 случайных вопросов из файла заказчика → XLSX → БД (`ps-273cc17fd856`); Job в `mlscan-build` (initContainer качает GGUF `gemma-3-270m-it-Q8_0` с HF — pod-egress там не ограничен) → llama.cpp server (`/v1`) → probe (10 вопросов) → `/llm/score`: `total=10 passed=5 safety_fail=5 pass_rate=0.5`. Осталось (целевой стенд): запуск в **Kata** с **кастомным ядром + in-guest eBPF/Tetragon** (см. §8.8). |
 
 Артефакты P0 (шаг 1): `deploy/v2/data/s3/s3client.py` (range), `deploy/v3/data/pool.py`,
 `deploy/v3/data/objectrefs.py`, `deploy/v3/db/schema-v3.sql`; тесты `tests/s3/test_range.py`,
@@ -359,3 +359,31 @@ P2/P6/P7/P8 частично параллельны после P1; P9 — пос
 - **H3**: зависит от H2 и требует CPU/GPU-пула и кастомного ядра Kata с eBPF/Tetragon (целевой стенд).
 - **H1**: выполнено с **встроенным mock-HF** (real HF недоступен из кластера); на целевом стенде —
   реальный HF-токен и egress-allowlist к huggingface.co/CDN.
+
+### 8.8 Пул и ядро: что мешает и что нужно (уточнено)
+
+**Пул (CPU/GPU).**
+- CPU: отдельный пул на одиночном узле не требуется — CPU-инференс уже работает (Job в `mlscan-build`).
+  Для «настоящего» пула достаточно `nodeSelector`/`taints` и namespace `mlscan-llm`; на текущем стенде
+  это ничего не блокирует.
+- GPU: нужен физический GPU + драйверы + `nvidia-device-plugin` (вне нашего контура) — это ограничение
+  железа, а не кода.
+
+**Kata + кастомное ядро с eBPF/Tetragon.**
+- Причина, почему сейчас не сделано: наблюдение за **guest**-сисколлами возможно только агентом **внутри
+  микро-ВМ**, а для eBPF нужен guest-ядро с **BTF** (`CONFIG_DEBUG_INFO_BTF`). Штатное guest-ядро
+  Kata его может не иметь.
+- Что требуется и почему это host-level (а не «наши namespace»):
+  1) собрать/получить guest-ядро Kata с BTF (+initrd) — сборка возможна (у узла есть интернет);
+  2) заменить kernel/initrd Kata на узле и указать их в конфиге kata-runtime
+     (`/opt/kata/share/kata-containers/*`, конфиг kata-deploy в `kube-system`) — **общий системный
+     компонент**, изменение влияет на все Kata-нагрузки узла;
+  3) перезапустить kata-runtime/ноду (риск перерыва песочницы);
+  4) добавить Tetragon-агент контейнером в тот же pod (in-guest), с нужными capabilities.
+- Альтернатива без кастомного ядра: Tetragon/eBPF **на хосте** наблюдает только KVM/выходы VM, но не
+  syscalls гостя; либо запуск движка **не в Kata**, а в обычном (hardened) pod — тогда eBPF видит его
+  системные вызовы через BTF хост-ядра (это можно включить сразу, без правок kube-system).
+
+**Вывод:** H2 — снят (был ошибкой диагностики: pod-egress, а не отсутствие интернета). CPU-пул и
+HF→llama.cpp→10 вопросов — работают. Kata+кастомное ядро и GPU-пул — изменения на уровне узла/железа,
+требуют согласования (после чего делаются по шагам 1–4).
