@@ -104,6 +104,7 @@ spec:
         - {name: v3analysis, mountPath: /opt/v3analysis, readOnly: true}
         - {name: v3security, mountPath: /opt/v3security, readOnly: true}
         - {name: v3obs, mountPath: /opt/v3obs, readOnly: true}
+        - {name: v3migration, mountPath: /opt/v3migration, readOnly: true}
         - {name: modeltmp, mountPath: /var/tmp}
         - {name: tmp, mountPath: /tmp}
       volumes:
@@ -122,6 +123,7 @@ spec:
       - {name: v3analysis, configMap: {name: mlscan-v3-analysis}}
       - {name: v3security, configMap: {name: mlscan-v3-security}}
       - {name: v3obs, configMap: {name: mlscan-v3-obs}}
+      - {name: v3migration, configMap: {name: mlscan-v3-migration}}
       - {name: modeltmp, emptyDir: {sizeLimit: 120Gi}}
       - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
 ---
