@@ -51,6 +51,11 @@ TESTING_URL = os.environ.get(
     "TESTING_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 POLICY_PATH = os.environ.get("POLICY_PATH", "/etc/mlscan/policy.json")
+# U3: подпись политики (fail-closed): при заданном POLICY_SIGN_KEY подпись обязательна и проверяется
+POLICY_SIGN_KEY = os.environ.get("POLICY_SIGN_KEY", "")
+POLICY_SIGNATURE = os.environ.get("POLICY_SIGNATURE", "")
+POLICY_OK = True
+POLICY_REASON = "ok"
 EVIDENCE = os.path.join(DATA_DIR, "evidence.jsonl")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "15"))
 
@@ -157,12 +162,32 @@ def testing_stats() -> dict:
 # ----------------------------------------------------------------------------
 # Политика
 # ----------------------------------------------------------------------------
+def _policy_signature(content: dict) -> str:
+    import hashlib
+    import hmac as _hmac
+    canon = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return _hmac.new(POLICY_SIGN_KEY.encode(), hashlib.sha256(canon.encode()).hexdigest().encode(),
+                     hashlib.sha256).hexdigest()
+
+
 def load_policy() -> dict:
+    global POLICY_OK, POLICY_REASON
     try:
         with open(POLICY_PATH) as fh:
-            return json.load(fh)
+            content = json.load(fh)
     except Exception:  # noqa: BLE001
+        POLICY_OK, POLICY_REASON = True, "no-policy-file"
         return {"rules": [], "default": {"action": "quarantine", "verdict": "Needs review"}}
+    if POLICY_SIGN_KEY:
+        import hmac as _hmac
+        want = _policy_signature(content)
+        ok = bool(POLICY_SIGNATURE) and _hmac.compare_digest(want, POLICY_SIGNATURE)
+        POLICY_OK, POLICY_REASON = ok, ("ok" if ok else "policy signature invalid")
+        if not ok:
+            return {"rules": [], "default": {"action": "block", "verdict": "Malicious"}}
+    else:
+        POLICY_OK, POLICY_REASON = True, "unsigned"
+    return content
 
 
 def _match(when: dict, findings: list[dict], max_sev: str) -> bool:
@@ -187,6 +212,9 @@ def _match(when: dict, findings: list[dict], max_sev: str) -> bool:
 
 
 def apply_policy(policy: dict, findings: list[dict], max_sev: str) -> dict:
+    if not POLICY_OK:      # fail-closed: политика не подтверждена — блокируем
+        return {"rule_id": "policy-invalid", "action": "block", "verdict": "Malicious",
+                "reason": f"policy signature invalid (fail-closed): {POLICY_REASON}"}
     for rule in policy.get("rules", []):
         if _match(rule.get("when", {}), findings, max_sev):
             return {"rule_id": rule.get("id"), "action": rule.get("action", "quarantine"),
@@ -1105,7 +1133,11 @@ class Handler(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         if p == "/healthz":
             lang = self._lang(q)
-            return self._json(200, {"status": "ok", "scans": len(_index),
+            try:
+                load_policy()   # обновить состояние подписи политики (fail-closed)
+            except Exception:  # noqa: BLE001
+                pass
+            return self._json(200, {"policy_ok": POLICY_OK, "policy_reason": POLICY_REASON, "status": "ok", "scans": len(_index),
                                     "language": i18n.global_lang() if i18n else "ru",
                                     "startup_language": i18n.startup_lang() if i18n else "ru",
                                     "languages": list(i18n.SUPPORTED) if i18n else ["ru"],

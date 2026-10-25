@@ -131,3 +131,8 @@ CREATE TABLE IF NOT EXISTS bundle_verdicts (
 
 -- L0/U1: тип артефакта в скане (badge «Engine image» и т.п.)
 ALTER TABLE scans ADD COLUMN IF NOT EXISTS kind TEXT;
+
+-- P2/U3: регистр версий детекторов
+CREATE TABLE IF NOT EXISTS detector_versions (
+  name TEXT PRIMARY KEY, version TEXT, digest TEXT, updated TIMESTAMPTZ DEFAULT now()
+);

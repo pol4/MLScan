@@ -84,6 +84,7 @@ MAX_CONCURRENT_UPLOADS = int(os.environ.get("MAX_CONCURRENT_UPLOADS", "8"))
 REGISTRY_ALLOWLIST = [r.strip() for r in os.environ.get("REGISTRY_ALLOWLIST", "").split(",") if r.strip()]
 # L1: ёмкость LLM-пула для ресурсного планировщика (0/пусто = без ограничений в этом измерении)
 ATTEST_KEY = os.environ.get("ATTEST_KEY", "mlscan-dev-attest")
+DETECTORS_VERSION = os.environ.get("MLSCAN_DETECTORS_VERSION", "det-1")
 LLM_POOL = {"gpu": int(os.environ.get("LLM_POOL_GPU", "8") or 0),
             "ram_gb": int(os.environ.get("LLM_POOL_RAM_GB", "1024") or 0),
             "disk_gb": int(os.environ.get("LLM_POOL_DISK_GB", "8192") or 0)}
@@ -1044,6 +1045,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"scans": list_scans(), "language": lang})
         if u.path == "/stats":
             return self._json(200, stats())
+        if u.path == "/detectors":
+            return self._detectors_list()
         if u.path == "/v3/metrics":
             return self._v3_metrics()
         if u.path == "/v3/slo":
@@ -1108,7 +1111,7 @@ class Handler(BaseHTTPRequestHandler):
         prof = (_classify_and_record(name, fmt, got, fam_hint, path=tmp)
                 if (kind == "model" and v3classifier is not None) else None)
         rec = {"scan_id": scan_id, "name": name, "format": fmt, "size": got, "kind": kind,
-               "model_profile": prof,
+               "detectors_version": DETECTORS_VERSION, "model_profile": prof,
                "sha256": sha, "artifact_token": token,
                "state": "queued", "stage": "queued", "progress": 0,
                "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
@@ -1336,6 +1339,7 @@ class Handler(BaseHTTPRequestHandler):
         token = uuid.uuid4().hex
         rec = {"scan_id": scan_id, "name": info["name"], "format": info["fmt"], "size": size,
                "sha256": info["sha256"], "artifact_token": token, "s3_key": info["key"],
+               "detectors_version": DETECTORS_VERSION,
                "tenant": info["tenant"], "direct": True,
                "state": "queued", "stage": "queued", "progress": 0,
                "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
@@ -1600,6 +1604,35 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
 
+    def _detectors_register(self) -> None:
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        name = (body.get("name") or "").strip()
+        if not name:
+            return self._json(400, {"error": "name обязателен"})
+        version = str(body.get("version") or "").strip()
+        digest = str(body.get("digest") or "").strip()
+        if DB_ENABLED:
+            try:
+                db_exec("INSERT INTO detector_versions(name,version,digest) VALUES ("
+                        f"{_lit(name)},{_lit(version)},{_lit(digest)}) "
+                        "ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, "
+                        "digest=EXCLUDED.digest, updated=now()")
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(201, {"name": name, "version": version, "digest": digest})
+
+    def _detectors_list(self) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT name,version,digest FROM detector_versions ORDER BY name") or []
+        return self._json(200, {"detectors": [{"name": r[0], "version": r[1], "digest": r[2]}
+                                              for r in rows],
+                                "active": DETECTORS_VERSION})
+
     def _v3_metrics(self) -> None:
         """P7: Prometheus-метрики v3 (per-tenant ingest/tasks/refs + фазы пайплайна)."""
         if v3metrics is None:
@@ -1835,6 +1868,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._bundle_verdict_set(u.path.split("/", 3)[2])
         if u.path == "/images/import":
             return self._images_import()
+        if u.path == "/detectors":
+            return self._detectors_register()
         if u.path == "/llm/precheck":
             return self._llm_precheck()
         if u.path == "/llm/events":
