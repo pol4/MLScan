@@ -57,6 +57,8 @@ elif static["static_prefix_bytes"] >= total:
     fails.append(f"префикс не усечён ({static['static_prefix_bytes']} >= {total})")
 if (cov.get("modules", {}).get("static", {}) or {}).get("ok") is not True:
     fails.append(f"статика не ok: {cov.get('modules')}")
+if (r.get("sandbox") or {}).get("status") != "skipped":
+    fails.append(f"динамика не помечена skipped: {r.get('sandbox')}")
 print("verdict", r.get("verdict"), "prefix_bytes", static.get("static_prefix_bytes"),
       "static.ok", (cov.get("modules",{}).get("static") or {}).get("ok"))
 if fails:

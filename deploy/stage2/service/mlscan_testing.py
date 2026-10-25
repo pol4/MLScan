@@ -71,6 +71,11 @@ S3_PART_WORKERS = int(os.environ.get("S3_PART_WORKERS", "8"))
 DIRECT_PART_SIZE = int(os.environ.get("DIRECT_PART_SIZE", str(128 * 1024 ** 2)))
 DIRECT_URL_TTL = int(os.environ.get("DIRECT_URL_TTL", "3600"))
 DIRECT_MATERIALIZE_MAX = int(os.environ.get("DIRECT_MATERIALIZE_MAX", str(4 * 1024 ** 3)))
+# P1-7: предел динамики. Модели выше — «static-only + выборочная динамика»:
+# полная динамика невозможна (не влезает в лимиты песочницы), поэтому анализируется
+# статика по префиксу, а динамика честно помечается как неприменимая.
+SANDBOX_DYNAMIC_MAX_BYTES = int(os.environ.get("SANDBOX_DYNAMIC_MAX_BYTES",
+                                               str(6 * 1024 ** 3)))
 _pending_uploads: dict = {}
 _pending_lock = threading.Lock()
 
@@ -596,7 +601,8 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
 def _materialize_and_scan(scan_id: str, name: str, fmt: str, key: str, size: int) -> None:
     """Прямая загрузка (P0-2): при размере в пределах лимита — локальная копия и
     обычный анализ; иначе (ТБ-объекты) — честный Inconclusive до потокового анализа (P1-6)."""
-    if size <= DIRECT_MATERIALIZE_MAX:
+    materialize_max = min(DIRECT_MATERIALIZE_MAX, SANDBOX_DYNAMIC_MAX_BYTES)
+    if size <= materialize_max:
         tmp = os.path.join(DATA_TMP, "up-" + scan_id + "-" + name)
         try:
             os.makedirs(DATA_TMP, exist_ok=True)
