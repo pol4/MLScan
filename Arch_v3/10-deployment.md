@@ -136,3 +136,11 @@ graph TB
   `Rejected` (без «молчаливого Safe»).
 - Изоляция от остальных пулов: NetworkPolicy, отдельные ResourceQuota, ограничение egress.
 - DR/масштабирование: добавление GPU-узлов; переиспользование кэша моделей (node-local NVMe).
+
+## 10. CPU-инференс (llama.cpp) и сборка образов
+
+- **CPU inference pool**: узлы без GPU для небольших LLM (llama.cpp/GGUF); ресурсы — RAM/диск по размеру
+  модели; тот же Kata-харденинг и наблюдение (in-guest eBPF).
+- **Сборка образов**: `deploy/v3/images/llama-cpp/` — сборка в `mlscan-build`, публикация в
+  `mlscan-registry` **по digest** + SBOM/подпись; admission допускает только digest-образы из реестра.
+- **HF-загрузки**: серверные задачи (worker/Job) с докачкой; хосты HF/CDN — в egress-allowlist.

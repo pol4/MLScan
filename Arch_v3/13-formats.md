@@ -10,7 +10,7 @@
 | safetensors | index + sampling (range) | JSON header | sampled |
 | ONNX | protobuf-граф потоково; внешние данные (range) | proto | sampled/full |
 | HDF5 / Keras | superblock + B-tree; сэмплы датасетов | HDF5 | sampled/full |
-| GGUF | заголовок + индекс тензоров | собствен. | sampled/full |
+| GGUF (в т.ч. **квантизации**: Q4_K_M/Q5_K_M/Q8_0/FP16) | заголовок + индекс тензоров | собствен. | sampled/full (или llama.cpp CPU) |
 | TorchScript / Torch-package / zip-based | zip central directory (range) | zip | sampled/full |
 | pickle / dill / cloudpickle | потоковое чтение опкодов (бюджет) | поток | sampled/full |
 | Python / model-as-code | текст целиком (мал) | — | full (в песочнице) |
