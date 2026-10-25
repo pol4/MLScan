@@ -134,12 +134,20 @@ def _upsert_model_profile(sha: str, profile: dict, source: str = "auto") -> None
 
 
 def _classify_and_record(name: str, fmt: str, size: int, family: str = "",
-                         source: str = "auto") -> dict | None:
+                         source: str = "auto", path: str = "") -> dict | None:
     if v3classifier is None:
         return None
     cfg = {"model_type": family} if family else None
-    prof = v3classifier.classify(filenames=[name], config=cfg, size_bytes=size)
-    return prof
+    gguf_meta = None
+    # U2: авто-классификация GGUF без подсказки — читаем префикс и парсим metadata
+    if not family and fmt.lower() == "gguf" and v3gguf is not None and path and os.path.exists(path):
+        try:
+            with open(path, "rb") as fh:
+                head = fh.read(4 * 1024 * 1024)
+            gguf_meta = v3gguf.parse_gguf_meta(head).get("meta") or None
+        except Exception:  # noqa: BLE001
+            gguf_meta = None
+    return v3classifier.classify(filenames=[name], config=cfg, gguf_meta=gguf_meta, size_bytes=size)
 
 
 def _task_priority(subject: str) -> str:
@@ -372,6 +380,7 @@ try:  # v3 (L0): классификатор LLM + binding/bundle
     import binding as v3binding  # noqa: E402
     import llm_env as v3llmenv  # noqa: E402
     import tetragon as v3tetragon  # noqa: E402
+    import gguf as v3gguf  # noqa: E402
     import promptset as v3promptset  # noqa: E402
     import evaluators as v3evaluators  # noqa: E402
 except Exception:  # noqa: BLE001
@@ -379,6 +388,7 @@ except Exception:  # noqa: BLE001
     v3binding = None  # type: ignore
     v3llmenv = None  # type: ignore
     v3tetragon = None  # type: ignore
+    v3gguf = None  # type: ignore
     v3promptset = None  # type: ignore
     v3evaluators = None  # type: ignore
 
@@ -1095,7 +1105,7 @@ class Handler(BaseHTTPRequestHandler):
         sha = h.hexdigest()
         t_recv = time.monotonic()
         token = uuid.uuid4().hex
-        prof = (_classify_and_record(name, fmt, got, fam_hint)
+        prof = (_classify_and_record(name, fmt, got, fam_hint, path=tmp)
                 if (kind == "model" and v3classifier is not None) else None)
         rec = {"scan_id": scan_id, "name": name, "format": fmt, "size": got, "kind": kind,
                "model_profile": prof,
