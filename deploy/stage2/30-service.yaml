@@ -101,6 +101,7 @@ spec:
         - {name: v3control, mountPath: /opt/v3control, readOnly: true}
         - {name: v3llm, mountPath: /opt/v3llm, readOnly: true}
         - {name: v3registry, mountPath: /opt/v3registry, readOnly: true}
+        - {name: v3analysis, mountPath: /opt/v3analysis, readOnly: true}
         - {name: modeltmp, mountPath: /var/tmp}
         - {name: tmp, mountPath: /tmp}
       volumes:
@@ -116,6 +117,7 @@ spec:
       - {name: v3control, configMap: {name: mlscan-v3-control}}
       - {name: v3llm, configMap: {name: mlscan-v3-llm}}
       - {name: v3registry, configMap: {name: mlscan-v3-registry}}
+      - {name: v3analysis, configMap: {name: mlscan-v3-analysis}}
       - {name: modeltmp, emptyDir: {sizeLimit: 120Gi}}
       - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
 ---
