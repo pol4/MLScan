@@ -9,7 +9,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NS=mlscan-testing
 SIZE_MB="${1:-40}"
-POD="$(kubectl -n "$NS" get pod -l app=mlscan-testing -o jsonpath='{.items[0].metadata.name}')"
+POD=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name' )
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 
@@ -19,7 +19,13 @@ trap restore EXIT
 echo "== включаем режим префикс-статики (DIRECT_MATERIALIZE_MAX=1Mi) =="
 kubectl -n "$NS" set env deploy/mlscan-testing DIRECT_MATERIALIZE_MAX=1048576 STATIC_PREFIX_BYTES=4194304 >/dev/null
 kubectl -n "$NS" rollout status deploy/mlscan-testing --timeout=180s >/dev/null
-POD="$(kubectl -n "$NS" get pod -l app=mlscan-testing -o jsonpath='{.items[0].metadata.name}')"
+POD=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name' )
+for _ in $(seq 1 40); do
+  v="$(kubectl -n "$NS" exec "$POD" -- printenv DIRECT_MATERIALIZE_MAX 2>/dev/null || true)"
+  [ "$v" = "1048576" ] && break
+  sleep 1
+  POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name' )"
+done
 echo "env in pod: DIRECT_MATERIALIZE_MAX=$(kubectl -n "$NS" exec "$POD" -- printenv DIRECT_MATERIALIZE_MAX 2>/dev/null) STATIC_PREFIX_BYTES=$(kubectl -n "$NS" exec "$POD" -- printenv STATIC_PREFIX_BYTES 2>/dev/null)"
 kubectl -n "$NS" cp "$HERE/direct_upload.py" "$POD":/tmp/direct_upload.py >/dev/null
 

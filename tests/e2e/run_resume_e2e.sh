@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 NS=mlscan-testing
 SIZE_MB="${1:-300}"
 PART_MB="${2:-128}"
-POD="$(kubectl -n "$NS" get pod -l app=mlscan-testing -o jsonpath='{.items[0].metadata.name}')"
+POD=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name' )
 
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' 2>/dev/null \
   | base64 -d 2>/dev/null \
