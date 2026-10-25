@@ -43,6 +43,7 @@ kubectl -n "$NS" create configmap mlscan-v3-registry \
 kubectl -n "$NS" create configmap mlscan-v3-analysis \
   --from-file=static_stream.py="$HERE/../v3/analysis/static_stream.py" \
   --from-file=archive_walk.py="$HERE/../v3/analysis/archive_walk.py" \
+  --from-file=slice_selector.py="$HERE/../v3/analysis/slice_selector.py" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 # Реквизиты S3 (Secret mlscan-s3 из mlscan-data -> mlscan-testing)
 if kubectl -n mlscan-data get secret mlscan-s3 >/dev/null 2>&1; then
