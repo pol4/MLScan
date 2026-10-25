@@ -350,6 +350,14 @@ except Exception:  # noqa: BLE001
     v3pool = None  # type: ignore
     v3refs = None  # type: ignore
 
+sys.path.insert(0, "/opt/v3obs")
+try:  # v3 (P7): метрики/SLO
+    import metrics as v3metrics  # noqa: E402
+    import slo as v3slo  # noqa: E402
+except Exception:  # noqa: BLE001
+    v3metrics = None  # type: ignore
+    v3slo = None  # type: ignore
+
 sys.path.insert(0, "/opt/v3registry")
 try:  # v3 (L1a): реестр образов — валидация ссылок/подпись
     import images as v3images  # noqa: E402
@@ -980,6 +988,14 @@ class Handler(BaseHTTPRequestHandler):
         self._subject = ent["subject"]
         return ent
 
+    def _raw(self, code: int, body: bytes, ctype: str = "text/plain; charset=utf-8") -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _json(self, code: int, obj) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode()
         rid = getattr(self, "_rid", None)
@@ -1017,6 +1033,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"scans": list_scans(), "language": lang})
         if u.path == "/stats":
             return self._json(200, stats())
+        if u.path == "/v3/metrics":
+            return self._v3_metrics()
+        if u.path == "/v3/slo":
+            return self._v3_slo()
         if u.path == "/prompt-sets/active":
             return self._prompt_sets_active()
         if u.path.startswith("/llm/events/"):
@@ -1565,6 +1585,41 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"bundle_id": bid, "decision": "unknown", "reason": "нет вердикта"})
         return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
+
+    def _v3_metrics(self) -> None:
+        """P7: Prometheus-метрики v3 (per-tenant ingest/tasks/refs + фазы пайплайна)."""
+        if v3metrics is None:
+            return self._json(503, {"error": "v3 metrics module unavailable"})
+        reg = v3metrics.Registry()
+        if DB_ENABLED:
+            for r in (db_query("SELECT COALESCE(subject,'shared'), COALESCE(SUM(size),0), COUNT(*) "
+                               "FROM upload_sessions GROUP BY 1") or []):
+                reg.inc("mlscan_v3_upload_bytes_total", {"tenant": r[0]}, int(r[1] or 0))
+                reg.inc("mlscan_v3_uploads_total", {"tenant": r[0]}, int(r[2] or 0))
+            for r in (db_query("SELECT tenant, status, COUNT(*) FROM tasks GROUP BY 1,2") or []):
+                reg.set("mlscan_v3_tasks", int(r[2] or 0), {"tenant": r[0], "status": r[1]})
+            for r in (db_query("SELECT tenant_id, COALESCE(SUM(size),0), COALESCE(SUM(refcount),0) "
+                               "FROM object_refs GROUP BY 1") or []):
+                reg.set("mlscan_v3_refs_bytes", int(r[1] or 0), {"tenant": r[0]})
+                reg.set("mlscan_v3_refs", int(r[2] or 0), {"tenant": r[0]})
+            qd = db_query("SELECT COUNT(*) FROM tasks WHERE status='queued'")
+            reg.set("mlscan_v3_queue_depth", int((qd[0][0] if qd else 0)))
+        pipe = pipe_snapshot()
+        reg.set("mlscan_v3_upload_mbps", float(pipe.get("avg_mbps") or 0))
+        reg.set("mlscan_v3_upload_receive_seconds", float(pipe.get("receive_s") or 0))
+        reg.set("mlscan_v3_upload_garage_seconds", float(pipe.get("garage_s") or 0))
+        return self._raw(200, reg.render().encode(), "text/plain; version=0.0.4; charset=utf-8")
+
+    def _v3_slo(self) -> None:
+        if v3slo is None:
+            return self._json(503, {"error": "v3 slo module unavailable"})
+        pipe = pipe_snapshot()
+        samples = {"ingest_gbps": float(pipe.get("avg_mbps") or 0) * 8 / 1000.0}
+        if DB_ENABLED:
+            qd = db_query("SELECT COUNT(*) FROM tasks WHERE status='queued'")
+            samples["queue_depth"] = int((qd[0][0] if qd else 0))
+        return self._json(200, {"slo": v3slo.SLO, "samples": samples,
+                                "alerts": v3slo.evaluate(samples)})
 
     def _llm_precheck(self) -> None:
         """L1: ресурсный планировщик — хватает ли ресурсов LLM-пула для запуска инференса."""
