@@ -95,7 +95,9 @@ stateDiagram-v2
 ## 3. Изолированный запуск движка (Kata + кастомное ядро)
 
 - **Изоляция**: Job в `mlscan-sandbox-llm` на пуле узлов с GPU; `runtimeClassName: kata`;
-  микро-ВМ с **кастомным ядром**, включающим eBPF и агент **Tetragon**.
+  микро-ВМ с **кастомным ядром**, включающим eBPF; агент **Tetragon** работает **внутри guest**
+  (host-eBPF не видит системные вызовы гостя). Композиция pod’а (движок+модель+Tetragon+probe в
+  одной ВМ), UI-типизация и связывание модель↔образ — [`18-ui-binding-and-test-env.md`](18-ui-binding-and-test-env.md).
 - **Образ движка**: только по digest; проверка подписи/SBOM admission-политикой; read-only FS;
   non-root, drop ALL, seccomp, no SA token; ресурсы выдаются по манифесту.
 - **Модель**: доставляется из S3 (range/cache), монтируется/копируется в ВМ; sha256 проверяется.

@@ -12,3 +12,4 @@ Full RU set: `../README.md`. Key docs in English: `00-overview.md`, `02-architec
 `15-implementation-plan.md`.
 
 Engine-image provenance/storage: RU `../17-engine-images-and-provenance.md`.
+UI typing / LLM classifier / model-engine binding / single Kata test env: RU `../18-ui-binding-and-test-env.md`.

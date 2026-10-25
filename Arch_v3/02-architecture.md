@@ -90,6 +90,8 @@ graph TB
   вложенные архивы (depth-бюджет), индекс членов, параллельные member-workers.
 - **Sandbox (Kata)** — сэмплированная динамика (срезы/члены) с бюджетами.
 - **Parser-sandbox** — изолированный разбор недоверенных форматов/фаззинг.
+- **LLM test environment** — единый Kata-pod: `model-fetcher` (доставка модели) + `engine` +
+  `tetragon-agent` (in-guest) + `probe-runner`; см. [`18-ui-binding-and-test-env.md`](18-ui-binding-and-test-env.md).
 - **LLM inference runtime** — запуск **движка инференса в изоляции Kata** вместе с моделью
   (движок поставляется **контейнерным образом**, который тестируется как часть скана), с
   выделенными ресурсами (GPU/CPU/RAM/диск).

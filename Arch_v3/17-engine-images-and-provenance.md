@@ -9,6 +9,8 @@
 - **Engine image** — контейнерный образ движка инференса (vLLM/TGI/TensorRT-LLM/llama.cpp/кастомный),
   immutable, идентифицируется **digest** (`sha256:…`).
 - **Model artifact** — объект в S3 (веса/конфиг/токенизатор), идентифицируется **sha256**.
+- **Binding/UI** — явное указание типа артефакта и связывание модели с образом движка описаны в
+  [`18-ui-binding-and-test-env.md`](18-ui-binding-and-test-env.md).
 - **Bundle (тест-комбинация)** — неизменяемая связка `{engine image digest + model sha256 + engine
   manifest (entrypoint/API/ресурсы) + prompt-set version + detectors/policy version}`.
 - **Verdict record** — подписанная запись о результате прогона bundle (pass/fail/Inconclusive) с
