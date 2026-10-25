@@ -93,3 +93,13 @@ range-read. Клиентский протокол совместим с расш
 покрыты тестами (190 unit, 42 e2e, 6 браузерных). Осталось — целевое железо/согласования
 (BTF-ядро `kata-btf` для in-guest eBPF, GPU-пул, Harbor+cosign/SBOM, Vault/TSA/WORM, mTLS,
 multi-node HA/DR, GitOps-контроллер, доверенная judge-модель, HDF5-адаптер, перф 1 ТБ, реальный HF).
+
+---
+
+## 10. HF-загрузка: поиск и гейтинг (план §10)
+
+- `POST /hf/search` — **поиск с фильтрами** (query, type, vendor, name, quantization, size) → список
+  возможных моделей; выбор из списка, а не единичный `repo_id`.
+- `POST /hf/downloads` — старт **фоновой серверной** загрузки с докачкой; для **LLM-модели** требуется
+  `engine_image` из **уже скачанных** (хранится как bundle) — иначе `400`.
+- HF-токен — per-tenant в KMS/Secret (маскирование, проверка), allowlist хостов HF/CDN.
