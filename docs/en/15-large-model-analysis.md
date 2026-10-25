@@ -314,12 +314,16 @@ safetensors/npz/hdf5/torch/onnx) — `Safe` with full coverage.
 
 ## 10. Roadmap following from this description
 
-1. **`[planned]` Import from another S3 and very large files** (§1.3): server-side copy via presigned
-   URL, resumable upload, direct multipart upload to Garage with checksum verification, UI progress
-   and resume; lift the ingress `max-body` limit.
+> The detailed, prioritized plan for the **prod scenario (network ≥ 10 Gbit/s, storage sized for 1 TB+
+> models)** is in §11.6. Summary below.
+
+1. **`[planned]` Import from another S3 and very large files** (§1.3, §11.6 P0): server-side copy via
+   presigned URL, **multipart in `s3client.py`**, direct multipart upload to Garage into a
+   `tenant/<user|ci>/` partition with checksum verification, resumable upload, UI progress/resume,
+   lifting the ingress `max-body` limit and timeouts, raising `MAX_UPLOAD`.
 2. **`[planned]` Static analysis without a prefix cap**: streaming parsing of large containers
-   (mmap/iterators) instead of reading the first 64 MiB where safe (safetensors/ONNX headers already
-   do this; pickle scans read the prefix deliberately).
+   (mmap/iterators) instead of reading the first 64 MiB where safe (full safetensors/ONNX index walk,
+   start static analysis on early parts; pickle scans read the prefix deliberately).
 3. **`[planned]` Sign the policy and harness** (P1-5-compatible), audit changes to SIEM (P1-8).
 4. **`[planned]` P0-4/P1-2** (instant `Reject`, sandbox DNS policy) after the Calico fix.
 5. **`[planned]` P2 block**: parser fuzzing, image signing/SBOM, mTLS/OIDC, WORM evidence copy.
@@ -328,44 +332,42 @@ safetensors/npz/hdf5/torch/onnx) — `Safe` with full coverage.
 
 ## 11. Upload-time estimate for a 1 TB safetensors file
 
-Basis: **1 TB = 1024 GiB = 1.0995·10¹² bytes = 8.80 Tbit**. safetensors is an uncompressed container
-(JSON header + raw tensors), so neither compression nor content dedup reduces the transferred volume.
-The estimate is "wire time" (`S/BW`) with an efficiency factor (~0.9) plus disk/ingest stages.
+Prod basis: **1 TB = 1024 GiB = 1.0995·10¹² bytes = 8.80 Tbit**; safetensors is an uncompressed
+container (JSON header + raw tensors), so neither compression nor content dedup reduces the transferred
+volume. Assumed: **prod storage is sized for 1 TB+ models** (the current Garage partition size is not a
+constraint) and the **client→cluster network is ≥ 10 Gbit/s**. Under these conditions the link is no
+longer the bottleneck — single-streamness and extra passes are.
 
-### 11.1 Current architecture: capacity is the first wall
+The estimate is "wire time" (`S/BW`) with an efficiency factor plus disk/ingest stages. Reference: 1 TB
+over a raw link = 8.80 Tbit, i.e. 14 m 40 s at 10 Gbit/s, 5 m 52 s at 25 Gbit/s, 1 m 28 s at 100 Gbit/s.
 
-| Limit (as-is) | Value | Does 1 TB fit? |
-|---------------|-------|----------------|
-| `MAX_UPLOAD` | 20 GiB (env) | **no** → `413` |
-| `tmp` dir (`DATA_TMP=/var/tmp`, ephemeral) | 150 GiB pod limit | **no** |
-| PVC `mlscan-artifacts` (stage2) | 20 GiB | **no** |
-| Garage data PVC | 800 GiB, RF=1, `microk8s-hostpath` | **no** |
-| `s3client.put_stream` | single PUT, no multipart | not designed for TB objects |
+### 11.1 Current architecture: a 10 Gbit/s link is used about a quarter
 
-**Conclusion: a 1 TB upload does not work at all today** (hard `413`), and even after raising limits
-there is nowhere to put it (Garage is 800 GiB). The numbers below are hypothetical, limits raised.
+Capacity limits (`MAX_UPLOAD=20 GiB`, `tmp`/ephemeral, the service PVC) are knobs raised in prod
+(§11.6); once lifted, the path's own traits dominate. The code path is **two sequential, non-overlapping
+passes** (`mlscan_testing.py:717-741`): first receive into `tmp` (client→service network + node disk
+write), then separately read `tmp` and do a **single** PUT to Garage (`s3client.put_stream`, 1 MiB
+chunks over one TCP connection). Node disks are written **twice** (tmp + Garage) and read once.
 
-The actual code path is **two sequential, non-overlapping passes** (`mlscan_testing.py:717-741`):
-first receive into `tmp` (client→service network + node disk write), then separately read `tmp` and do
-a single PUT to Garage (node disk → network → Garage disk). Node disks are written **twice**
-(tmp + Garage) and read once.
+At ≥10 Gbit/s the wire time stops dominating; the ceiling is set by single-stream throughput
+(~0.5–1 GB/s for Python `http.server` and for a single PUT), the double disk write, and the sequential
+phases.
 
 ```
-T_current ≈ S / BW_link(single stream)  +  S / BW_s3(ingest)
-            └─ phase 1: receive to tmp ─┘    └─ phase 2: PUT to Garage ─┘
+T_current ≈ S / min(BW_link, BW_python_single)   +   S / BW_s3_single
+            └──────── phase 1: receive to tmp ──┘    └─ phase 2: PUT to Garage ─┘
 ```
 
-| Client→cluster link | Phase 1 (receive) | Phase 2 (PUT to Garage) | **Total** |
-|---------------------|-------------------|--------------------------|-----------|
-| 1 Gbit/s (office/default) | 9,561 s (2 h 39 m) | 4,400 s @250 MB/s | **~3 h 53 m** |
-| 1 Gbit/s | 9,561 s | 2,749 s @400 MB/s | **~3 h 25 m** |
-| 10 Gbit/s (LAN) | 956 s (16 m) | 1,100 s @1 GB/s | **~34 m** |
-| 10 Gbit/s | 956 s | 2,199 s @500 MB/s | **~53 m** |
-| 25 Gbit/s | 382 s (6 m) | 1,100 s @1 GB/s | **~25 m** |
+| Client→cluster link | Phase 1 (receive→tmp) | Phase 2 (tmp→Garage, single PUT) | **Total** | Link utilization |
+|---------------------|-----------------------|----------------------------------|-----------|------------------|
+| 10 Gbit/s | 18–24 m | 18–37 m | **~35–60 m** | ~25–40 % |
+| 25 Gbit/s | 18–24 m | 18–37 m | **~35–60 m** | ~10–17 % |
+| 100 Gbit/s | 18–24 m | 18–37 m | **~35–60 m** | ~3–4 % |
 
-Even on a fast link, phase 2 (`tmp → Garage`, single stream) becomes the bottleneck: while it runs the
-file is already received but the scan has not started. Also, while 1 TB sits in `tmp` it occupies the
-pod's ephemeral-storage and the node.
+**Key point:** at ≥10 Gbit/s the HTTP path plateaus at an **end-to-end ~0.3–0.5 GB/s** (≈ 2.5–4 Gbit/s)
+— a 10 GbE link is used about a quarter, and 25/100 GbE add nothing. The bottleneck is phase 2
+(`tmp → Garage`, single stream): the file is already received but the scan has not started, and all that
+time 1 TB occupies the node's disk and ephemeral-storage.
 
 ### 11.2 Direct S3 upload into a per-user/CI partition
 
@@ -375,71 +377,100 @@ the data path — it only issues presigned parts and later registers the object
 (`POST /scans/complete` with ETag+SHA-256).
 
 ```
-T_direct ≈ S / min( BW_link(parallel parts), BW_garage(ingest) )
+T_direct ≈ S / min( BW_link(parallel parts), BW_garage(aggregate ingest), BW_client_disk )
 ```
 
-One transfer, one disk pass (client local read + Garage write), no double hop through the service and
-no `tmp` copy.
+One transfer, one disk pass (client local read + Garage write), no second hop through the service and no
+`tmp` copy.
 
-| Client→Garage link | At 1 GB/s ingest | At 2 GB/s ingest |
-|--------------------|------------------|------------------|
-| 1 Gbit/s | 9,773 s (**2 h 43 m**, link-bound) | 9,773 s (2 h 43 m) |
-| 10 Gbit/s | 1,100 s (**18 m**, Garage-bound) | 977 s (**16 m**, link-bound) |
-| 25 Gbit/s | 1,100 s (**18 m**, Garage) | 391 s (**6.5 m**, link) |
-| 40 Gbit/s | 1,100 s (18 m, Garage) | 244 s (4 m) |
+| Client→Garage link | At 1 GB/s ingest | At 2 GB/s ingest | Link utilization |
+|--------------------|------------------|------------------|------------------|
+| 10 Gbit/s | 1,100 s (**18 m**, Garage) | 977 s (**16 m**, link) | ~80–100 % |
+| 25 Gbit/s | 1,100 s (**18 m**, Garage) | 550 s (**9 m**, Garage) | ~40–90 % |
+| 100 Gbit/s | 1,100 s (**18 m**, Garage) | 550 s (**9 m**, Garage) | Garage-bound |
 
-Key point: with the direct S3 path the bottleneck is **min(link, Garage ingest)**, not a sum of stages;
-one Garage node (RF=1) on a single PVC typically sustains ~0.4–1 GB/s of writes.
+The bottleneck is **min(link, aggregate Garage ingest)**. At 10 GbE with ≥1 GB/s ingest the link is used
+almost fully; above 25 GbE Garage is the limit and must be scaled (write parallelism, a second
+node/sharding — §11.6, now for throughput, not capacity).
 
-### 11.3 Comparison and what each option buys
+### 11.3 Comparison and what each option buys (≥10 Gbit/s, capacity sufficient)
 
 | Aspect | Current HTTP path | Direct S3 upload |
 |--------|-------------------|------------------|
 | Network transfers | 2 (client→service, service→Garage) | 1 (client→Garage) |
 | Node disk writes | 2× (tmp + Garage) | 1× (Garage) |
 | Stage overlap | none (phases sequential) | yes (multipart, parallel) |
-| 1 Gbit/s | ~3.4–3.9 h | ~2.7 h |
-| 10 Gbit/s | ~34–53 m | ~16–18 m |
-| High RTT (WAN) | single stream collapses (§11.4) | holds the link (parts) |
-| Capacity/limits | does not fit (`413`, 800 GiB) | fits (with bigger PVC) |
+| 10 Gbit/s | ~35–60 m | **~9–18 m** |
+| 25 Gbit/s | ~35–60 m (no speed-up) | ~9–18 m |
+| 100 Gbit/s | ~35–60 m (no speed-up) | ~9–18 m |
+| End-to-end throughput | 2.5–4 Gbit/s (0.3–0.5 GB/s) | 8–16 Gbit/s (1–2 GB/s) |
+| Capacity/limits | `MAX_UPLOAD`/`tmp`/PVC — raise them | service out of the data path |
 | Isolation | all artifacts on one service PVC | `tenant/<user\|ci>` partition per user/CI |
 
-**Speed-up from direct S3**: at 1 Gbit/s modest (~20–30 %, the link is the limit anyway); at 10 Gbit/s
-**~2–3×**; above all it removes the two disk passes, the `tmp` copy and the capacity blockers, and adds
-resumability and tenant isolation.
+**Speed-up from direct S3 at 10 Gbit/s is ~3–4×**, and that is what makes 10 GbE (and above) useful: the
+HTTP path uses a quarter of the link, the direct path almost all of it. Above all it removes the two
+disk passes, the `tmp` copy and the extra hop, and adds resumability and tenant isolation.
 
-### 11.4 Why the HTTP path degrades more on a WAN
+### 11.4 A note on RTT (for inter-site transfers)
 
-A single TCP stream is bounded by window × RTT (BDP). With a ~4 MB window:
+A single TCP stream is bounded by window × RTT (BDP). In a prod LAN the RTT is small and a stream at
+10 GbE runs near line rate, but for an inter-site transfer (10 Gbit/s, tens of ms RTT) a single stream
+collapses:
 
-| RTT | Single-stream ceiling | 1 TB time |
-|-----|-----------------------|-----------|
+| RTT | Single-stream ceiling | 1 TB time (single stream) |
+|-----|-----------------------|---------------------------|
 | 30 ms | ~1.07 Gbit/s | ~2 h 17 m |
 | 60 ms | ~0.53 Gbit/s | **~4 h 35 m** |
 | 100 ms | ~0.32 Gbit/s | **~7 h 38 m** |
 
-So on a 10 Gbit/s link with 60 ms RTT, a single-connection upload delivers only ~0.5 Gbit/s. Parallel
-multipart parts (16–64 streams) remove this barrier — the main argument for direct S3 upload.
+Parallel multipart parts (16–64 streams) remove this barrier — so even with a "10 Gbit/s minimum" the
+direct S3 upload is mandatory for inter-site scenarios, where 10 Gbit/s is the link's nameplate rating,
+not what a single connection achieves.
 
 ### 11.5 Analyzing 1 TB *after* the upload (an important consequence)
 
 The upload is not the only problem. Afterwards:
 
 * **L1 static** works on a 64 MiB prefix — still instant for 1 TB, but only the beginning is scanned;
-  a full safetensors header walk is feasible (mmap + page-wise tensor-block reads) — `[planned]` §10.2;
+  a full safetensors header walk is feasible (mmap + page-wise tensor-block reads) — `[planned]` §11.6;
 * **L2 dynamic is infeasible**: the Job has `JOB_EPHEMERAL=8Gi` and `JOB_MEMORY=2Gi`, so a 1 TB
-  (1.1 TiB) file cannot fit into the sandbox; downloading `Garage → Job` would take ~18–37 m per scan at
+  (1.1 TiB) file cannot fit into the sandbox; downloading `Garage → Job` would take ~9–18 m per scan at
   best;
 * practical conclusion: for TB models use **static mmap analysis + sampled slice checks**, and full
   dynamic loading only for models that fit the sandbox limits.
 
-### 11.6 Recommendations (remove both the time and the blockers)
+### 11.6 Roadmap for the prod scenario (≥ 10 Gbit/s, capacity sufficient)
 
-1. **Presigned multipart straight to Garage** into `tenant/<user|ci>/`, registration via
-   `POST /scans/complete` (ETag+SHA-256) — removes the second hop and `tmp`.
-2. **Multipart in `s3client.py`** (currently a single PUT) for internal transfers.
-3. **Self-service PVCs / larger Garage**: 800 GiB → 1 TB+; RF>1 or a second node if durability matters
-   (RF=1 today is a single point of failure).
-4. **Resumable upload** (`uploads`, offset) for breaks on long transfers.
-5. **Ingress/timeouts**: lift `max-body` and proxy timeouts for long uploads.
-6. **Only then** raise `MAX_UPLOAD` (20 GiB today) and revisit ephemeral-storage quotas.
+Capacity is no longer a constraint — the plan pivots to **throughput and the data-path architecture**.
+The priority is removing single-stream bottlenecks and the second hop; the rest follows from §11.1–11.3.
+
+**P0 — main gain (must do):**
+
+1. **Multipart in `s3client.py`** (currently a single PUT): 8–64 parallel parts,
+   `CreateMultipartUpload`/`UploadPart`/`CompleteMultipartUpload`, per-part ETags. Removes the phase-2
+   ceiling (§11.1) — the main single-stream barrier.
+2. **Presigned multipart straight to Garage** into `tenant/<user|ci>/` + `POST /scans/complete`
+   (ETag list + SHA-256). Removes the second hop through the service and the `tmp` copy; the service
+   leaves the data path. Gives **~3–4×** at 10 GbE (§11.3).
+3. **Resumable upload** (`uploads`, offset + ETag): resilience for long transfers.
+4. **Ingress/limits**: lift `max-body` and proxy timeouts for long uploads; raise `MAX_UPLOAD`
+   (20 GiB) and ephemeral-storage quotas.
+
+**P1 — utilizing links >10 Gbit/s and analyzing TB models correctly:**
+
+5. **Scale Garage ingest** (for throughput, not capacity): write parallelism, a second node/sharding if
+   needed, since at 25 GbE and above Garage is the limit (§11.2). Additionally **RF>1** — now for
+   durability, not capacity (RF=1 is a single point of failure).
+6. **Streaming static analysis**: a mmap walk of the **full** safetensors header/index (not just the
+   64 MiB prefix) and **start static analysis on early parts** — do not wait for the whole upload;
+   safetensors tensor pointers are readable immediately (§11.5).
+7. **Sandbox for TB models**: adopt a "static-only + sampled dynamic" model; or raise `JOB_EPHEMERAL` /
+   stream the object from S3 read-only (with a separate security review, as it changes isolation). Full
+   dynamic only for models within the limits.
+
+**P2 — further:**
+
+8. **WAN/utilization**: adaptive part size, 16–64 parallelism, retry/checkpoint — for inter-site
+   10 Gbit/s where a single stream is BDP-bound (§11.4).
+9. **Data-path metrics**: end-to-end throughput (GB/s) and per-phase time (receive / Garage /
+   registration) — to see link utilization and Garage degradation.
