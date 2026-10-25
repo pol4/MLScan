@@ -56,7 +56,7 @@ spec:
         - {name: PGDATABASE, value: mlscan}
         - name: PGPASSWORD
           valueFrom: {secretKeyRef: {name: mlscan-pg, key: POSTGRES_PASSWORD}}
-        - {name: MAX_UPLOAD, value: "21474836480"}
+        - {name: MAX_UPLOAD, value: "1099511627776"}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: MLSCAN_LANG, value: "ru"}
         - {name: PYTHONUTF8, value: "1"}
@@ -80,7 +80,7 @@ spec:
           periodSeconds: 20
         resources:
           requests: {cpu: "100m", memory: "256Mi", ephemeral-storage: "1Gi"}
-          limits: {cpu: "2", memory: "3Gi", ephemeral-storage: "150Gi"}
+          limits: {cpu: "2", memory: "3Gi", ephemeral-storage: "1Ti"}
         volumeMounts:
         - {name: poc-lib, mountPath: /opt/mlscan, readOnly: true}
         - {name: svc-code, mountPath: /opt/svc, readOnly: true}

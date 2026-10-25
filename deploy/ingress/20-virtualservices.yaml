@@ -10,7 +10,8 @@ spec:
   hosts: ["analytics.mlscan.local"]
   gateways: ["mlscan-ingress/mlscan-gateway"]
   http:
-  - route:
+  - timeout: 24h
+    route:
     - destination: {host: mlscan-analytics.mlscan-analytics.svc.cluster.local, port: {number: 8080}}
 
 ---
@@ -24,7 +25,8 @@ spec:
   hosts: ["api.mlscan.local"]
   gateways: ["mlscan-ingress/mlscan-gateway"]
   http:
-  - route:
+  - timeout: 24h
+    route:
     - destination: {host: mlscan-testing.mlscan-testing.svc.cluster.local, port: {number: 8080}}
 ---
 # Короткий адрес: mlscan.local -> analytics (чтобы https://mlscan.local:30921 тоже открывал UI)
@@ -38,5 +40,6 @@ spec:
   hosts: ["mlscan.local"]
   gateways: ["mlscan-ingress/mlscan-gateway"]
   http:
-  - route:
+  - timeout: 24h
+    route:
     - destination: {host: mlscan-analytics.mlscan-analytics.svc.cluster.local, port: {number: 8080}}
