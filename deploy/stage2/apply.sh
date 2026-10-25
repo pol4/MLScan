@@ -46,6 +46,7 @@ kubectl -n "$NS" create configmap mlscan-v3-analysis \
   --from-file=static_stream.py="$HERE/../v3/analysis/static_stream.py" \
   --from-file=archive_walk.py="$HERE/../v3/analysis/archive_walk.py" \
   --from-file=slice_selector.py="$HERE/../v3/analysis/slice_selector.py" \
+  --from-file=gguf.py="$HERE/../v3/llm/gguf.py" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap mlscan-v3-security \
   --from-file=evidence.py="$HERE/../v3/security/evidence.py" \
