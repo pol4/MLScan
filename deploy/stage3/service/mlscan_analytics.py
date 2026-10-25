@@ -788,6 +788,18 @@ document.getElementById('f').addEventListener('submit',e=>{
   xhr.onerror=()=>{alert(L.upload_error);};
   xhr.send(file);
 });
+(function(){const b=document.getElementById('dcsave');if(!b)return;
+  const st=document.getElementById('dcstatus');
+  const show=t=>{st.textContent=t;};
+  const counts=d=>'auto='+Object.keys((d&&d.auto)||{}).length+' overrides='+Object.keys((d&&d.overrides)||{}).length;
+  const load=()=>fetch('/domain-class').then(r=>r.ok?r.json():null).then(d=>{if(d)show(counts(d));return d;}).catch(()=>null);
+  load();
+  b.addEventListener('click',()=>{const domain=document.getElementById('dcdomain').value.trim();
+    const cls=document.getElementById('dcclass').value.trim();
+    fetch('/domain-class',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({domain:domain,policy_class:cls})})
+      .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>load().then(()=>show(ok?('saved '+j.domain+'→'+j.policy_class):('ERR '+(j.error||'bad')))) )
+      .catch(()=>show('ERR'));});})();
 (function(){const b=document.getElementById('imgimport-btn');if(!b)return;
   const st=document.getElementById('imgstatus');
   b.addEventListener('click',()=>{const ref=document.getElementById('imgref').value.trim();
@@ -852,6 +864,13 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
             + "</div>"
             f"<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>{T('dash.upload_hint', lang)}</div>"
             "</form>"
+            + ("<div class='upload' id='dcs' style='margin-top:0'>"
+               + "<b>" + ("Домен → класс policy (переопределение)" if lang == "ru" else "Domain → policy class (override)") + "</b><br><br>"
+               + "<input id='dcdomain' type='text' placeholder='Домен вопроса' style='width:35%'> "
+               + "<input id='dcclass' type='text' placeholder='policy_class' style='width:25%'> "
+               + "<button id='dcsave' type='button'>" + ("Сохранить" if lang == "ru" else "Save") + "</button>"
+               + "<div id='dcstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div>"
+               + "</div>" if "admin" in (roles or []) else "")
             + ("<div class='upload' id='imgs' style='margin-top:0'>"
                + "<b>" + ("Импорт образа движка" if lang == "ru" else "Engine image import") + "</b><br><br>"
                + "<input id='imgref' type='text' placeholder='mlscan-registry/…@sha256:…' style='width:60%'> "
@@ -1158,6 +1177,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/prompt-sets":
             return self._prompt_sets_proxy(q)
+        if p == "/domain-class":
+            code, body = self._test_request("GET", "/domain-class")
+            return self._send(code, body, "application/json; charset=utf-8")
         if p == "/login":
             notice = T("login.session_expired", self._lang(q)) if q.get("expired") else ""
             return self._send(200, _login_page(lang=self._lang(q), notice=notice),
@@ -1309,6 +1331,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._proxy_upload(q)
         if u.path == "/prompt-sets":
             return self._prompt_sets_proxy(q)
+        if u.path == "/domain-class":
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", "/domain-class", data)
+            return self._send(code, body, "application/json; charset=utf-8")
         if u.path == "/images/import":
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"

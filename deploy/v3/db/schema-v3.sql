@@ -136,3 +136,9 @@ ALTER TABLE scans ADD COLUMN IF NOT EXISTS kind TEXT;
 CREATE TABLE IF NOT EXISTS detector_versions (
   name TEXT PRIMARY KEY, version TEXT, digest TEXT, updated TIMESTAMPTZ DEFAULT now()
 );
+
+-- L3/U9: ручное переопределение «домен → класс policy»
+CREATE TABLE IF NOT EXISTS domain_class_map (
+  domain TEXT PRIMARY KEY, policy_class TEXT, reviewed BOOLEAN DEFAULT true,
+  updated TIMESTAMPTZ DEFAULT now()
+);

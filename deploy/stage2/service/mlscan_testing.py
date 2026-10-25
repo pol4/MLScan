@@ -1095,6 +1095,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._detectors_list()
         if u.path == "/tenants/fairshare":
             return self._tenants_fairshare()
+        if u.path == "/domain-class":
+            return self._domain_class_list()
         if u.path == "/v3/metrics":
             return self._v3_metrics()
         if u.path == "/v3/slo":
@@ -1460,6 +1462,17 @@ class Handler(BaseHTTPRequestHandler):
         ver = parsed["version"]
         if DB_ENABLED:
             try:
+                _ov = {r[0]: r[1] for r in (db_query(
+                    "SELECT domain, policy_class FROM domain_class_map") or [])}
+                for c in parsed["cases"]:
+                    if c.get("domain") in _ov:
+                        c["policy_class"] = _ov[c["domain"]]
+                        c["class_reviewed"] = True
+                parsed["warnings"] = [w for w in parsed.get("warnings", [])
+                                      if "ручная проверка" not in w]
+            except Exception:  # noqa: BLE001
+                pass
+            try:
                 db_exec("UPDATE prompt_sets SET active=false WHERE active")
                 db_exec("INSERT INTO prompt_sets(version,name,cases,warnings,errors,active) VALUES ("
                         f"{_lit(ver)},{_lit(name)},"
@@ -1651,6 +1664,38 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"bundle_id": bid, "decision": "unknown", "reason": "нет вердикта"})
         return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
+
+    def _domain_class_set(self) -> None:
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        domain = (body.get("domain") or "").strip()
+        cls = (body.get("policy_class") or "").strip()
+        if not domain or not cls:
+            return self._json(400, {"error": "нужны domain и policy_class"})
+        if DB_ENABLED:
+            try:
+                db_exec("INSERT INTO domain_class_map(domain,policy_class,reviewed) VALUES ("
+                        f"{_lit(domain)},{_lit(cls)},true) "
+                        "ON CONFLICT (domain) DO UPDATE SET policy_class=EXCLUDED.policy_class, "
+                        "reviewed=true, updated=now()")
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(201, {"domain": domain, "policy_class": cls, "reviewed": True})
+
+    def _domain_class_list(self) -> None:
+        overrides = {}
+        if DB_ENABLED:
+            try:
+                overrides = {r[0]: r[1] for r in (db_query(
+                    "SELECT domain, policy_class FROM domain_class_map") or [])}
+            except Exception:  # noqa: BLE001
+                overrides = {}
+        auto = getattr(v3promptset, "DOMAIN_CLASS", {}) if v3promptset is not None else {}
+        return self._json(200, {"auto": auto, "overrides": overrides,
+                                "unmapped": sorted(set(auto) - set(overrides))})
 
     def _tenants_fairshare(self) -> None:
         return self._json(200, {"fair_share": fair_share_weights(), "tenants": _active_tenants(),
@@ -1922,6 +1967,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._bundle_verdict_set(u.path.split("/", 3)[2])
         if u.path == "/images/import":
             return self._images_import()
+        if u.path == "/domain-class":
+            return self._domain_class_set()
         if u.path == "/detectors":
             return self._detectors_register()
         if u.path == "/llm/precheck":
