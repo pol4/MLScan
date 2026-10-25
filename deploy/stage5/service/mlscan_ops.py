@@ -266,6 +266,18 @@ def storage_metrics() -> list[str]:
         out.append(f"mlscan_scans_inconclusive_ratio {(incon / max(1, total)):.4f}")
     except Exception:  # noqa: BLE001
         pass
+    # P2-9: метрики пути данных (приём / Garage / регистрация) из сервиса тестирования
+    try:
+        pipe = (get_json(TESTING_URL + "/stats").get("pipeline") or {})
+        out.append(f"mlscan_upload_uploads_total {int(pipe.get('uploads') or 0)}")
+        out.append(f"mlscan_upload_bytes_total {int(pipe.get('bytes') or 0)}")
+        out.append(f"mlscan_upload_receive_seconds {float(pipe.get('receive_s') or 0):.3f}")
+        out.append(f"mlscan_upload_garage_seconds {float(pipe.get('garage_s') or 0):.3f}")
+        out.append(f"mlscan_upload_register_seconds {float(pipe.get('register_s') or 0):.3f}")
+        out.append(f"mlscan_upload_mbps {float(pipe.get('avg_mbps') or 0):.3f}")
+        out.append(f"mlscan_upload_last_mbps {float(pipe.get('last_mbps') or 0):.3f}")
+    except Exception:  # noqa: BLE001
+        pass
     if GARAGE_ADMIN_URL:
         try:
             req = urllib.request.Request(GARAGE_ADMIN_URL.rstrip("/") + "/metrics",

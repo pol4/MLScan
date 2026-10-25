@@ -112,6 +112,33 @@ if DB_ENABLED:
     from pgclient import Pg as _Pg  # noqa: E402
 
 
+# P2-9: метрики пути данных (приём / запись в Garage / регистрация).
+_pipe = {"uploads": 0, "bytes": 0, "receive_s": 0.0, "garage_s": 0.0, "register_s": 0.0,
+         "last_mbps": 0.0, "last_multipart": False}
+_pipe_lock = threading.Lock()
+
+
+def pipe_add(receive_s: float, garage_s: float, register_s: float, nbytes: int,
+             multipart: bool = False) -> None:
+    total_time = receive_s + garage_s
+    with _pipe_lock:
+        _pipe["uploads"] += 1
+        _pipe["bytes"] += int(nbytes)
+        _pipe["receive_s"] = round(_pipe["receive_s"] + receive_s, 3)
+        _pipe["garage_s"] = round(_pipe["garage_s"] + garage_s, 3)
+        _pipe["register_s"] = round(_pipe["register_s"] + register_s, 3)
+        _pipe["last_mbps"] = round(nbytes / total_time / 1e6, 1) if total_time > 0 else 0.0
+        _pipe["last_multipart"] = multipart
+
+
+def pipe_snapshot() -> dict:
+    with _pipe_lock:
+        d = dict(_pipe)
+    total_time = d["receive_s"] + d["garage_s"]
+    d["avg_mbps"] = round(d["bytes"] / total_time / 1e6, 1) if total_time > 0 else 0.0
+    return d
+
+
 def _lit(v) -> str:
     if v is None:
         return "NULL"
@@ -327,7 +354,8 @@ def stats() -> dict:
             if sha:
                 hashes.add(sha)
         return {"scans": len(rows), "by_state": by_state, "by_verdict": by_verdict,
-                "total_bytes": total_bytes, "distinct_sha256": len(hashes)}
+                "total_bytes": total_bytes, "distinct_sha256": len(hashes),
+                "pipeline": pipe_snapshot()}
     scans = list_scans()
     by_state: dict[str, int] = {}
     by_verdict: dict[str, int] = {}
@@ -341,7 +369,8 @@ def stats() -> dict:
         if s.get("sha256"):
             hashes.add(s["sha256"])
     return {"scans": len(scans), "by_state": by_state, "by_verdict": by_verdict,
-            "total_bytes": total_bytes, "distinct_sha256": len(hashes)}
+            "total_bytes": total_bytes, "distinct_sha256": len(hashes),
+            "pipeline": pipe_snapshot()}
 
 
 # ----------------------------------------------------------------------------
@@ -826,6 +855,7 @@ class Handler(BaseHTTPRequestHandler):
         if n > MAX_UPLOAD:
             return self._json(413, {"error": f"artifact too large ({n} > {MAX_UPLOAD})"})
         scan_id = uuid.uuid4().hex
+        t0 = time.monotonic()
         os.makedirs(DATA_TMP, exist_ok=True)
         tmp = os.path.join(DATA_TMP, "up-" + scan_id + "-" + name)
         h = hashlib.sha256()
@@ -839,6 +869,7 @@ class Handler(BaseHTTPRequestHandler):
                 h.update(chunk)
                 got += len(chunk)
         sha = h.hexdigest()
+        t_recv = time.monotonic()
         token = uuid.uuid4().hex
         rec = {"scan_id": scan_id, "name": name, "format": fmt, "size": got,
                "sha256": sha, "artifact_token": token,
@@ -904,9 +935,13 @@ class Handler(BaseHTTPRequestHandler):
                             {"name": name, "size": got, "s3_key": rec.get("s3_key")})
             except Exception:  # noqa: BLE001
                 pass
+        pipe_add(t_recv - t0, max(time.monotonic() - t_recv, 0.0), 0, got,
+                 bool(rec.get("s3_multipart")))
         threading.Thread(target=process_scan, args=(scan_id, name, fmt, local), daemon=True).start()
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": got,
-                                "sha256": sha, "s3_key": rec.get("s3_key")})
+                                "sha256": sha, "s3_key": rec.get("s3_key"),
+                                "multipart": bool(rec.get("s3_multipart")),
+                                "parts": rec.get("s3_parts")})
 
     # --- Прямая presigned-multipart загрузка (P0-2) -------------------------
     def _tenant(self) -> str:
@@ -1019,6 +1054,7 @@ class Handler(BaseHTTPRequestHandler):
     def _scans_complete(self) -> None:
         if not (S3_ENABLED and _s3 is not None):
             return self._json(503, {"error": "S3 не сконфигурирован"})
+        t0 = time.monotonic()
         n = int(self.headers.get("Content-Length", "0") or "0")
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
@@ -1085,6 +1121,7 @@ class Handler(BaseHTTPRequestHandler):
             _pending_uploads.pop(uid, None)
         info["upload_id"] = uid
         _save_session(info, "completed")
+        pipe_add(0.0, round(time.monotonic() - t0, 3), 0.0, size, True)
         threading.Thread(target=_materialize_and_scan,
                          args=(scan_id, info["name"], info["fmt"], info["key"], size),
                          daemon=True).start()
