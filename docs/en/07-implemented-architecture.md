@@ -647,3 +647,26 @@ Measures protecting the system itself (full review and plan: [`14-security-revie
 - `../../deploy/i18n/README.md` — localisation module; `../../deploy/ingress/README.md` — Ingress/Egress.
 - `../../README.en.md`, `./` — English-language versions of the documentation.
 - `../../poc/README.md` — single-file PoC.
+
+---
+
+## 13. Large files: implemented pipeline (P0–P2)
+
+Besides the legacy intake (`POST /scans/upload`, streaming), a path for large (TB-class) artifacts is
+implemented for prod conditions (network ≥ 10 Gbit/s, sufficient capacity):
+
+* **Multipart S3** — objects ≥ threshold uploaded in parallel parts (`s3client.put_stream_multipart`),
+  dedup by `sha256`, retry with backoff, adaptive part size (≤ 10000 parts).
+* **Direct presigned upload** — `POST /uploads/initiate` issues presigned part URLs; the client
+  (browser/aws-cli/rclone/CI) uploads **straight to Garage** into `tenant/<subject>/`, bypassing the
+  service; then `POST /scans/complete` registers the object.
+* **Resumable** — `GET /uploads/<id>/parts` (ListParts + fresh URLs) and the `upload_sessions` table;
+  `DELETE /uploads/<id>` aborts.
+* **Streaming static** — for objects over the materialization cap: `read_prefix` + `static_stage(
+  total_size=…)`; dynamic is marked `skipped` ("static-only + sampled dynamic").
+* **Data-path metrics** — receive/Garage/register and MB/s in `/stats` and Prometheus (`mlscan_upload_*`).
+* **Limits** — `MAX_UPLOAD=1 TiB`, `ephemeral-storage=1Ti`, ingress route timeout `24h`.
+
+Details, time estimate and diagrams (deployment + state for 1 TB safetensors and a 1 TB all-format
+archive) — `docs/en/15` §11–14. Limitation: single-node Garage ingest ~32–43 MB/s (bottleneck);
+horizontal scaling/RF>1 is a growth point.

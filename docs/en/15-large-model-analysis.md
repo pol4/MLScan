@@ -474,3 +474,145 @@ The priority is removing single-stream bottlenecks and the second hop; the rest 
    10 Gbit/s where a single stream is BDP-bound (§11.4).
 9. **Data-path metrics**: end-to-end throughput (GB/s) and per-phase time (receive / Garage /
    registration) — to see link utilization and Garage degradation.
+
+---
+
+## 12. Roadmap implementation (§11.6, as-built)
+
+All P0–P2 stages are implemented, deployed, and covered by tests (unit, e2e, browser UI). Stage →
+changes → tests:
+
+| Stage | Done | Key files | Tests |
+|-------|------|-----------|-------|
+| P0-1 | Parallel multipart S3 upload (Create/UploadPart/Complete), dedup | `deploy/v2/data/s3/s3client.py`, `deploy/stage2/service/mlscan_testing.py`, `deploy/v2/ingest/service/ingest.py` | `tests/s3/test_multipart.py`, `tests/e2e/run_multipart_e2e.sh` |
+| P0-2 | Direct presigned multipart into `tenant/<subject>/`; `/uploads/initiate` + `/scans/complete` | `s3client.presign*`, `mlscan_testing.py` | `tests/s3` (presign), `tests/e2e/run_direct_upload_e2e.sh` |
+| P0-3 | Resumable upload: `ListParts`, `upload_sessions` table, `/uploads/<id>/parts`, abort | `s3client.list_parts`, `mlscan_testing.py`, `deploy/v2/db/10-schema.yaml` | `tests/s3`, `tests/e2e/run_resume_e2e.sh` |
+| P0-4 | Size caps lifted: `MAX_UPLOAD=1 TiB`, `ephemeral-storage=1Ti`, ingress route timeout `24h` | `deploy/stage2/30-service.yaml`, `deploy/ingress/20-virtualservices.yaml` | `tests/e2e/ingress_limits_check.sh` |
+| P1-5 | Env-driven part size/parallelism; ingest benchmark; Garage single-node bottleneck recorded | `deploy/stage2/30-service.yaml`, `deploy/v2/data/10-garage-config.yaml` | `tests/perf/run_garage_bench.sh` |
+| P1-6 | Streaming prefix static (`static_stage(total_size=…)`, `read_prefix`); true-size bounds | `poc/mlscan_poc.py`, `poc/formats.py`, `mlscan_testing.py` | `tests/formats/test_static_prefix.py`, `tests/e2e/prefix_static_e2e.sh` |
+| P1-7 | "static-only + sampled dynamic" for models > `SANDBOX_DYNAMIC_MAX_BYTES`; dynamic marked `skipped` | `mlscan_testing.py` | `tests/e2e/prefix_static_e2e.sh` |
+| P2-8 | Part-upload retries with backoff; adaptive part size (≤ 10000 parts) | `s3client.py` | `tests/s3/test_multipart.py` |
+| P2-9 | Data-path metrics (receive/Garage/register, MB/s) in `/stats` and Prometheus `mlscan_upload_*` | `mlscan_testing.py`, `deploy/stage5/service/mlscan_ops.py` | `tests/e2e/pipeline_metrics_e2e.sh` |
+
+New testing-service APIs: `POST /uploads/initiate`, `GET /uploads/<id>/parts`, `DELETE /uploads/<id>`,
+`POST /scans/complete`.
+
+---
+
+## 13. Deployment diagram
+
+```mermaid
+graph TB
+  subgraph Client["Client / CI"]
+    BR["UI browser"]
+    CL["S3 client (aws-cli/rclone/tool)"]
+  end
+  subgraph Ingress["mlscan-ingress (Istio Gateway)"]
+    GW["Gateway :30217 / TLS :30921<br/>api./analytics./mlscan.local"]
+  end
+  subgraph Data["mlscan-data"]
+    GAR["Garage S3 :3900 (RF=1)<br/>bucket mlscan-artifacts<br/>tenant/&lt;subject&gt;/…"]
+    PG[("PostgreSQL :5432<br/>scans/findings/evidence<br/>upload_sessions/audit_log")]
+    GARADM["Garage admin :3903"]
+  end
+  subgraph Testing["mlscan-testing"]
+    TS["Testing service :8080<br/>initiate/complete/*parts"]
+    AS["Artifact server :8090<br/>/a/&lt;scan&gt;/&lt;token&gt;/&lt;name&gt;"]
+  end
+  subgraph Sandbox["mlscan-sandbox (Kata)"]
+    JOB["Job mlscan-scan-* / harness L2/L3"]
+  end
+  subgraph Analytics["mlscan-analytics"]
+    AN["Analytics :8080 scoring/policy/evidence"]
+  end
+  subgraph Ops["mlscan-ops"]
+    OP["/metrics /quality /sla"]
+  end
+  BR --> GW --> AN
+  BR --> GW --> TS
+  CL -- "presigned multipart (direct)" --> GAR
+  CL -- "legacy POST /scans/upload" --> GW --> TS
+  TS -- "multipart PUT" --> GAR
+  TS -- "register/audit" --> PG
+  TS -- "creates Job" --> JOB
+  JOB -- "download by token" --> AS
+  AS -- "get_stream" --> GAR
+  AN --> TS
+  AN --> PG
+  OP --> TS
+  OP --> AN
+  OP --> GARADM
+```
+
+---
+
+## 14. State diagrams
+
+### 14.1 Uploading and analyzing a 1 TB safetensors model
+
+```mermaid
+stateDiagram-v2
+  [*] --> Initiate
+  Initiate : POST /uploads/initiate (sha256, size)
+  Initiate --> Dedup : object already in S3
+  Initiate --> UploadParts : presigned URLs (count ≤ 10000)
+  UploadParts : client PUTs parts directly to Garage (parallel)
+  UploadParts --> Resume : interruption
+  Resume : GET /uploads/<id>/parts → upload missing
+  Resume --> UploadParts
+  UploadParts --> Assemble : POST /scans/complete (ETag+SHA-256)
+  Dedup --> Assemble
+  Assemble : CompleteMultipartUpload + HEAD(size) + register
+  Assemble --> DecidePath
+  DecidePath --> Materialize : small object
+  DecidePath --> PrefixStatic : TB object
+  Materialize --> Static
+  PrefixStatic : read_prefix(64 MiB) → static_stage(total_size)
+  PrefixStatic --> Static
+  Static : format adapters (safetensors index, offsets, BD-01)
+  Static --> Dynamic : within sandbox limits
+  Static --> SkipDynamic : TB object (P1-7)
+  Dynamic : Kata Job, harness, audit hook, result nonce
+  SkipDynamic : dynamic=skipped (honest coverage)
+  Dynamic --> Verdict
+  SkipDynamic --> Verdict
+  Verdict : scoring + Policy Engine (+ coverage → Inconclusive)
+  Verdict --> Sync : analytics /sync
+  Sync --> Journal : evidence (file + PG + HMAC)
+  Journal --> [*]
+```
+
+### 14.2 Comprehensive analysis of a 1 TB archive with all formats
+
+```mermaid
+stateDiagram-v2
+  [*] --> Receive
+  Receive : upload (legacy or direct presigned, tenant/<subject>/)
+  Receive --> Store : S3 object (content-addressed)
+  Store --> DetectFormat
+  DetectFormat : detector: zip/tar/… (incl. nested)
+  DetectFormat --> Enumerate
+  Enumerate : limits (32 MiB/member, 128 MiB/archive, member count)
+  Enumerate --> Members
+  state Members {
+    [*] --> Member
+    Member --> MemberFormat : detector(detect)
+    MemberFormat --> MemberStatic : pickle/safetensors/onnx/hdf5/gguf/python/…
+    MemberStatic --> DynamicDecision
+    DynamicDecision --> MemberDynamic : member within sandbox limits
+    DynamicDecision --> Skip : TB members / non-executable data
+    MemberDynamic --> Aggregate
+    Skip --> Aggregate
+    Aggregate --> Member : next
+    Member --> [*] : all members done
+  }
+  Members --> Nested
+  Nested : recursive nested archives (depth/size limits)
+  Nested --> AggregateArchive
+  AggregateArchive : normalize + cap_findings (≤500, truncation flag)
+  AggregateArchive --> ArchiveVerdict
+  ArchiveVerdict : max_severity/risk_score + policy; coverage → Inconclusive on module failure
+  ArchiveVerdict --> Journal
+  Journal : evidence (HMAC), JSON/MD/SARIF reports, metrics
+  Journal --> [*]
+```

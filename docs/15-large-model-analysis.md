@@ -475,3 +475,183 @@ HTTP-путь утилизирует канал на четверть, прям�
    10 Гбит/с, где один поток ограничен BDP (§11.4).
 9. **Метрики пути данных**: сквозная пропускная (ГБ/с) и время по фазам (приём / Garage / регистрация)
    — чтобы видеть утилизацию канала и деградацию Garage.
+
+---
+
+## 12. Реализация плана §11.6 (as-built)
+
+Все этапы P0–P2 реализованы, развёрнуты в кластере и покрыты тестами (модульные, e2e, UI в
+браузере). Соответствие «этап → изменения → тесты»:
+
+| Этап | Что сделано | Ключевые файлы | Тесты |
+|------|-------------|----------------|-------|
+| P0-1 | Multipart-загрузка в S3 параллельными частями (Create/UploadPart/Complete), дедуп | `deploy/v2/data/s3/s3client.py`, `deploy/stage2/service/mlscan_testing.py`, `deploy/v2/ingest/service/ingest.py` | `tests/s3/test_multipart.py`, `tests/e2e/run_multipart_e2e.sh` |
+| P0-2 | Прямая presigned-multipart загрузка клиентом в партицию `tenant/<субъект>/`, `/uploads/initiate` + `/scans/complete` | `s3client.presign*`, `mlscan_testing.py` (`_uploads_initiate`, `_scans_complete`) | `tests/s3` (presign), `tests/e2e/run_direct_upload_e2e.sh` |
+| P0-3 | Возобновляемая загрузка: `ListParts`, сессия в БД `upload_sessions`, `/uploads/<id>/parts`, abort | `s3client.list_parts`, `mlscan_testing.py` (`_uploads_*`), `deploy/v2/db/10-schema.yaml` | `tests/s3` (list_parts), `tests/e2e/run_resume_e2e.sh` |
+| P0-4 | Снят потолок размера: `MAX_UPLOAD=1 ТиБ`, `ephemeral-storage=1Ti`, таймаут маршрута ingress `24h` | `deploy/stage2/30-service.yaml`, `deploy/ingress/20-virtualservices.yaml` | `tests/e2e/ingress_limits_check.sh` |
+| P1-5 | Параллелизм/размер частей env-driven; бенчмарк ingest; зафиксировано узкое место Garage (single-node ~32–43 МБ/с) | `deploy/stage2/30-service.yaml`, `deploy/v2/data/10-garage-config.yaml` | `tests/perf/run_garage_bench.sh` (+ `garage_ingest_result.json`) |
+| P1-6 | Потоковая статика по префиксу (`static_stage(total_size=…)`, `read_prefix`); границы safetensors считаются от реального размера | `poc/mlscan_poc.py`, `poc/formats.py`, `mlscan_testing.py` | `tests/formats/test_static_prefix.py`, `tests/e2e/prefix_static_e2e.sh` |
+| P1-7 | Политика «static-only + выборочная динамика» для моделей > `SANDBOX_DYNAMIC_MAX_BYTES`; динамика помечается `skipped` | `mlscan_testing.py` (`_materialize_and_scan`) | `tests/e2e/prefix_static_e2e.sh` |
+| P2-8 | Retry частей с backoff; адаптивный размер части (≤ 10000 частей) | `s3client.py` (`_multipart_upload`, `adaptive_part_size`) | `tests/s3/test_multipart.py` |
+| P2-9 | Метрики пути данных (приём / Garage / регистрация, МБ/с) в `/stats` и Prometheus `mlscan_upload_*` в ops | `mlscan_testing.py` (`pipe_*`), `deploy/stage5/service/mlscan_ops.py` | `tests/e2e/pipeline_metrics_e2e.sh` |
+
+Новые API сервиса тестирования:
+`POST /uploads/initiate` → presigned-части; `GET /uploads/<id>/parts` → загруженные части + свежие URL
+(возобновление); `DELETE /uploads/<id>` → отмена; `POST /scans/complete` → регистрация объекта.
+
+Фактические замеры (стенд): прямой upload 1 ГиБ-класса — десятки МБ/с, ограничение — ingest Garage
+(single-node). Итог бенчмарка: `tests/perf/garage_ingest_result.json`.
+
+---
+
+## 13. Диаграмма развёртывания (deployment)
+
+Компоненты и потоки данных для загрузки/анализа крупных артефактов (после §11.6):
+
+```mermaid
+graph TB
+  subgraph Client["Клиент / CI"]
+    BR["Браузер UI"]
+    CL["S3-клиент (aws-cli/rclone/наша утилита)"]
+  end
+
+  subgraph Ingress["mlscan-ingress (Istio Gateway)"]
+    GW["Gateway :30217 / TLS :30921<br/>api. / analytics. / mlscan.local"]
+  end
+
+  subgraph Data["mlscan-data"]
+    GAR["Garage S3 :3900 (RF=1)<br/>bucket mlscan-artifacts<br/>tenant/&lt;subject&gt;/…"]
+    PG[("PostgreSQL :5432<br/>scans/findings/evidence<br/>upload_sessions/audit_log")]
+    GARADM["Garage admin :3903"]
+  end
+
+  subgraph Testing["mlscan-testing"]
+    TS["Сервис тестирования :8080<br/>initiate/complete/*parts<br/>multipart → S3"]
+    AS["Artifact-сервер :8090<br/>/a/&lt;scan&gt;/&lt;token&gt;/&lt;name&gt;"]
+  end
+
+  subgraph Sandbox["mlscan-sandbox (Kata)"]
+    JOB["Job mlscan-scan-*<br/>harness L2/L3"]
+  end
+
+  subgraph Analytics["mlscan-analytics"]
+    AN["Аналитика :8080<br/>scoring/policy/evidence"]
+  end
+
+  subgraph Ops["mlscan-ops"]
+    OP["/metrics /quality /sla"]
+  end
+
+  BR --> GW --> AN
+  BR --> GW --> TS
+  CL -- "presigned multipart (напрямую)" --> GAR
+  CL -- "legacy POST /scans/upload" --> GW --> TS
+  TS -- "multipart PUT" --> GAR
+  TS -- "регистрация/аудит" --> PG
+  TS -- "создаёт Job" --> JOB
+  JOB -- "скачать артефакт по токену" --> AS
+  AS -- "get_stream" --> GAR
+  AN --> TS
+  AN --> PG
+  OP --> TS
+  OP --> AN
+  OP --> GARADM
+```
+
+Партиционирование и изоляция: каждый пользователь/CI грузит в свой префикс `tenant/<subject>/`;
+песочница видит только Artifact-сервер (по одноразовому токену), но не S3/PVC; Job закреплён по
+digest и допускается Kyverno-политикой.
+
+---
+
+## 14. Диаграммы состояния (state)
+
+### 14.1 Загрузка и анализ модели 1 ТБ (safetensors)
+
+```mermaid
+stateDiagram-v2
+  [*] --> Инициация
+  Инициация : POST /uploads/initiate (sha256, size)
+  Инициация --> Дедуп : объект уже в S3
+  Инициация --> ЗагрузкаЧастей : выданы presigned URL (count ≤ 10000)
+
+  ЗагрузкаЧастей : клиент PUT частей напрямую в Garage (параллельно)
+  ЗагрузкаЧастей --> Возобновление : обрыв
+  Возобновление : GET /uploads/<id>/parts → догрузка недостающих
+  Возобновление --> ЗагрузкаЧастей
+
+  ЗагрузкаЧастей --> Сборка : POST /scans/complete (ETag+SHA-256)
+  Дедуп --> Сборка
+  Сборка : CompleteMultipartUpload + HEAD(size) + регистрация
+  Сборка --> Регистрация
+  Регистрация : запись scans/artifacts + audit_log
+
+  Регистрация --> ВыборПути : size ≤ min(DIRECT_MATERIALIZE_MAX, SANDBOX_DYNAMIC_MAX)
+  ВыборПути --> Материализация : малый объект
+  ВыборПути --> ПрефиксСтатика : ТБ-объект
+  Материализация : скачать объект во временный файл
+  Материализация --> Статика
+  ПрефиксСтатика : read_prefix(64 МиБ) → static_stage(total_size)
+  ПрефиксСтатика --> Статика
+
+  Статика : адаптеры форматов (safetensors index, offset-проверки, BD-01)
+  Статика --> Динамика : объект в лимитах песочницы
+  Статика --> ПропускДинамики : ТБ-объект (P1-7)
+  Динамика : Job Kata, harness, audit-hook, нонс результата
+  ПропускДинамики : dynamic=skipped (честное покрытие)
+
+  Динамика --> Вердикт
+  ПропускДинамики --> Вердикт
+  Вердикт : scoring + Policy Engine (+ coverage → Inconclusive)
+  Вердикт --> Синхронизация : analytics /sync
+  Синхронизация --> Журнал : evidence (файл + PG + HMAC)
+  Журнал --> [*]
+```
+
+Примечание: ниже лимита `SANDBOX_DYNAMIC_MAX_BYTES` (≈6 ГиБ) выполняется полная динамика; выше —
+статический анализ по префиксу и явная пометка `dynamic=skipped` (модель «static-only + выборочная
+динамика», P1-7). Метрики пути данных (приём/Garage/регистрация, МБ/с) видны в `/stats` и
+Prometheus (`mlscan_upload_*`).
+
+### 14.2 Комплексный анализ огромного архива (1 ТБ) со всеми форматами
+
+```mermaid
+stateDiagram-v2
+  [*] --> ПриёмАрхива
+  ПриёмАрхива : загрузка (legacy POST или прямой presigned, tenant/<subject>/)
+  ПриёмАрхива --> Хранение : объект в S3 (content-addressed)
+  Хранение --> ОпределениеФормата
+  ОпределениеФормата : detector: zip/tar/… (в т.ч. вложенные)
+
+  ОпределениеФормата --> ПеречислениеЧленов
+  ПеречислениеЧленов : лимиты (32 МиБ/член, 128 МиБ/архив, число членов)
+  ПеречислениеЧленов --> ПробегПоЧленам
+
+  state ПробегПоЧленам {
+    [*] --> Член
+    Член --> ФорматЧлена : detector(detect)
+    ФорматЧлена --> СтатикаЧлена : pickle/safetensors/onnx/hdf5/gguf/python/…
+    СтатикаЧлена --> РешениеОДинамике
+    РешениеОДинамике --> ДинамикаЧлена : член ≤ лимитов песочницы
+    РешениеОДинамике --> Пропуск : ТБ-члены / неисполняемые данные
+    ДинамикаЧлена --> АгрегацияЧлена
+    Пропуск --> АгрегацияЧлена
+    АгрегацияЧлена : находки члена (EXEC/INJ/FMT/…)
+    АгрегацияЧлена --> Член : следующий
+    Член --> [*] : все члены обработаны
+  }
+
+  ПробегПоЧленам --> ВложенныеАрхивы
+  ВложенныеАрхивы : рекурсивный разбор вложений (лимиты глубины/размера)
+  ВложенныеАрхивы --> АгрегацияАрхива
+  АгрегацияАрхива : normalize + cap_findings (≤500, пометка усечения)
+  АгрегацияАрхива --> ВердиктАрхива
+  ВердиктАрхива : max_severity/risk_score + policy; coverage → Inconclusive при сбое модулей
+  ВердиктАрхива --> Журнал
+  Журнал : evidence (HMAC), отчёты JSON/MD/SARIF, метрики
+  Журнал --> [*]
+```
+
+Особенности: архив 1 ТБ обрабатывается потоково — по членам, с жёсткими лимитами чтения и
+отказом от полной динамики для сверхбольших членов (честное покрытие и `Inconclusive` вместо
+ложного «Safe»). Итоговый вердикт учитывает наиболее опасный член (max severity) и правила политики.
