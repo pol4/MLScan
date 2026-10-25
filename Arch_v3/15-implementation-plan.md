@@ -320,8 +320,8 @@ P2/P6/P7/P8 частично параллельны после P1; P9 — пос
 | P9 (миграция v2→v3) | **завершено (на стенде)** | `deploy/v3/migration/migrate.py`: `dst_key` (v3-пул), `plan_object_migration` (v2-ключи `sha256/…`/`tenant/…` → пул), **реконсиляция** множеств sha (missing/extra), `readiness()` чек-лист cutover. e2e `migration_e2e.sh`: v2-объект → **server-side copy** в пул + `refs`, чтение совпало, реконсиляция ok, **идемпотентность** (повтор не копирует), readiness ok. Тесты: `tests/v3/test_migration.py`. Осталось (целевой стенд): перенос/анкор evidence на реальных данных, поэтапное переключение тенантов, вывод v2 из эксплуатации. |
 | P10 (документация/финализация) | **завершено** | `Arch_v3/19-implementation-as-built.md` (статус фаз P0–P10/L0–L4, артефакты, тесты, границы); обновлены `Arch_v3/README`, корневые README; сводный прогон тестов (unit v3 148, UI, e2e) — зелёный. |
 | H1 (HF-загрузка) | **завершено (на стенде)** | `deploy/v3/ingest/hf.py` (выбор файлов/квантизации, фильтры поиска, план докачки); сервис: `POST /hf/search` (mock или HF API), `POST /hf/downloads` (**серверная фоновая задача** + таблица `hf_downloads`), `GET /hf/downloads[/<id>]`, `POST .../cancel`; **встроенный mock-HF** (`HF_MOCK=1`, Range/ETag, `HF_FLAKY` для проверки докачки); **докачка по Range/ETag**, не зависит от браузера; UI-панель HF (поиск+загрузка+статус). Тесты: `tests/v3/test_hf.py`, e2e `hf_download_e2e.sh`, `tests/ui/hf_ui_test.js`. Осталось (целевой стенд): реальный HF-токен/egress-allowlist и rate-limit. |
-| H2 (образ llama.cpp) | **не начато** | Артефакты сборки добавлены: `deploy/v3/images/llama-cpp/` (Dockerfile/entrypoint/build.sh/README); осталось: собрать и опубликовать по digest. |
-| H3 (E2E HF→llama.cpp) | **не начато** | После H1/H2: полный цикл с 10 случайными вопросами и eBPF. |
+| H2 (образ llama.cpp) | **заблокировано средой** | Артефакты сборки готовы (`deploy/v3/images/llama-cpp/`); сборка/публикация невозможны: **нет egress в кластере** (ghcr.io/docker.io/huggingface.co — TCP 443 timeout) и **не запущен docker-демон** на рабочей станции. Выполнить на целевом стенде с интернетом/локальным базовым образом: `bash deploy/v3/images/llama-cpp/build.sh`. |
+| H3 (E2E HF→llama.cpp) | **заблокировано (зависит от H2)** | После H2: полный цикл HF→llama.cpp→Kata(eBPF/Tetragon)→10 случайных вопросов `questions_v9`→вердикт; требует GPU/CPU-пул и кастомное ядро (целевой стенд). |
 
 Артефакты P0 (шаг 1): `deploy/v2/data/s3/s3client.py` (range), `deploy/v3/data/pool.py`,
 `deploy/v3/data/objectrefs.py`, `deploy/v3/db/schema-v3.sql`; тесты `tests/s3/test_range.py`,
@@ -349,3 +349,13 @@ P2/P6/P7/P8 частично параллельны после P1; P9 — пос
 
 Детали UI/связывания — `18-ui-binding-and-test-env.md`; запуск/eBPF — `16-llm-inference-testing.md`;
 образы/провенанс — `17-engine-images-and-provenance.md`.
+
+### 8.7 Блокеры среды (зафиксировано)
+
+- **H2**: сборка образа `llama-cpp` невозможна на текущем стенде — **нет egress** в кластере
+  (ghcr.io / registry-1.docker.io / huggingface.co: TCP 443 timeout) и **не запущен docker-демон** на АРМ.
+  Артефакты (`deploy/v3/images/llama-cpp/`) готовы; выполнить сборку на целевом стенде с интернетом или
+  локальным базовым образом.
+- **H3**: зависит от H2 и требует CPU/GPU-пула и кастомного ядра Kata с eBPF/Tetragon (целевой стенд).
+- **H1**: выполнено с **встроенным mock-HF** (real HF недоступен из кластера); на целевом стенде —
+  реальный HF-токен и egress-allowlist к huggingface.co/CDN.
