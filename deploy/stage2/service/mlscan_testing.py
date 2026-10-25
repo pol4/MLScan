@@ -83,6 +83,7 @@ MAX_CONCURRENT_UPLOADS = int(os.environ.get("MAX_CONCURRENT_UPLOADS", "8"))
 # L1a: разрешённые реестры образов (через запятую; пусто = любой, но всё равно только по digest)
 REGISTRY_ALLOWLIST = [r.strip() for r in os.environ.get("REGISTRY_ALLOWLIST", "").split(",") if r.strip()]
 # L1: ёмкость LLM-пула для ресурсного планировщика (0/пусто = без ограничений в этом измерении)
+ATTEST_KEY = os.environ.get("ATTEST_KEY", "mlscan-dev-attest")
 LLM_POOL = {"gpu": int(os.environ.get("LLM_POOL_GPU", "8") or 0),
             "ram_gb": int(os.environ.get("LLM_POOL_RAM_GB", "1024") or 0),
             "disk_gb": int(os.environ.get("LLM_POOL_DISK_GB", "8192") or 0)}
@@ -379,9 +380,11 @@ try:  # v3 (P2): персистентная очередь + orchestrator + те
     import tasks_sql as v3tasks  # noqa: E402
     import orchestrator as v3orch  # noqa: E402
     import tenants as v3tenants  # noqa: E402
+    import attest as v3attest  # noqa: E402
     _v3q = v3tenants.TenantRegistry()
 except Exception:  # noqa: BLE001
     v3pq = v3tasks = v3orch = v3tenants = None  # type: ignore
+    v3attest = None  # type: ignore
     _v3q = None  # type: ignore
 
 
@@ -1022,6 +1025,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._images_verify((q.get("ref", [""])[0]))
         if u.path.startswith("/images/"):
             return self._images_get(u.path.split("/", 2)[2])
+        if u.path == "/gate":
+            return self._gate(q)
+        if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
+            return self._bundle_verdict_get(u.path.split("/", 3)[2])
         if u.path.startswith("/bundles/"):
             return self._bundles_get(u.path.split("/", 2)[2])
         if u.path.startswith("/uploads/") and u.path.endswith("/parts"):
@@ -1484,6 +1491,81 @@ class Handler(BaseHTTPRequestHandler):
                                 "findings": [{"check_id": r[0], "severity": r[1], "phase": r[2],
                                               "probe_id": r[3], "evidence": r[4]} for r in (rows or [])]})
 
+    def _bundle_verdict_set(self, bundle_id: str) -> None:
+        """L4: вердикт на уровне bundle + подписанная аттестация (in-toto-подобная)."""
+        if v3attest is None:
+            return self._json(503, {"error": "v3 attest module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        verdict = body.get("verdict") or "Inconclusive"
+        safety_fail = int(body.get("safety_fail") or 0)
+        pass_rate = float(body.get("pass_rate", 1.0))
+        action, reason = v3attest.gate_decision(verdict, safety_fail=safety_fail, pass_rate=pass_rate)
+        image = body.get("engine_image") or ""
+        model = body.get("model_sha256") or ""
+        if (not image or not model) and DB_ENABLED:
+            rows = db_query("SELECT engine_image,model_sha256 FROM bundles WHERE bundle_id=" + _lit(bundle_id))
+            if rows:
+                image = image or rows[0][0]; model = model or rows[0][1]
+        st = v3attest.make_statement(bundle_id=bundle_id, engine_image=image, model_sha256=model,
+                                     verdict=verdict, action=action, coverage=body.get("coverage") or {},
+                                     metrics=body.get("metrics") or {},
+                                     versions=body.get("versions") or {})
+        digest = v3attest.statement_digest(st)
+        sig = v3attest.sign(st, ATTEST_KEY)
+        if DB_ENABLED:
+            try:
+                db_exec("INSERT INTO bundle_verdicts(bundle_id,verdict,action,coverage,metrics,statement,"
+                        "attestation_digest,signature) VALUES ("
+                        f"{_lit(bundle_id)},{_lit(verdict)},{_lit(action)},"
+                        f"{_lit(json.dumps(body.get('coverage') or {}, ensure_ascii=False))},"
+                        f"{_lit(json.dumps(body.get('metrics') or {}, ensure_ascii=False))},"
+                        f"{_lit(json.dumps(st, ensure_ascii=False))},{_lit(digest)},{_lit(sig)}) "
+                        "ON CONFLICT (bundle_id) DO UPDATE SET verdict=EXCLUDED.verdict, "
+                        "action=EXCLUDED.action, coverage=EXCLUDED.coverage, metrics=EXCLUDED.metrics, "
+                        "statement=EXCLUDED.statement, attestation_digest=EXCLUDED.attestation_digest, "
+                        "signature=EXCLUDED.signature")
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(200, {"bundle_id": bundle_id, "verdict": verdict, "action": action,
+                                "reason": reason, "attestation_digest": digest, "signature": sig,
+                                "statement": st})
+
+    def _bundle_verdict_get(self, bundle_id: str) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT verdict,action,attestation_digest,signature,statement FROM bundle_verdicts "
+                        "WHERE bundle_id=" + _lit(bundle_id))
+        if not rows:
+            return self._json(404, {"error": "verdict not found"})
+        r = rows[0]
+        return self._json(200, {"bundle_id": bundle_id, "verdict": r[0], "action": r[1],
+                                "attestation_digest": r[2], "signature": r[3],
+                                "statement": json.loads(r[4] or "{}")})
+
+    def _gate(self, q: dict) -> None:
+        """L4: CI-gate по паре (image digest, model sha) — решение + аттестация."""
+        image = q.get("image", [""])[0]
+        model = q.get("model", [""])[0]
+        if not image or not model:
+            return self._json(400, {"error": "нужны image и model"})
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT bundle_id FROM bundles WHERE engine_image=" + _lit(image)
+                        + " AND model_sha256=" + _lit(model) + " LIMIT 1")
+        if not rows:
+            return self._json(404, {"error": "bundle not found", "decision": "unknown"})
+        bid = rows[0][0]
+        vr = db_query("SELECT verdict,action,attestation_digest,signature FROM bundle_verdicts "
+                      "WHERE bundle_id=" + _lit(bid))
+        if not vr:
+            return self._json(200, {"bundle_id": bid, "decision": "unknown", "reason": "нет вердикта"})
+        return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
+                                "attestation_digest": vr[0][2], "signature": vr[0][3]})
+
     def _llm_precheck(self) -> None:
         """L1: ресурсный планировщик — хватает ли ресурсов LLM-пула для запуска инференса."""
         if v3llmenv is None:
@@ -1680,6 +1762,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._objects_import()
         if u.path == "/bundles":
             return self._bundles_create()
+        if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
+            return self._bundle_verdict_set(u.path.split("/", 3)[2])
         if u.path == "/images/import":
             return self._images_import()
         if u.path == "/llm/precheck":

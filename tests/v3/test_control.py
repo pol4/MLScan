@@ -17,6 +17,7 @@ import tenants  # noqa: E402
 import quota  # noqa: E402
 import tasks_sql  # noqa: E402
 import orchestrator  # noqa: E402
+import attest  # noqa: E402
 
 
 class QueueTest(unittest.TestCase):
@@ -174,6 +175,49 @@ class PolicyLoadTest(unittest.TestCase):
     def test_load_invalid_schema(self):
         with self.assertRaises(ValueError):
             policy.load({"rules": [{"id": "x", "when": {}, "action": "nope"}]})
+
+
+
+
+class AttestTest(unittest.TestCase):
+    DIG = "mlscan-registry/t/vllm@sha256:" + "a" * 64
+    SHA = "b" * 64
+
+    def st(self, **kw):
+        base = dict(bundle_id="b-1", engine_image=self.DIG, model_sha256=self.SHA,
+                    verdict="Safe", action="allow")
+        base.update(kw); return attest.make_statement(**base)
+
+    def test_statement_and_digest(self):
+        st = self.st()
+        self.assertEqual(st["type"], "mlscan.bundle-verdict/v1")
+        self.assertTrue(attest.statement_digest(st).startswith("sha256:"))
+        self.assertEqual(attest.statement_digest(st), attest.statement_digest(self.st()))
+
+    def test_sign_verify(self):
+        st = self.st()
+        sig = attest.sign(st, "k")
+        self.assertTrue(attest.verify(st, sig, "k"))
+        self.assertFalse(attest.verify(st, sig, "other"))
+        tampered = self.st(verdict="Malicious")
+        self.assertFalse(attest.verify(tampered, sig, "k"))
+
+    def test_gate_block_on_verdict(self):
+        self.assertEqual(attest.gate_decision("Malicious")[0], "block")
+        self.assertEqual(attest.gate_decision("Dangerous")[0], "block")
+
+    def test_gate_block_on_safety_fail(self):
+        self.assertEqual(attest.gate_decision("Safe", safety_fail=1)[0], "block")
+
+    def test_gate_quarantine_review_and_inconclusive(self):
+        self.assertEqual(attest.gate_decision("Needs review")[0], "quarantine")
+        self.assertEqual(attest.gate_decision("Inconclusive")[0], "quarantine")
+
+    def test_gate_allow(self):
+        self.assertEqual(attest.gate_decision("Safe", pass_rate=1.0)[0], "allow")
+
+    def test_gate_pass_rate_threshold(self):
+        self.assertEqual(attest.gate_decision("Safe", pass_rate=0.5, block_rate=0.8)[0], "quarantine")
 
 
 if __name__ == "__main__":

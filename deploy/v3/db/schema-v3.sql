@@ -115,3 +115,16 @@ CREATE TABLE IF NOT EXISTS llm_scores (
   details TEXT,
   created TIMESTAMPTZ DEFAULT now()
 );
+
+-- L4: вердикты на уровне bundle + подписанные аттестации
+CREATE TABLE IF NOT EXISTS bundle_verdicts (
+  bundle_id TEXT PRIMARY KEY,
+  verdict TEXT,
+  action TEXT,
+  coverage TEXT,
+  metrics TEXT,
+  statement TEXT,
+  attestation_digest TEXT,
+  signature TEXT,
+  created TIMESTAMPTZ DEFAULT now()
+);
