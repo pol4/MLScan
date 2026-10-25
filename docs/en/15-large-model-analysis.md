@@ -554,10 +554,10 @@ External S3 access (workstation/CI): Garage is exposed through the Istio gateway
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Initiate
-  Initiate : POST /uploads/initiate (sha256, size)
-  Initiate --> Dedup : object already in S3
-  Initiate --> UploadParts : presigned URLs (count ≤ 10000)
+  [*] --> Init
+  Init : POST /uploads/initiate (sha256, size)
+  Init --> Dedup : object already in S3
+  Init --> UploadParts : presigned URLs issued (count <= 10000)
   UploadParts : client PUTs parts directly to Garage (parallel)
   UploadParts --> Resume : interruption
   Resume : GET /uploads/<id>/parts → upload missing
@@ -565,11 +565,15 @@ stateDiagram-v2
   UploadParts --> Assemble : POST /scans/complete (ETag+SHA-256)
   Dedup --> Assemble
   Assemble : CompleteMultipartUpload + HEAD(size) + register
-  Assemble --> DecidePath
-  DecidePath --> Materialize : small object
-  DecidePath --> PrefixStatic : TB object
+  Assemble --> Register
+  Register : write scans/artifacts + audit_log
+  Register --> ChoosePath
+  ChoosePath : size <= min(DIRECT_MATERIALIZE_MAX, SANDBOX_DYNAMIC_MAX)
+  ChoosePath --> Materialize : small object
+  ChoosePath --> PrefixStatic : TB object
+  Materialize : download object to temp file
   Materialize --> Static
-  PrefixStatic : read_prefix(64 MiB) → static_stage(total_size)
+  PrefixStatic : read_prefix (64 MiB) → static_stage(total_size)
   PrefixStatic --> Static
   Static : format adapters (safetensors index, offsets, BD-01)
   Static --> Dynamic : within sandbox limits
@@ -591,28 +595,31 @@ stateDiagram-v2
   [*] --> Receive
   Receive : upload (legacy or direct presigned, tenant/<subject>/)
   Receive --> Store : S3 object (content-addressed)
-  Store --> DetectFormat
-  DetectFormat : detector: zip/tar/… (incl. nested)
-  DetectFormat --> Enumerate
+  Store --> DetectFmt
+  DetectFmt : detector: zip/tar/... (incl. nested)
+  DetectFmt --> Enumerate
   Enumerate : limits (32 MiB/member, 128 MiB/archive, member count)
   Enumerate --> Members
+
   state Members {
     [*] --> Member
-    Member --> MemberFormat : detector(detect)
-    MemberFormat --> MemberStatic : pickle/safetensors/onnx/hdf5/gguf/python/…
-    MemberStatic --> DynamicDecision
-    DynamicDecision --> MemberDynamic : member within sandbox limits
-    DynamicDecision --> Skip : TB members / non-executable data
-    MemberDynamic --> Aggregate
-    Skip --> Aggregate
-    Aggregate --> Member : next
+    Member --> MemberFmt : detector(detect)
+    MemberFmt --> MemberStatic : pickle/safetensors/onnx/hdf5/gguf/python/...
+    MemberStatic --> DynDecision
+    DynDecision --> MemberDyn : member within sandbox limits
+    DynDecision --> Skip : TB members / non-executable data
+    MemberDyn --> MemberAgg
+    Skip --> MemberAgg
+    MemberAgg : member findings (EXEC/INJ/FMT/...)
+    MemberAgg --> Member : next
     Member --> [*] : all members done
   }
+
   Members --> Nested
   Nested : recursive nested archives (depth/size limits)
-  Nested --> AggregateArchive
-  AggregateArchive : normalize + cap_findings (≤500, truncation flag)
-  AggregateArchive --> ArchiveVerdict
+  Nested --> AggArchive
+  AggArchive : normalize + cap_findings (<=500, truncation flag)
+  AggArchive --> ArchiveVerdict
   ArchiveVerdict : max_severity/risk_score + policy; coverage → Inconclusive on module failure
   ArchiveVerdict --> Journal
   Journal : evidence (HMAC), JSON/MD/SARIF reports, metrics

@@ -572,42 +572,47 @@ digest и допускается Kyverno-политикой.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Инициация
-  Инициация : POST /uploads/initiate (sha256, size)
-  Инициация --> Дедуп : объект уже в S3
-  Инициация --> ЗагрузкаЧастей : выданы presigned URL (count ≤ 10000)
+  [*] --> Init
+  Init : POST /uploads/initiate (sha256, size)
 
-  ЗагрузкаЧастей : клиент PUT частей напрямую в Garage (параллельно)
-  ЗагрузкаЧастей --> Возобновление : обрыв
-  Возобновление : GET /uploads/<id>/parts → догрузка недостающих
-  Возобновление --> ЗагрузкаЧастей
+  Init --> Dedup : объект уже в S3
+  Init --> UploadParts : выданы presigned URL (count <= 10000)
 
-  ЗагрузкаЧастей --> Сборка : POST /scans/complete (ETag+SHA-256)
-  Дедуп --> Сборка
-  Сборка : CompleteMultipartUpload + HEAD(size) + регистрация
-  Сборка --> Регистрация
-  Регистрация : запись scans/artifacts + audit_log
+  UploadParts : клиент PUT частей напрямую в Garage (параллельно)
+  UploadParts --> Resume : обрыв
+  Resume : GET /uploads/<id>/parts → догрузка недостающих
+  Resume --> UploadParts
 
-  Регистрация --> ВыборПути : size ≤ min(DIRECT_MATERIALIZE_MAX, SANDBOX_DYNAMIC_MAX)
-  ВыборПути --> Материализация : малый объект
-  ВыборПути --> ПрефиксСтатика : ТБ-объект
-  Материализация : скачать объект во временный файл
-  Материализация --> Статика
-  ПрефиксСтатика : read_prefix(64 МиБ) → static_stage(total_size)
-  ПрефиксСтатика --> Статика
+  UploadParts --> Assemble : POST /scans/complete (ETag+SHA-256)
+  Dedup --> Assemble
 
-  Статика : адаптеры форматов (safetensors index, offset-проверки, BD-01)
-  Статика --> Динамика : объект в лимитах песочницы
-  Статика --> ПропускДинамики : ТБ-объект (P1-7)
-  Динамика : Job Kata, harness, audit-hook, нонс результата
-  ПропускДинамики : dynamic=skipped (честное покрытие)
+  Assemble : CompleteMultipartUpload + HEAD(size) + регистрация
+  Assemble --> Register
+  Register : запись scans/artifacts + audit_log
+  Register --> ChoosePath
 
-  Динамика --> Вердикт
-  ПропускДинамики --> Вердикт
-  Вердикт : scoring + Policy Engine (+ coverage → Inconclusive)
-  Вердикт --> Синхронизация : analytics /sync
-  Синхронизация --> Журнал : evidence (файл + PG + HMAC)
-  Журнал --> [*]
+  ChoosePath : size <= min(DIRECT_MATERIALIZE_MAX, SANDBOX_DYNAMIC_MAX)
+  ChoosePath --> Materialize : малый объект
+  ChoosePath --> PrefixStatic : ТБ-объект
+
+  Materialize : скачать объект во временный файл
+  Materialize --> Static
+  PrefixStatic : read_prefix (64 МиБ) → static_stage(total_size)
+  PrefixStatic --> Static
+
+  Static : адаптеры форматов (safetensors index, offset-проверки, BD-01)
+  Static --> Dynamic : объект в лимитах песочницы
+  Static --> SkipDynamic : ТБ-объект (P1-7)
+
+  Dynamic : Job Kata, harness, audit-hook, нонс результата
+  SkipDynamic : dynamic=skipped (честное покрытие)
+
+  Dynamic --> Verdict
+  SkipDynamic --> Verdict
+  Verdict : scoring + Policy Engine (+ coverage → Inconclusive)
+  Verdict --> Sync : analytics /sync
+  Sync --> Journal : evidence (файл + PG + HMAC)
+  Journal --> [*]
 ```
 
 Примечание: ниже лимита `SANDBOX_DYNAMIC_MAX_BYTES` (≈6 ГиБ) выполняется полная динамика; выше —
@@ -619,39 +624,38 @@ Prometheus (`mlscan_upload_*`).
 
 ```mermaid
 stateDiagram-v2
-  [*] --> ПриёмАрхива
-  ПриёмАрхива : загрузка (legacy POST или прямой presigned, tenant/<subject>/)
-  ПриёмАрхива --> Хранение : объект в S3 (content-addressed)
-  Хранение --> ОпределениеФормата
-  ОпределениеФормата : detector: zip/tar/… (в т.ч. вложенные)
+  [*] --> Receive
+  Receive : загрузка (legacy POST или прямой presigned, tenant/<subject>/)
+  Receive --> Store : объект в S3 (content-addressed)
+  Store --> DetectFmt
+  DetectFmt : detector: zip/tar/... (в т.ч. вложенные)
+  DetectFmt --> Enumerate
+  Enumerate : лимиты (32 МиБ/член, 128 МиБ/архив, число членов)
+  Enumerate --> Members
 
-  ОпределениеФормата --> ПеречислениеЧленов
-  ПеречислениеЧленов : лимиты (32 МиБ/член, 128 МиБ/архив, число членов)
-  ПеречислениеЧленов --> ПробегПоЧленам
-
-  state ПробегПоЧленам {
-    [*] --> Член
-    Член --> ФорматЧлена : detector(detect)
-    ФорматЧлена --> СтатикаЧлена : pickle/safetensors/onnx/hdf5/gguf/python/…
-    СтатикаЧлена --> РешениеОДинамике
-    РешениеОДинамике --> ДинамикаЧлена : член ≤ лимитов песочницы
-    РешениеОДинамике --> Пропуск : ТБ-члены / неисполняемые данные
-    ДинамикаЧлена --> АгрегацияЧлена
-    Пропуск --> АгрегацияЧлена
-    АгрегацияЧлена : находки члена (EXEC/INJ/FMT/…)
-    АгрегацияЧлена --> Член : следующий
-    Член --> [*] : все члены обработаны
+  state Members {
+    [*] --> Member
+    Member --> MemberFmt : detector(detect)
+    MemberFmt --> MemberStatic : pickle/safetensors/onnx/hdf5/gguf/python/...
+    MemberStatic --> DynDecision
+    DynDecision --> MemberDyn : член в лимитах песочницы
+    DynDecision --> Skip : ТБ-члены / неисполняемые данные
+    MemberDyn --> MemberAgg
+    Skip --> MemberAgg
+    MemberAgg : находки члена (EXEC/INJ/FMT/...)
+    MemberAgg --> Member : следующий
+    Member --> [*] : все члены обработаны
   }
 
-  ПробегПоЧленам --> ВложенныеАрхивы
-  ВложенныеАрхивы : рекурсивный разбор вложений (лимиты глубины/размера)
-  ВложенныеАрхивы --> АгрегацияАрхива
-  АгрегацияАрхива : normalize + cap_findings (≤500, пометка усечения)
-  АгрегацияАрхива --> ВердиктАрхива
-  ВердиктАрхива : max_severity/risk_score + policy; coverage → Inconclusive при сбое модулей
-  ВердиктАрхива --> Журнал
-  Журнал : evidence (HMAC), отчёты JSON/MD/SARIF, метрики
-  Журнал --> [*]
+  Members --> Nested
+  Nested : рекурсивный разбор вложений (лимиты глубины/размера)
+  Nested --> AggArchive
+  AggArchive : normalize + cap_findings (<=500, пометка усечения)
+  AggArchive --> ArchiveVerdict
+  ArchiveVerdict : max_severity/risk_score + policy; coverage → Inconclusive при сбое модулей
+  ArchiveVerdict --> Journal
+  Journal : evidence (HMAC), отчёты JSON/MD/SARIF, метрики
+  Journal --> [*]
 ```
 
 Особенности: архив 1 ТБ обрабатывается потоково — по членам, с жёсткими лимитами чтения и
