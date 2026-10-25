@@ -80,6 +80,8 @@ SANDBOX_DYNAMIC_MAX_BYTES = int(os.environ.get("SANDBOX_DYNAMIC_MAX_BYTES",
 MAX_OBJECT_BYTES = int(os.environ.get("MAX_OBJECT_BYTES", "0"))
 MAX_BYTES_PER_DAY = int(os.environ.get("MAX_BYTES_PER_DAY", "0"))
 MAX_CONCURRENT_UPLOADS = int(os.environ.get("MAX_CONCURRENT_UPLOADS", "8"))
+# L1a: разрешённые реестры образов (через запятую; пусто = любой, но всё равно только по digest)
+REGISTRY_ALLOWLIST = [r.strip() for r in os.environ.get("REGISTRY_ALLOWLIST", "").split(",") if r.strip()]
 _pending_uploads: dict = {}
 _pending_lock = threading.Lock()
 
@@ -342,6 +344,14 @@ try:
 except Exception:  # noqa: BLE001
     v3pool = None  # type: ignore
     v3refs = None  # type: ignore
+
+sys.path.insert(0, "/opt/v3registry")
+try:  # v3 (L1a): реестр образов — валидация ссылок/подпись
+    import images as v3images  # noqa: E402
+    import sbom as v3sbom  # noqa: E402
+except Exception:  # noqa: BLE001
+    v3images = None  # type: ignore
+    v3sbom = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3llm")
 try:  # v3 (L0): классификатор LLM + binding/bundle
@@ -992,6 +1002,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"scans": list_scans(), "language": lang})
         if u.path == "/stats":
             return self._json(200, stats())
+        if u.path == "/images/verify":
+            return self._images_verify((q.get("ref", [""])[0]))
+        if u.path.startswith("/images/"):
+            return self._images_get(u.path.split("/", 2)[2])
         if u.path.startswith("/bundles/"):
             return self._bundles_get(u.path.split("/", 2)[2])
         if u.path.startswith("/uploads/") and u.path.endswith("/parts"):
@@ -1311,6 +1325,72 @@ class Handler(BaseHTTPRequestHandler):
                                 "sha256": info["sha256"], "s3_key": info["key"],
                                 "tenant": info["tenant"]})
 
+    def _images_import(self) -> None:
+        """L1a: регистрация образа движка (по digest) + server-side copy OCI-архива в registry/."""
+        if v3images is None:
+            return self._json(503, {"error": "v3 registry module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        ref = (body.get("ref") or "").strip()
+        digest = (body.get("digest") or "").strip()
+        if not digest and ref:
+            digest = v3images.parse_ref(ref)["digest"]
+        ref_full = ref if "@" in ref else (f"{ref}@{digest}" if ref else digest)
+        if not v3images.is_valid_digest(digest):
+            return self._json(400, {"error": "digest обязателен (sha256:<64hex>)"})
+        ok, why = v3images.validate_ref(ref_full, allowlist=REGISTRY_ALLOWLIST or None)
+        if not ok:
+            return self._json(403, {"error": why})
+        stored_key = ""
+        oci_key = body.get("oci_tar_key") or ""
+        if oci_key:
+            if not (S3_ENABLED and _s3 is not None):
+                return self._json(503, {"error": "S3 не сконфигурирован"})
+            stored_key = v3images.storage_key(digest)
+            if not _s3.exists(stored_key):
+                try:
+                    st, _, _ = _s3.copy_object(oci_key, stored_key)
+                except Exception as exc:  # noqa: BLE001
+                    return self._json(502, {"error": f"S3 copy: {type(exc).__name__}: {exc}"})
+                if st not in (200, 201):
+                    return self._json(502, {"error": f"S3 copy status {st}"})
+        rec = v3sbom.make_image_record(digest=digest, ref=ref_full, source=body.get("source", "import"),
+                                       size=int(body.get("size") or 0),
+                                       signature=body.get("signature", ""), sbom=body.get("sbom", ""))
+        if DB_ENABLED:
+            try:
+                db_exec("INSERT INTO registry_images(digest,ref,source,size,signature,sbom,stored_key,"
+                        "status) VALUES ("
+                        f"{_lit(digest)},{_lit(ref_full)},{_lit(rec['source'])},{int(rec['size'])},"
+                        f"{_lit(rec['signature'])},{_lit(rec['sbom'])},{_lit(stored_key)},'registered') "
+                        "ON CONFLICT (digest) DO UPDATE SET ref=EXCLUDED.ref, size=EXCLUDED.size, "
+                        "signature=EXCLUDED.signature, sbom=EXCLUDED.sbom, "
+                        "stored_key=COALESCE(NULLIF(EXCLUDED.stored_key,''),registry_images.stored_key)")
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(201, {"digest": digest, "ref": ref_full, "stored_key": stored_key,
+                                "status": "registered"})
+
+    def _images_get(self, digest: str) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT digest,ref,source,size,signature,sbom,stored_key,status FROM registry_images "
+                        "WHERE digest=" + _lit(digest))
+        if not rows:
+            return self._json(404, {"error": "image not found"})
+        r = rows[0]
+        return self._json(200, {"digest": r[0], "ref": r[1], "source": r[2], "size": r[3],
+                                "signature": r[4], "sbom": r[5], "stored_key": r[6], "status": r[7]})
+
+    def _images_verify(self, ref: str) -> None:
+        if v3images is None:
+            return self._json(503, {"error": "v3 registry module unavailable"})
+        ok, why = v3images.validate_ref(ref, allowlist=REGISTRY_ALLOWLIST or None)
+        return self._json(200, {"allowed": ok, "reason": why})
+
     def _bundles_create(self) -> None:
         """L0/L4: создать неизменяемый bundle (образ движка + модель + версии)."""
         if v3binding is None:
@@ -1426,6 +1506,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._objects_import()
         if u.path == "/bundles":
             return self._bundles_create()
+        if u.path == "/images/import":
+            return self._images_import()
         if u.path in ("/scans", "/scans/upload", "/upload"):
             ident = getattr(self, "_subject", "") or (self.client_address[0] if self.client_address else "?")
             ok, retry = rate_allow(ident)

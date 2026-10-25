@@ -53,3 +53,16 @@ CREATE TABLE IF NOT EXISTS bundles (
   created TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_bundles_model ON bundles(model_sha256);
+
+-- L1a: реестр образов движков (digest, источник, подпись/SBOM, ключ OCI-архива в S3)
+CREATE TABLE IF NOT EXISTS registry_images (
+  digest TEXT PRIMARY KEY,
+  ref TEXT,
+  source TEXT,
+  size BIGINT DEFAULT 0,
+  signature TEXT DEFAULT '',
+  sbom TEXT DEFAULT '',
+  stored_key TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'registered',
+  created TIMESTAMPTZ DEFAULT now()
+);
