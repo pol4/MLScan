@@ -21,6 +21,7 @@ are in [`docs/`](../).
 | 12 | [UI and message localisation (RU/EN)](12-i18n.md) | language switch and global language setting |
 | 13 | [Staged deployment plan](13-deployment-plan.md) | deployment levels 0-5, acceptance criteria, upgrade paths |
 | 14 | [Security review + remediation plan](14-security-review.md) | attack scenarios (launchpad / untrustworthy verdicts), findings P0-P2 |
+| 15 | [Analyzing a large model file](15-large-model-analysis.md) | step-by-step: read source → upload → S3 → sandbox → verdict → stats |
 
 Related:
 

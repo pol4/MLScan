@@ -383,6 +383,7 @@ P1-8 — аудит изменений, P2).
 - `docs/12` локализация UI и сообщений (RU/EN) — [`docs/12-i18n.md`](./docs/12-i18n.md)
 - `docs/13` план поэтапного развёртывания (уровни 0–5) — [`docs/13-deployment-plan.md`](./docs/13-deployment-plan.md)
 - `docs/14` анализ ИБ архитектуры и кода + план доработок — [`docs/14-security-review.md`](./docs/14-security-review.md)
+- `docs/15` анализ большого файла модели: пошагово — [`docs/15-large-model-analysis.md`](./docs/15-large-model-analysis.md)
 - английские версии — [`docs/en/`](./docs/en)
 
 ---

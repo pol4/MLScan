@@ -384,6 +384,7 @@ See [`docs/en/05-architecture.md`](./docs/en/05-architecture.md),
 - `docs/09` analysis of other formats/backdoors · `docs/10` extension plan (waves) · `docs/11` v2 target architecture
 - `docs/12` UI and message localisation (RU/EN)
 - `docs/14` security review of the architecture and code + remediation plan (EN: docs/en/14-security-review.md)
+- `docs/15` analyzing a large model file, step by step (EN: docs/en/15-large-model-analysis.md)
 - English versions: [`docs/en/`](./docs/en)
 
 ---
