@@ -85,7 +85,9 @@
 
 - Движок инференса и модель — **недоверенные**: запуск только в Kata с **кастомным ядром**,
   включающим **eBPF/Tetragon** (см. [`16-llm-inference-testing.md`](16-llm-inference-testing.md)).
-- Образ движка — по digest + SBOM/подпись + admission; read-only FS; non-root; drop ALL; seccomp.
+- Образ движка — **только из внутреннего реестра** `mlscan-registry`, **по digest**, с SBOM/подписью;
+  admission (Kyverno) блокирует теги и внешние реестры; read-only FS; non-root; drop ALL; seccomp.
+  Импорт образов и фиксация вердиктов/аттестаций — `17-engine-images-and-provenance.md`.
 - Egress — **deny-by-default** (разрешены только внутренний API для проб, DNS, sinkhole);
   попытки внешних соединений фиксируются Tetragon как индикатор.
 - Honeypot-секреты (`~/.aws`, `~/.ssh`, `~/.kube`) — детект попыток чтения.

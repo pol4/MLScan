@@ -65,6 +65,10 @@ Analysis worker ──range GET (offset,len)──▶ S3 (любой узел) �
 - **Backpressure**: при насыщении — 429/`Retry-After`, приоритеты для CI.
 - **Рост**: добавлять storage-узлы без простоя (перебалансировка chunks).
 
+- **OCI-реестр на этом же S3**: внутренний реестр образов движков использует data-plane как бэкенд
+  (bucket/prefix `registry/…`), что даёт дедуп слоёв, tiering и DR для образов; модели (`objects/…`)
+  и образы (`registry/…`) — соседи в одном масштабируемом хранилище (`17-engine-images-and-provenance.md`).
+
 ## 8. Что переиспользуется из v2
 
 - Клиент `s3client.py` (SigV4, multipart, presign, `list_parts`, retry) — расширяется range-get,

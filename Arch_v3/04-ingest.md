@@ -34,6 +34,7 @@
 | POST | `/uploads/complete` | завершить multipart, проверить checksum, зарегистрировать объект |
 | DELETE | `/uploads/<id>` | отменить загрузку (abort) |
 | POST | `/objects/import` | server-side copy по URL/presigned из другого S3 |
+| POST | `/images/import` | импорт **образов движков** (реестр/OCI-архив) во внутренний реестр по digest |
 | POST | `/scans` | подать скан по `sha256` (+стратегия) |
 
 ## 4. Параметры и адаптация

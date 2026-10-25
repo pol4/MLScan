@@ -14,9 +14,11 @@ Full plan: `../15-implementation-plan.md` (RU). Rule per phase (as in v2): **(1)
 | P3 | Static v3 | index-driven streaming, sampling, coverage | F5,N3,N4,N9 |
 | P4 | Archives v3 | range-based index, member walk, nesting, member index | F4,N5 |
 | P5 | Dynamic v3 | slice selector, sampled dynamic, budgets | F6,N10 |
+| L1a | Engine images: registry | internal OCI registry (Harbor) on S3 backend; import by digest (registry/OCI-tar/CI), signature/SBOM, admission | F17 |
 | L1 | LLM inference: isolation | run engine (image)+model in Kata with custom kernel; GPU/resource scheduler | F14,N12 |
 | L2 | LLM inference: observation | eBPF/Tetragon in custom kernel; policies -> findings | F15,N14 |
 | L3 | LLM inference: probes | OpenAI-API probe suite (configurable list) + reference-based evaluation | F16,N13 |
+| L4 | Bundle & attestations | immutable bundle (image+model+versions); bundle-level verdict; signature/attestation; CI gate | F18,F19,N15 |
 | P6 | Security/evidence | TLS/mTLS, KMS, WORM anchoring, SBOM/admission | F12,N7 |
 | P7 | Observability/SLO | per-tenant metrics, tracing, dashboards, alerts, capacity | N1–N10 |
 | P8 | HA/DR/GitOps | ≥2 replicas, DR replication/failover, GitOps | N6,N7 |

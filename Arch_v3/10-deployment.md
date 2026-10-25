@@ -124,6 +124,9 @@ graph TB
 
 Описан отдельно — `11-migration-v2-to-v3.md`: поэтапно, с сохранением работы v2 до полного переключения.
 
+- **Registry `mlscan-registry`** (Harbor) с S3-бэкендом на data-plane — доверенное хранилище образов
+  движков; репликация/DR вместе с data-plane; pre-pull на LLM-пул.
+
 ## 9. Пул узлов для LLM-инференса
 
 - Отдельный **LLM test node pool**: узлы с GPU/большой RAM/NVMe; `nvidia.com/gpu` и квоты.

@@ -80,6 +80,9 @@ graph TB
 - **Content-addressed общий пул** — ключи по `sha256` (без тенанта), **тенант-ссылки (refcount)**;
   дедуп между тенантами; ACL и (опц.) per-tenant KMS.
 - **Node-local NVMe cache** — read-through кэш «горячих» диапазонов для анализа (CoW, TTL).
+- **Internal OCI registry (`mlscan-registry`)** — доверенное хранилище **образов движков инференса**
+  с **S3-бэкендом** на этом же data-plane (prefix `registry/…`); импорт по digest, подписи/SBOM,
+  дедуп слоёв; admission допускает запуск только образов из него (см. `17-engine-images-and-provenance.md`).
 
 ### 2.4 Analysis plane
 - **Static engine** — потоковый обход, index-driven (safetensors/ONNX/HDF5/GGUF), sampling, coverage.
@@ -104,8 +107,8 @@ graph TB
 политик ресурсов и стратегии `llm-inference`.
 
 ### 2.6 Registry/Evidence
-- **PostgreSQL** — объекты/сканы/находки/члены/покрытие/квоты/аудит; для LLM-тестов — прогоны,
-  промпты/эталоны, оценённые ответы, поведенческие события eBPF.
+- **PostgreSQL** — объекты/сканы/находки/члены/покрытие/квоты/аудит; образы (`registry_images`),
+  bundle (`bundles`), LLM-прогоны/промпты/эталоны/ответы, поведенческие события eBPF, вердикты.
 - **WORM/evidence** — append-only журнал, HMAC-цепочка, анкоринг во внешний object-lock bucket,
   периодическая нотаризация.
 
