@@ -108,17 +108,24 @@
 
 ### L3 — LLM-инференс: OpenAI-API пробы и оценка
 - **Задачи**: **загрузка набора Excel (XLSX) администратором через UI** → парсинг → валидация →
-  **сохранение в БД** (`prompt_sets`/`llm_prompts`), активная версия `ps-v<N>` до загрузки новой;
-  probe-runner как **sidecar** в том же Kata-pod; критерии (contains/regex/json_schema/refusal/
-  semantic_ref/no_disallowed_content) + **LLM-judge** (рубрика) поверх правил; **несколько прогонов +
-  допуск**; агрегация (`pass_rate`,`safety_fail`,`leakage`,`judge_score`); вердикт — **пороговые
-  правила в policy**; хранение **полных ответов + хэшей**; UI/отчёт per-probe + управление версиями.
-  Схема XLSX — по эталонному примеру заказчика (запрошен); детали — [`16-llm-inference-testing.md`](16-llm-inference-testing.md) §5.
+  **сохранение в БД** (`prompt_sets`/`llm_prompts`), активная версия `ps-v<N>` до загрузки новой.
+  Схема (по эталону `questions_v9.xlsx`, лист `questions_v9`, 726 строк): `Номер` id · `Домен вопроса`
+  category (37 доменов) · `Вопрос` prompt · `Ответ` **reference** (эталонный безопасный ответ) ·
+  `Степень критичности` ∈ {1,2,3} → severity/weight/строгость допуска. Валидация: обязательные поля,
+  уникальный id, criticality ∈ {1,2,3}, непустые вопрос/ответ, дубликаты → предупреждение, отчёт в UI.
+  probe-runner как **sidecar** в том же Kata-pod; оценка — **правила (no_disallowed_content/refusal/
+  regex/json_schema/length) + LLM-judge против `reference`**; **несколько прогонов + допуск** (строже
+  для critical=1); агрегация (`pass_rate`,`safety_fail`,`leakage`,`judge_score`) по criticality/домену;
+  вердикт — **пороговые правила в policy** (любой fail critical → block/quarantine); хранение
+  **полных ответов + хэшей**; UI/отчёт per-probe + управление версиями набора.
+  Детали — [`16-llm-inference-testing.md`](16-llm-inference-testing.md) §5/§5.1; синтетический шаблон —
+  `samples/prompt-set.template.xlsx`.
 - **Тесты сначала**: unit (парсер XLSX/валидация, оценщики критериев, judge-адаптер, допуск по прогонам),
   contract (загрузка/версии набора), e2e (прогон на мини-модели), quality (golden-набор ответов), UI
   (карточка LLM-прогона, загрузка XLSX админом).
-- **Готово**: админ грузит XLSX → набор в БД и версионируется; покрытие проб ≥ 95 %; опасные/
-  некорректные ответы → findings; вердикт учитывает поведение + контент + статику (пороги в policy).
+- **Готово**: админ грузит XLSX (сверено на 726-строчном эталоне) → набор в БД и версионируется;
+  покрытие проб ≥ 95 %; опасные/некорректные ответы → findings; вердикт учитывает поведение +
+  контент + статику (пороги в policy). Реальные данные заказчика в репозиторий не коммитятся.
 
 ### L4 — Bundle, аттестации и CI-gate
 - **Задачи**: неизменяемый **bundle** `{image digest + model sha256 + manifest + prompt-set + detectors
