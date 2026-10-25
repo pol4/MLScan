@@ -46,7 +46,7 @@ analysis capabilities), the next level only adds capabilities and components, an
 never concealed - when a verification module could not run, the verdict is `Inconclusive` with a
 partial result. You can stop at any level.
 
-Plan and rationale - [`docs/en/13-deployment-plan.md`](./docs/en/13-deployment-plan.md),
+Plan and rationale - [`docs/en/13-deployment-plan.md`](Arch_v1/13-deployment-plan.md),
 level chooser - [`deploy/README.md`](./deploy/README.md),
 upgrade path - [`deploy/upgrade.md`](./deploy/upgrade.md).
 
@@ -163,8 +163,8 @@ primitives yourself. Kubernetes makes this **declarative and repeatable**, while
 planes (analytics, DB, UI) stay in the trusted zone.
 
 > Important: **an artifact is never executed in the trusted zone** — only in an isolated microVM
-> that is destroyed entirely after the scan. See [`docs/en/03-isolation.md`](./docs/en/03-isolation.md)
-> and [`docs/en/07-implemented-architecture.md`](./docs/en/07-implemented-architecture.md).
+> that is destroyed entirely after the scan. See [`docs/en/03-isolation.md`](PoC/03-isolation.md)
+> and [`docs/en/07-implemented-architecture.md`](Arch_v1/07-implemented-architecture.md).
 
 ---
 
@@ -255,7 +255,7 @@ records) and reports. Russian documentation — [`README.md`](./README.md) / [`d
 | Attestation | CronJob `mlscan-attest` (every 6 h) plus the verification result in `POST /retest` and in the `mlscan_evidence_ok/signed/entries` metrics | Job `succeeded`, log `ATTEST {...}` |
 | Access | API keys with `expires_at` (expired -> `401`), UI users (PBKDF2, 200k), 12 h HMAC sessions, roles `admin/ci-reader/service`, audit in `audit_log` | expired key test |
 
-The full attack-scenario review and remediation plan are in [`docs/en/14-security-review.md`](./docs/en/14-security-review.md)
+The full attack-scenario review and remediation plan are in [`docs/en/14-security-review.md`](Arch_v1/14-security-review.md)
 (status: P0 and P1 implemented; open: P0-4 instant `Reject` for the sandbox network, P1-2 DNS policy,
 P1-8 change audit, P2).
 
@@ -343,10 +343,10 @@ Three components (Components 1–3) deployed in separate namespaces:
 3. **Analytics Engine + UI** — process control, scoring, Policy Engine, Evidence Store,
    reports and web UI. Plus **Integrations** (registry/gate/SIEM) and **Ops** (metrics/quality/retest).
 
-See [`docs/en/05-architecture.md`](./docs/en/05-architecture.md),
+See [`docs/en/05-architecture.md`](Arch_v1/05-architecture.md),
 [`Concept.en.md`](./Concept.en.md),
-[`docs/en/07-implemented-architecture.md`](./docs/en/07-implemented-architecture.md) (as-built),
-[`docs/en/11-target-architecture-v2.md`](./docs/en/11-target-architecture-v2.md) (v2).
+[`docs/en/07-implemented-architecture.md`](Arch_v1/07-implemented-architecture.md) (as-built),
+[`docs/en/11-target-architecture-v2.md`](Arch_v2/01-target-architecture.md) (v2).
 
 ---
 
@@ -414,14 +414,30 @@ Implemented and verified: the PoC, the pickle system (Stages 0–5), the v2 targ
 (Wave 0: S3/PostgreSQL/AuthN+audit/observability+backup; format waves 1–3: adapters and detectors,
 model-as-code dynamics; retention/TTL and quarantine), per-format quality metrics (TPR=1.0,
 FPR=0.0), the synthetic corpus (87/87, 0 FP) and **platform hardening** - P0/P1 from the security
-review ([`docs/14`](./docs/en/14-security-review.md)). The UI and service messages are
+review ([`docs/14`](Arch_v1/14-security-review.md)). The UI and service messages are
 localised RU/EN with a global language setting.
 
-Context: [`deploy/v2/README.md`](./deploy/v2/README.md), plan — [`docs/en/10-plan-new-formats.md`](./docs/en/10-plan-new-formats.md),
-target architecture — [`docs/en/11-target-architecture-v2.md`](./docs/en/11-target-architecture-v2.md).
+Context: [`deploy/v2/README.md`](./deploy/v2/README.md), plan — [`docs/en/10-plan-new-formats.md`](Arch_v1/10-plan-new-formats.md),
+target architecture — [`docs/en/11-target-architecture-v2.md`](Arch_v2/01-target-architecture.md).
 
 ---
 
 ## License
 
 MIT — see [`LICENSE`](./LICENSE).
+
+---
+
+## Architecture versions (documentation)
+
+Docs are split by version (live code `deploy/`, `poc/`, `tests/` stays at root):
+
+| Dir | Version | Content |
+|-----|---------|---------|
+| [`PoC/`](PoC/README.md) | v0 | Concept, pickle risks, testing strategy, isolation, decisions |
+| [`Arch_v1/`](Arch_v1/README.md) | v1 | Working MVP: service+sandbox+Kata+Ingress, formats, i18n, deployment, security |
+| [`Arch_v2/`](Arch_v2/README.md) | v2 | S3 (Garage), PostgreSQL, ingest, large files, **work description** and **v2 limitations analysis** |
+| [`Arch_v3/`](Arch_v3/README.md) | v3 | **Target architecture for 1 TB+**: distributed S3, streaming analysis, archives, multi-tenancy, **new implementation plan** |
+
+Index — [`ARCHITECTURES.md`](ARCHITECTURES.md). **Future development follows v3.**
+Old `docs/NN-*.md` paths are redirect stubs (link compatibility).

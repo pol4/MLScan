@@ -8,7 +8,7 @@
 исполняемый при загрузке код, закладки, утечки данных, неконтролируемое поведение,
 проблемы целостности и происхождения.
 
-> **Стартовая статья** (фокус, история, ссылки) — [`START.md`](./START.md).
+> **Стартовая статья** (фокус, история, ссылки) — [`START.md`](Arch_v1/START.md).
 > Детальная техническая документация — [`docs/`](./docs).
 
 ---
@@ -46,7 +46,7 @@ flowchart LR
 незавершённость никогда не маскируется — если модуль не смог отработать, вердикт `Inconclusive`
 с частичным результатом. Остановиться можно на любом уровне.
 
-План и аргументация — [`docs/13-deployment-plan.md`](./docs/13-deployment-plan.md),
+План и аргументация — [`docs/13-deployment-plan.md`](Arch_v1/13-deployment-plan.md),
 выбор уровня — [`deploy/README.md`](./deploy/README.md),
 переход на следующий — [`deploy/upgrade.md`](./deploy/upgrade.md).
 
@@ -164,8 +164,8 @@ bash deploy/verify.sh 5 --full  # + полный прогон корпуса (14
 а контрольные плоскости (аналитика, БД, UI) при этом остаются в доверенной зоне.
 
 > Важно: **артефакт никогда не исполняется в доверенной зоне** — только в изолированной
-> микро-ВМ, которая после проверки уничтожается целиком. Подробнее — [`docs/03-isolation.md`](./docs/03-isolation.md)
-> и [`docs/07-implemented-architecture.md`](./docs/07-implemented-architecture.md).
+> микро-ВМ, которая после проверки уничтожается целиком. Подробнее — [`docs/03-isolation.md`](PoC/03-isolation.md)
+> и [`docs/07-implemented-architecture.md`](Arch_v1/07-implemented-architecture.md).
 
 ---
 
@@ -232,7 +232,7 @@ UI и сообщения сервисов локализованы (RU/EN): пе
 `mlscan_lang`), `?lang=en` / заголовок `X-MLScan-Lang` для API и **глобальная настройка языка
 всей системы** (`MLSCAN_LANG` при запуске + `POST /settings/language` для администратора,
 хранится в БД). Локализуются UI, причины вердиктов, находки (в том числе исторические) и отчёты.
-Подробности — [`docs/12-i18n.md`](./docs/12-i18n.md). Английская версия документации —
+Подробности — [`docs/12-i18n.md`](Arch_v1/12-i18n.md). Английская версия документации —
 [`README.en.md`](./README.en.md) и [`docs/en/`](./docs/en).
 
 ### Платформа и эксплуатация
@@ -258,7 +258,7 @@ AuthN/Z (API-ключи + RBAC + вход в UI), журнал подключе�
 | Аттестация | CronJob `mlscan-attest` (каждые 6 ч) + результат проверки в `POST /retest` и в метриках `mlscan_evidence_ok/signed/entries` | Job `succeeded`, лог `ATTEST {…}` |
 | Доступы | API-ключи с `expires_at` (истёкший → `401`), пользователи UI (PBKDF2, 200k), HMAC-сессии 12 ч, роли `admin/ci-reader/service`, аудит в `audit_log` | тест истёкшего ключа |
 
-Полный разбор сценариев атак и план доработок — [`docs/14-security-review.md`](./docs/14-security-review.md)
+Полный разбор сценариев атак и план доработок — [`docs/14-security-review.md`](Arch_v1/14-security-review.md)
 (статус: P0 и P1 реализованы; открыты P0-4 — мгновенный `Reject` для сети песочницы, P1-2 — DNS-политика,
 P1-8 — аудит изменений, P2).
 
@@ -342,9 +342,9 @@ P1-8 — аудит изменений, P2).
 3. **Analytics Engine + UI** — управление процессом, скоринг, Policy Engine, Evidence Store,
    отчёты и веб-UI. Плюс **Integrations** (registry/gate/SIEM) и **Ops** (метрики/качество/retest).
 
-См. [`docs/05-architecture.md`](./docs/05-architecture.md), [`Concept.md`](./Concept.md),
-[`docs/07-implemented-architecture.md`](./docs/07-implemented-architecture.md) (as-built),
-[`docs/11-target-architecture-v2.md`](./docs/11-target-architecture-v2.md) (v2).
+См. [`docs/05-architecture.md`](Arch_v1/05-architecture.md), [`Concept.md`](PoC/Concept.md),
+[`docs/07-implemented-architecture.md`](Arch_v1/07-implemented-architecture.md) (as-built),
+[`docs/11-target-architecture-v2.md`](Arch_v2/01-target-architecture.md) (v2).
 
 ---
 
@@ -352,7 +352,7 @@ P1-8 — аудит изменений, P2).
 
 | Путь | Что это |
 |------|---------|
-| [`START.md`](./START.md) | Стартовая статья: фокус проекта, история, масштабируемость архитектуры |
+| [`START.md`](Arch_v1/START.md) | Стартовая статья: фокус проекта, история, масштабируемость архитектуры |
 | [`tests/vulnerabilities/`](./tests/vulnerabilities) | **Синтетический корпус уязвимостей** + процедура + отчёт о детекции |
 | [`deploy/README.md`](./deploy/README.md) | **Выбор уровня развёртывания (0–5)**, матрица возможностей и команд |
 | [`deploy/install.sh`](./deploy/install.sh) | Установка выбранного уровня (идемпотентно, с проверкой предпосылок) |
@@ -380,10 +380,10 @@ P1-8 — аудит изменений, P2).
 - `docs/04` обработка результатов и решения · `docs/05` архитектура
 - `docs/06` план реализации (реализован) · `docs/07` as-built архитектура · `docs/08` тест-гайд
 - `docs/09` анализ других форматов/закладок · `docs/10` план расширения (волны) · `docs/11` целевая архитектура v2
-- `docs/12` локализация UI и сообщений (RU/EN) — [`docs/12-i18n.md`](./docs/12-i18n.md)
-- `docs/13` план поэтапного развёртывания (уровни 0–5) — [`docs/13-deployment-plan.md`](./docs/13-deployment-plan.md)
-- `docs/14` анализ ИБ архитектуры и кода + план доработок — [`docs/14-security-review.md`](./docs/14-security-review.md)
-- `docs/15` анализ большого файла модели: пошагово — [`docs/15-large-model-analysis.md`](./docs/15-large-model-analysis.md)
+- `docs/12` локализация UI и сообщений (RU/EN) — [`docs/12-i18n.md`](Arch_v1/12-i18n.md)
+- `docs/13` план поэтапного развёртывания (уровни 0–5) — [`docs/13-deployment-plan.md`](Arch_v1/13-deployment-plan.md)
+- `docs/14` анализ ИБ архитектуры и кода + план доработок — [`docs/14-security-review.md`](Arch_v1/14-security-review.md)
+- `docs/15` анализ большого файла модели: пошагово — [`docs/15-large-model-analysis.md`](Arch_v2/02-large-model-pipeline.md)
 - английские версии — [`docs/en/`](./docs/en)
 
 ---
@@ -414,14 +414,30 @@ cat model.pkl | python3 poc/mlscan_poc.py - --name model.pkl        # ввод �
 (Волна 0: S3/PostgreSQL/AuthN+audit/наблюдаемость+бэкап; волны форматов 1–3: адаптеры и
 детекторы, динамика model-as-code; retention/TTL и карантин), метрики качества по форматам
 (TPR=1.0, FPR=0.0), синтетический корпус (87/87, 0 FP) и **харденинг платформы** — P0/P1 из ИБ-обзора
-([`docs/14`](./docs/14-security-review.md)). UI и сообщения
+([`docs/14`](Arch_v1/14-security-review.md)). UI и сообщения
 сервисов локализованы RU/EN, есть глобальная настройка языка.
 
-Контекст: [`deploy/v2/README.md`](./deploy/v2/README.md), план — [`docs/10-plan-new-formats.md`](./docs/10-plan-new-formats.md),
-целевая архитектура — [`docs/11-target-architecture-v2.md`](./docs/11-target-architecture-v2.md).
+Контекст: [`deploy/v2/README.md`](./deploy/v2/README.md), план — [`docs/10-plan-new-formats.md`](Arch_v1/10-plan-new-formats.md),
+целевая архитектура — [`docs/11-target-architecture-v2.md`](Arch_v2/01-target-architecture.md).
 
 ---
 
 ## Лицензия
 
 MIT — см. [`LICENSE`](./LICENSE).
+
+---
+
+## Версии архитектуры (документация)
+
+Документация разделена по версиям (живой код `deploy/`, `poc/`, `tests/` — в корне):
+
+| Каталог | Версия | Содержание |
+|---------|--------|------------|
+| [`PoC/`](PoC/README.md) | v0 | Концепция, риски pickle, стратегия тестирования, изоляция, решения |
+| [`Arch_v1/`](Arch_v1/README.md) | v1 | Рабочий MVP: сервис+песочница+Kata+Ingress, форматы, i18n, развёртывание, ИБ |
+| [`Arch_v2/`](Arch_v2/README.md) | v2 | S3 (Garage), PostgreSQL, ingest, большой файл, **описание работы** и **анализ ограничений v2** |
+| [`Arch_v3/`](Arch_v3/README.md) | v3 | **Целевая архитектура для 1 ТБ+**: распределённый S3, потоковый анализ, архивы, мультитенантность, **новый план реализации** |
+
+Сводный индекс — [`ARCHITECTURES.md`](ARCHITECTURES.md). **Дальнейшая разработка ведётся по v3.**
+Старые пути `docs/NN-*.md` оставлены заглушками-редиректами (совместимость ссылок).
