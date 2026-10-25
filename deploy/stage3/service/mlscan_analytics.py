@@ -758,6 +758,17 @@ document.getElementById('f').addEventListener('submit',e=>{
   xhr.onerror=()=>{alert(L.upload_error);};
   xhr.send(file);
 });
+(function(){const el=document.getElementById('psfile');if(!el)return;
+  const st=document.getElementById('psstatus');
+  const show=t=>{st.textContent=t;};
+  fetch('/prompt-sets').then(r=>r.ok?r.json():null).then(d=>{if(d&&d.version)show('active: '+d.version+' ('+d.cases+')');}).catch(()=>{});
+  el.addEventListener('change',()=>{const f=el.files[0];if(!f)return;
+    const rd=new FileReader();
+    rd.onload=()=>{const b64=String(rd.result).split(',')[1];
+      fetch('/prompt-sets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.name,content_b64:b64})})
+        .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{show(ok?('OK '+j.version+' cases='+j.cases):('ERR '+(j.error||'bad')));})
+        .catch(()=>show('ERR'));};
+    rd.readAsDataURL(f);});})();
 async function loop(){ await refresh(); setTimeout(loop,5000); }
 loop();
 </script>""".replace("__LABELS__", json.dumps(labels, ensure_ascii=False))
@@ -802,7 +813,12 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
             + "</div>"
             f"<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>{T('dash.upload_hint', lang)}</div>"
             "</form>"
-            "<div class='controls'>"
+            + ("<div class='upload' id='psset' style='margin-top:0'>"
+               + "<b>" + ("Набор тестов (XLSX)" if lang == "ru" else "Prompt set (XLSX)") + "</b><br><br>"
+               + "<input type='file' id='psfile' accept='.xlsx' name='psfile'> "
+               + "<span id='psstatus' style='color:#9aa4b2;font-size:12px'></span>"
+               + "</div>" if "admin" in (roles or []) else "")
+            + "<div class='controls'>"
             f"<input id='q' type='search' placeholder='{T('dash.filter', lang)}'>"
             "<select id='vf'>"
             f"<option value=''>{T('dash.all_verdicts', lang)}</option>"
@@ -1003,6 +1019,38 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code, obj):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8")
 
+    def _test_request(self, method: str, path: str, body: bytes | None = None,
+                      ctype: str = "application/json") -> tuple[int, bytes]:
+        cx = http.client.HTTPConnection(TEST_HOST, TEST_PORT, timeout=120)
+        cx.putrequest(method, path)
+        if body is not None:
+            cx.putheader("Content-Length", str(len(body)))
+            cx.putheader("Content-Type", ctype)
+        if INTERNAL_KEY:
+            cx.putheader("Authorization", f"Bearer {INTERNAL_KEY}")
+        if getattr(self, "_rid", None):
+            cx.putheader("X-Request-ID", self._rid)
+        cx.endheaders()
+        if body:
+            cx.send(body)
+        resp = cx.getresponse()
+        data = resp.read()
+        cx.close()
+        return resp.status, data
+
+    def _prompt_sets_proxy(self, q: dict) -> None:
+        """Прокси к сервису тестирования: активный набор (GET) и загрузка XLSX (POST)."""
+        try:
+            if self.command == "GET":
+                code, body = self._test_request("GET", "/prompt-sets/active")
+                return self._send(code, body, "application/json; charset=utf-8")
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", "/prompt-sets", data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(502, {"error": f"testing: {type(exc).__name__}: {exc}"})
+
     def _proxy_upload(self, q: dict) -> None:
         name = q.get("name", ["sample.pkl"])[0]
         fmt = q.get("fmt", ["pickle"])[0]
@@ -1058,6 +1106,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", nxt)
             self.end_headers()
             return
+        if p == "/prompt-sets":
+            return self._prompt_sets_proxy(q)
         if p == "/login":
             notice = T("login.session_expired", self._lang(q)) if q.get("expired") else ""
             return self._send(200, _login_page(lang=self._lang(q), notice=notice),
@@ -1207,6 +1257,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, res)
         if u.path == "/upload":
             return self._proxy_upload(q)
+        if u.path == "/prompt-sets":
+            return self._prompt_sets_proxy(q)
         return self._json(404, {"error": T("msg.not_found", lang)})
 
 
