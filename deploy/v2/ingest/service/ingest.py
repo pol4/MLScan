@@ -52,6 +52,10 @@ DATA_TMP = os.environ.get("DATA_TMP", "/var/tmp")
 MAX_UPLOAD = int(os.environ.get("MAX_UPLOAD", str(1 << 40)))  # 1 TiB
 
 _s3 = S3(S3_ENDPOINT, S3_ACCESS, S3_SECRET, region=S3_REGION, bucket=S3_BUCKET, timeout=3600)
+# Multipart-загрузка (этап P0-1, docs/15 §11.6): крупные объекты — параллельными частями.
+S3_MULTIPART_THRESHOLD = int(os.environ.get("S3_MULTIPART_THRESHOLD", str(64 * 1024 ** 2)))
+S3_PART_SIZE = int(os.environ.get("S3_PART_SIZE", str(64 * 1024 ** 2)))
+S3_PART_WORKERS = int(os.environ.get("S3_PART_WORKERS", "8"))
 _lock = threading.Lock()
 _uploads: dict[str, dict] = {}
 _stats = {"uploads": 0, "bytes": 0, "dedup": 0, "objects": 0}
@@ -189,9 +193,16 @@ class Handler(BaseHTTPRequestHandler):
             dedup = _s3.exists(key)
             if not dedup:
                 with open(tmp, "rb") as fh:
-                    st, _, _ = _s3.put_stream(key, fh, got, sha, "application/octet-stream")
-                if st not in (200, 201):
-                    raise RuntimeError(f"s3 put status {st}")
+                    if got >= S3_MULTIPART_THRESHOLD:
+                        res = _s3.put_stream_multipart(
+                            key, fh, got, sha, part_size=S3_PART_SIZE,
+                            workers=S3_PART_WORKERS, content_type="application/octet-stream")
+                        if res["status"] not in (200, 201):
+                            raise RuntimeError(f"s3 multipart status {res['status']}")
+                    else:
+                        st, _, _ = _s3.put_stream(key, fh, got, sha, "application/octet-stream")
+                        if st not in (200, 201):
+                            raise RuntimeError(f"s3 put status {st}")
         finally:
             try:
                 os.unlink(tmp)

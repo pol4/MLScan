@@ -58,6 +58,12 @@ if S3_ENABLED:
     _s3 = S3(S3_ENDPOINT, os.environ["S3_ACCESS_KEY"], os.environ["S3_SECRET_KEY"],
              region=os.environ.get("S3_REGION", "garage"), bucket=os.environ["S3_BUCKET"], timeout=3600)
 
+# Multipart-загрузка в S3 (этап P0-1, docs/15 §11.6): объекты ≥ порога грузятся
+# параллельными частями вместо одиночного PUT (снимает одно-поточный потолок).
+S3_MULTIPART_THRESHOLD = int(os.environ.get("S3_MULTIPART_THRESHOLD", str(64 * 1024 ** 2)))
+S3_PART_SIZE = int(os.environ.get("S3_PART_SIZE", str(64 * 1024 ** 2)))
+S3_PART_WORKERS = int(os.environ.get("S3_PART_WORKERS", "8"))
+
 # --- PostgreSQL (dual-write; не критично для работы сервиса) ---
 PG_HOST = os.environ.get("PGHOST", "")
 DB_ENABLED = bool(PG_HOST)
@@ -734,9 +740,18 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if not _s3.exists(key):
                     with open(tmp, "rb") as fh:
-                        st, _, _ = _s3.put_stream(key, fh, got, sha, "application/octet-stream")
-                    if st not in (200, 201):
-                        raise RuntimeError(f"s3 put status {st}")
+                        if got >= S3_MULTIPART_THRESHOLD:
+                            res = _s3.put_stream_multipart(
+                                key, fh, got, sha, part_size=S3_PART_SIZE,
+                                workers=S3_PART_WORKERS, content_type="application/octet-stream")
+                            if res["status"] not in (200, 201):
+                                raise RuntimeError(f"s3 multipart status {res['status']}")
+                            rec["s3_parts"] = res["parts"]
+                            rec["s3_multipart"] = True
+                        else:
+                            st, _, _ = _s3.put_stream(key, fh, got, sha, "application/octet-stream")
+                            if st not in (200, 201):
+                                raise RuntimeError(f"s3 put status {st}")
                 rec["s3_key"] = key
                 rec["dedup"] = _s3.exists(key)
             except Exception as exc:  # noqa: BLE001

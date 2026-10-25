@@ -1,0 +1,12 @@
+{
+  "name": "mlscan-ui-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Браузерные UI-тесты MLScan (puppeteer-core + установленный Chrome/Chromium)",
+  "scripts": {
+    "test": "node upload_ui_test.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^23.0.0"
+  }
+}
