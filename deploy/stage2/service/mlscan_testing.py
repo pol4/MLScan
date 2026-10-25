@@ -151,6 +151,27 @@ def _classify_and_record(name: str, fmt: str, size: int, family: str = "",
     return v3classifier.classify(filenames=[name], config=cfg, gguf_meta=gguf_meta, size_bytes=size)
 
 
+def _active_tenants() -> list[str]:
+    tenants = []
+    if DB_ENABLED:
+        try:
+            rows = db_query("SELECT DISTINCT COALESCE(subject,'shared') FROM upload_sessions "
+                            "UNION SELECT DISTINCT tenant FROM tasks") or []
+            tenants = [r[0] for r in rows if r and r[0]]
+        except Exception:  # noqa: BLE001
+            tenants = []
+    return tenants or ["shared"]
+
+
+def fair_share_weights() -> dict:
+    """Веса fair-share активных тенантов (приоритеты: ci=2, interactive=1, batch=0.5)."""
+    if v3quota is None:
+        return {}
+    tenants = _active_tenants()
+    pw = {t: (2.0 if str(t).startswith("ci") else 1.0) for t in tenants}
+    return v3quota.fair_share(tenants, pw)
+
+
 def _task_priority(subject: str) -> str:
     if v3pq is None:
         return "interactive"
@@ -170,9 +191,11 @@ def _enqueue_scan_task(rec: dict, subject: str) -> str | None:
         priority = _task_priority(subject)
         rank = v3pq.RANK.get(priority, 1) if v3pq is not None else 1
         task_id = rec["scan_id"]
+        fs = fair_share_weights()
         payload = json.dumps({"scan_id": rec["scan_id"], "name": rec.get("name", ""),
                               "fmt": rec.get("format", ""), "size": rec.get("size", 0),
-                              "strategy": strategy}, ensure_ascii=False)
+                              "strategy": strategy, "fair_share": fs.get(subject or "shared")},
+                             ensure_ascii=False)
         db_exec(v3tasks.enqueue_sql(task_id, subject or "shared", priority, rank, payload))
         rec["strategy"] = strategy
         rec["task_id"] = task_id
@@ -1047,6 +1070,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, stats())
         if u.path == "/detectors":
             return self._detectors_list()
+        if u.path == "/tenants/fairshare":
+            return self._tenants_fairshare()
         if u.path == "/v3/metrics":
             return self._v3_metrics()
         if u.path == "/v3/slo":
@@ -1604,6 +1629,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
 
+    def _tenants_fairshare(self) -> None:
+        return self._json(200, {"fair_share": fair_share_weights(), "tenants": _active_tenants(),
+                                "priority_weighting": {"ci": 2.0, "other": 1.0}})
+
     def _detectors_register(self) -> None:
         n = int(self.headers.get("Content-Length", "0") or "0")
         try:
@@ -1651,6 +1680,8 @@ class Handler(BaseHTTPRequestHandler):
                 reg.set("mlscan_v3_refs", int(r[2] or 0), {"tenant": r[0]})
             qd = db_query("SELECT COUNT(*) FROM tasks WHERE status='queued'")
             reg.set("mlscan_v3_queue_depth", int((qd[0][0] if qd else 0)))
+            for t, w in (fair_share_weights() or {}).items():
+                reg.set("mlscan_v3_fair_share", float(w), {"tenant": t})
         pipe = pipe_snapshot()
         reg.set("mlscan_v3_upload_mbps", float(pipe.get("avg_mbps") or 0))
         reg.set("mlscan_v3_upload_receive_seconds", float(pipe.get("receive_s") or 0))
