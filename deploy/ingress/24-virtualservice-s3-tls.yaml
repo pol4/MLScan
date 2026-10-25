@@ -1,0 +1,18 @@
+# S3 над TLS через Istio (HTTPS-listener 443 -> nodePort 30921): host s3.mlscan.local -> Garage:3900.
+# Терминация TLS на гейтвее (credentialName mlscan-tls, SAN *.mlscan.local); Host сохраняется,
+# поэтому подпись SigV4 в presigned-URL проверяется в Garage. Это «TLS-egress для S3» из P0.
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mlscan-s3-tls
+  namespace: mlscan-data
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  hosts: ["s3.mlscan.local"]
+  gateways: ["mlscan-ingress/mlscan-gateway"]
+  http:
+  - timeout: 24h
+    route:
+    - destination:
+        host: garage.mlscan-data.svc.cluster.local
+        port: {number: 3900}

@@ -22,7 +22,10 @@ have_ns() { kubectl get ns "$1" >/dev/null 2>&1; }
 echo "[3/6] VirtualServices (маршрутизация по хостам)"
 kubectl apply -f "$HERE/20-virtualservices.yaml"
 # S3 наружу через Istio TCP-passthrough (gateway:31400 -> Garage:3900), если развёрнута data
-if have_ns mlscan-data; then kubectl apply -f "$HERE/23-virtualservice-s3.yaml"; fi
+if have_ns mlscan-data; then
+  kubectl apply -f "$HERE/23-virtualservice-s3.yaml"
+  kubectl apply -f "$HERE/24-virtualservice-s3-tls.yaml"
+fi
 if have_ns mlscan-integrations; then
   kubectl apply -f "$HERE/21-virtualservices-l4.yaml"
 else
