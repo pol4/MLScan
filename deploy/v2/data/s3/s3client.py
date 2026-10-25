@@ -38,7 +38,7 @@ def _enc(s: str) -> str:
 
 
 def adaptive_part_size(size: int, max_parts: int = 10000, floor: int = 8 * 1024 * 1024,
-                       ceil: int = 512 * 1024 * 1024) -> int:
+                       ceil: int = 1024 * 1024 * 1024) -> int:
     """Размер части multipart: не больше max_parts частей, кратен 1 МиБ, в [floor, ceil]."""
     if size <= floor:
         return floor
@@ -212,6 +212,15 @@ class S3:
             except Exception:  # noqa: BLE001
                 pass
         return bytes(buf)
+
+    def copy_object(self, src_key: str, dst_key: str, content_type: str | None = None,
+                    src_bucket: str | None = None):
+        """Server-side copy (import): копирование объекта внутри S3 без перекачки через клиента."""
+        bkt = src_bucket if src_bucket is not None else self.bucket
+        extra = {"x-amz-copy-source": f"/{bkt}/{urllib.parse.quote(src_key)}"}
+        if content_type:
+            extra["content-type"] = content_type
+        return self._send("PUT", dst_key, body=b"", extra=extra)
 
     def exists(self, key: str) -> bool:
         try:

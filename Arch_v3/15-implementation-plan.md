@@ -256,7 +256,8 @@ P2/P6/P7/P8 частично параллельны после P1; P9 — пос
 | Фаза | Статус | Что сделано / осталось |
 |------|--------|------------------------|
 | P0 (data-plane) | **завершено (на стенде)** | Сделано: `range_get`/`range_get_stream` (unit+e2e на реальном Garage); общий пул `pool.pool_key` + `object_refs` (DDL+SQL, unit+e2e refcount на реальном PostgreSQL); **TLS-egress S3** — HTTPS-маршрут Istio `s3.mlscan.local:30921` → Garage (`deploy/ingress/24-virtualservice-s3-tls.yaml`) + e2e с АРМ (presigned-multipart по HTTPS, `tests/e2e/run_s3_tls_arm_e2e.sh`). Прототип многоузлового S3: **3 инстанса Garage, RF=2**, `deploy/v3/data/multinode/` (+ e2e: 3 узла, долговечность при выводе узла). Осталось: интеграция пула/ingest (уходит в P1), TLS-egress сделан. Физическая изоляция — на целевом железе (см. README прототипа). |
-| P1…P10, L0…L4 | не начато | По порядку плана. |
+| P1 (ingest v3) | **в работе** | Сделано: server-side copy (`s3client.copy_object`, unit+e2e на реальном Garage); адаптивный размер части до 1 ГиБ; модуль квот/fair-share (`deploy/v3/ingest/quota.py`, unit `tests/v3/test_quota.py`); presigned через TLS (из P0). Осталось: интеграция в сервис (эндпоинты `/uploads/*`, `/objects/import`, применение квот/throttling), resume-состояние в БД на стороне сервиса. |
+| P2…P10, L0…L4 | не начато | По порядку плана. |
 
 Артефакты P0 (шаг 1): `deploy/v2/data/s3/s3client.py` (range), `deploy/v3/data/pool.py`,
 `deploy/v3/data/objectrefs.py`, `deploy/v3/db/schema-v3.sql`; тесты `tests/s3/test_range.py`,

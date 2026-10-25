@@ -201,7 +201,43 @@ class AdaptiveSizeTest(unittest.TestCase):
         self.assertEqual(p % (1024 * 1024), 0)
 
     def test_ceil(self):
-        self.assertEqual(adaptive_part_size(10 ** 15), 512 * 1024 * 1024)
+        self.assertEqual(adaptive_part_size(10 ** 15), 1024 * 1024 * 1024)
+
+    def test_1gib_ceiling_for_large(self):
+        # P1: для очень больших объектов часть может быть до 1 ГиБ
+        p = adaptive_part_size(4 * 1024 ** 4)  # 4 ТиБ
+        self.assertLessEqual(p, 1024 * 1024 * 1024)
+        self.assertGreaterEqual(p, 8 * 1024 * 1024)
+
+
+class CopyTest(unittest.TestCase):
+    """P1: server-side copy (import) — копирование внутри S3 без перекачки."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = FakeS3Server(); cls.srv.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.__exit__(None, None, None)
+
+    def make(self):
+        return S3(self.srv.endpoint, ACCESS, SECRET, region="garage", bucket="mlscan-artifacts")
+
+    def test_copy_object_roundtrip(self):
+        s3 = self.make()
+        body = os.urandom(50_000)
+        s3.put("src/model.bin", body)
+        st, _, _ = s3.copy_object("src/model.bin", "dst/model.bin")
+        self.assertIn(st, (200, 201))
+        st2, _, got = s3.get("dst/model.bin")
+        self.assertEqual(st2, 200)
+        self.assertEqual(got, body)
+
+    def test_copy_missing_source(self):
+        s3 = self.make()
+        st, _, _ = s3.copy_object("no/such.bin", "dst/x.bin")
+        self.assertGreaterEqual(st, 400)
 
 
 if __name__ == "__main__":

@@ -156,6 +156,20 @@ class MultipartS3(http.server.BaseHTTPRequestHandler):
         if not self._verify("PUT", path, qpairs, ph):
             return self._deny()
         q = dict(qpairs)
+        csrc = self.headers.get("x-amz-copy-source") or self.headers.get("X-Amz-Copy-Source")
+        if csrc:
+            src_path = urllib.parse.unquote(csrc)
+            if not src_path.startswith("/"):
+                src_path = "/" + src_path
+            with self.store.lock:
+                data = self.store.objects.get(src_path)
+                if data is None:
+                    return self._xml(404, b"<Error><Code>NoSuchKey</Code></Error>")
+                self.store.objects[path] = data
+            et = hashlib.md5(data).hexdigest()
+            xml = (f"<?xml version='1.0'?><CopyObjectResult><ETag>&quot;{et}&quot;</ETag>"
+                   f"</CopyObjectResult>").encode()
+            return self._xml(200, xml)
         if "partNumber" in q and "uploadId" in q:
             uid, n = q["uploadId"], int(q["partNumber"])
             with self.store.lock:
