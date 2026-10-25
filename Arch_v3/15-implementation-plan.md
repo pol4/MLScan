@@ -387,3 +387,54 @@ P2/P6/P7/P8 частично параллельны после P1; P9 — пос
 **Вывод:** H2 — снят (был ошибкой диагностики: pod-egress, а не отсутствие интернета). CPU-пул и
 HF→llama.cpp→10 вопросов — работают. Kata+кастомное ядро и GPU-пул — изменения на уровне узла/железа,
 требуют согласования (после чего делаются по шагам 1–4).
+
+### 8.9 Шаг 4 подробно: Tetragon-агент контейнером в том же pod (in-guest)
+
+**Почему именно in-guest.** В Kata syscalls выполняются внутри микро-ВМ; eBPF на **хосте** видит только
+выходы VM (KVM/virtio), а не `execve/openat/connect/mmap` гостя. Значит, чтобы наблюдать работу движка,
+агент eBPF (Tetragon) должен работать **в том же pod/микро-ВМ**, что и `engine`.
+
+**Что нужно (предпосылки).**
+1) **Guest-ядро с BTF** (CO-RE для Tetragon). Факты по узлу:
+   - активный Kata-конфиг (`configuration.toml → configuration-qemu.toml`) использует
+     `kernel = /opt/kata/share/kata-containers/vmlinux.container`, у которого `CONFIG_DEBUG_INFO_BTF` **выключен**;
+   - на узле есть вариант **с BTF**: `config-6.18.35-197-debug` (`BTF=1`) и `vmlinuz-debug.container`;
+   - host-ядро имеет BTF (`/sys/kernel/btf/vmlinux`) — но для in-guest это не помогает.
+   → Нужно переключить Kata-runtime на BTF-ядро (или собрать `vmlinux` с BTF) — **node-level** изменение.
+2) **Tetragon-агент как контейнер в том же pod** (`quay.io/cilium/tetragon`), capabilities
+   `BPF, PERFMON, SYS_ADMIN, SYS_RESOURCE` (или `privileged` — внутри VM это допустимо), монтирования:
+   `/sys/kernel/btf` (BTF гостя), `/sys/fs/bpf`, `/sys/kernel/debug` (tracefs), `/proc`.
+3) **Политики трассировки** (TracingPolicy CR или встроенные политики агента) на: `execve`
+   (shell/интерпретатор), `connect` (внешние адреса), открытие honeypot-путей (`~/.aws`,`~/.ssh`,`~/.kube`),
+   `mmap(PROT_EXEC)`, загрузку модулей.
+4) **Экспорт событий**: агент пишет JSON-строки в общий том `/events` (`emptyDir` в pod) или в gRPC/`stdout`.
+5) **Маппинг в findings**: наш `deploy/v3/llm/tetragon.py` уже превращает события в `LLM-B-01..05`
+   (exec/egress/honeypot/mem-exec/module) с привязкой к фазе/пробе/нонсу; `engine` и `probe-runner`
+   уже в одном pod (`llm_env.py`), значит Tetragon видит и запросы проб, и поведение движка.
+
+**Скелет pod (дополнение к `llm_env.py`).**
+```yaml
+- name: tetragon-agent
+  image: quay.io/cilium/tetragon:v1.2.1
+  securityContext: {privileged: true, capabilities: {drop: ["ALL"], add: ["BPF","PERFMON","SYS_ADMIN","SYS_RESOURCE"]}}
+  volumeMounts:
+  - {name: btf, mountPath: /sys/kernel/btf, readOnly: true}
+  - {name: bpf, mountPath: /sys/fs/bpf}
+  - {name: debugfs, mountPath: /sys/kernel/debug}
+  - {name: events, mountPath: /events}
+```
+
+**Порядок работ (после согласования node-level правок).**
+1) Проверить/выбрать BTF-ядро Kata; указать его в `configuration-*.toml` (kata-deploy в `kube-system`).
+2) Перезапустить `kata-runtime`/ноду (перерыв Kata-нагрузок узла).
+3) В guest-проверке pod’а убедиться: `ls /sys/kernel/btf/vmlinux` присутствует.
+4) Запустить Tetragon-агент (см. выше) и убедиться, что идут события (тест: `execve /bin/sh` в engine).
+5) События → `/events` → `tetragon.py.map_findings` → findings `LLM-B-*` → coverage/вердикт bundle (L4).
+
+**Риски/ограничения.** Изменение ядра/конфига Kata — **общий системный компонент узла**: влияет на все
+Kata-нагрузки, требует перезапуска runtime и аккуратной проверки совместимости rootfs (`kata-containers.img`)
+с выбранным `vmlinuz/vmlinux`. Альтернативы без правок узла:
+- **ptrace/`strace`-сайдкар** в guest (без BTF): `strace -f -e trace=execve,connect,openat,mmap` →
+  тот же маппинг в `LLM-B-*` (слабее по точности, но работает сегодня);
+- **non-Kata hardened pod** с движком: eBPF на **хосте** через BTF хост-ядра видит syscalls контейнера
+  (работает сразу, без правок `kube-system`) — хорошо для проверки механизма, но без изоляции Kata.
