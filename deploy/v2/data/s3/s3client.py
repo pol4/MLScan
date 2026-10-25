@@ -295,7 +295,7 @@ class S3:
                 remaining -= len(chunk)
                 if progress:
                     progress(sent, length)
-                if len(futures) >= workers * 2:
+                if len(futures) >= workers:      # ограничить буфер в памяти (~workers*part_size)
                     done_n = next(iter(futures))
                     results[done_n] = futures.pop(done_n).result()
             for nn, fut in futures.items():

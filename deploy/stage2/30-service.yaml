@@ -57,6 +57,9 @@ spec:
         - name: PGPASSWORD
           valueFrom: {secretKeyRef: {name: mlscan-pg, key: POSTGRES_PASSWORD}}
         - {name: MAX_UPLOAD, value: "1099511627776"}
+        - {name: S3_PART_SIZE, value: "67108864"}
+        - {name: S3_PART_WORKERS, value: "16"}
+        - {name: DIRECT_PART_SIZE, value: "268435456"}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: MLSCAN_LANG, value: "ru"}
         - {name: PYTHONUTF8, value: "1"}

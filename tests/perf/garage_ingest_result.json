@@ -1,0 +1,10 @@
+{
+  "size": 536870912,
+  "single_mbps": 32.2,
+  "multipart_mbps": 43.0,
+  "workers": 8,
+  "single_s": 16.68,
+  "multi_s": 12.48,
+  "multipart_parts": 16,
+  "verify_ok": true
+}
