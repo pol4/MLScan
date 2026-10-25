@@ -562,6 +562,8 @@ graph TB
 песочница видит только Artifact-сервер (по одноразовому токену), но не S3/PVC; Job закреплён по
 digest и допускается Kyverno-политикой.
 
+Внешний доступ к S3 (АРМ/CI): Garage вынесен через Istio-гейтвей **TCP-passthrough** (`mlscan-gateway` server `tcp-s3:31400` → nodePort **31317** → `garage:3900`, VirtualService `mlscan-data/mlscan-s3`). Presigned-URL формируются на внешний адрес `S3_PUBLIC_ENDPOINT` (на стенде `http://<NODE_IP>:31317`; в среде с DNS — `http://s3.mlscan.local:31317`). Passthrough сохраняет заголовок `Host`, поэтому подпись SigV4 проверяется в Garage. Примечание: здесь TLS не терминируется (при необходимости — TLS-listener/passthrough или VPN). Проверка с АРМ — `tests/e2e/run_direct_upload_arm_e2e.sh`.
+
 ---
 
 ## 14. Диаграммы состояния (state)

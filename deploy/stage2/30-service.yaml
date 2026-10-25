@@ -50,6 +50,10 @@ spec:
           valueFrom: {secretKeyRef: {name: mlscan-s3, key: ACCESS_KEY}}
         - name: S3_SECRET_KEY
           valueFrom: {secretKeyRef: {name: mlscan-s3, key: SECRET_KEY}}
+        # Внешний адрес S3 для presigned-URL (клиенты на АРМ/CI). На стенде задаётся как
+        # http://<NODE_IP>:31317 (см. tests/e2e/run_direct_upload_arm_e2e.sh); в среде с DNS —
+        # http://s3.mlscan.local:31317 (требуется резолвинг имени). TCP-passthrough Istio.
+        - {name: S3_PUBLIC_ENDPOINT, value: "http://s3.mlscan.local:31317"}
         - {name: PGHOST, value: postgres.mlscan-data.svc.cluster.local}
         - {name: PGPORT, value: "5432"}
         - {name: PGUSER, value: mlscan}

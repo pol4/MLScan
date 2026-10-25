@@ -544,6 +544,8 @@ graph TB
   OP --> GARADM
 ```
 
+External S3 access (workstation/CI): Garage is exposed through the Istio gateway via **TCP passthrough** (`mlscan-gateway` server `tcp-s3:31400` → nodePort **31317** → `garage:3900`, VirtualService `mlscan-data/mlscan-s3`). Presigned URLs use the external `S3_PUBLIC_ENDPOINT` (stand: `http://<NODE_IP>:31317`; with DNS: `http://s3.mlscan.local:31317`). Passthrough preserves the `Host` header, so the SigV4 signature verifies in Garage. Note: TLS is not terminated here (use a TLS listener/passthrough or VPN if required). Workstation check — `tests/e2e/run_direct_upload_arm_e2e.sh`.
+
 ---
 
 ## 14. State diagrams

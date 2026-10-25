@@ -14,3 +14,9 @@ spec:
     hosts:
     - mlscan.local
     - "*.mlscan.local"
+  # S3 (Garage) наружу для клиентов на АРМ: TCP-passthrough на уже выставленном в
+  # istio-ingressgateway порту 31400 (nodePort 31317). Passthrough сохраняет заголовок
+  # Host, поэтому SigV4-подпись presigned-URL продолжает проверяться в Garage.
+  - port: {number: 31400, name: tcp-s3, protocol: TCP}
+    hosts:
+    - "*"

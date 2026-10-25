@@ -20,3 +20,7 @@ spec:
     hosts:
     - mlscan.local
     - "*.mlscan.local"
+  # S3 наружу (TCP-passthrough, nodePort 31317) — сохраняем при HTTPS-варианте Gateway.
+  - port: {number: 31400, name: tcp-s3, protocol: TCP}
+    hosts:
+    - "*"

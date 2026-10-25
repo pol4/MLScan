@@ -21,6 +21,8 @@ have_ns() { kubectl get ns "$1" >/dev/null 2>&1; }
 
 echo "[3/6] VirtualServices (маршрутизация по хостам)"
 kubectl apply -f "$HERE/20-virtualservices.yaml"
+# S3 наружу через Istio TCP-passthrough (gateway:31400 -> Garage:3900), если развёрнута data
+if have_ns mlscan-data; then kubectl apply -f "$HERE/23-virtualservice-s3.yaml"; fi
 if have_ns mlscan-integrations; then
   kubectl apply -f "$HERE/21-virtualservices-l4.yaml"
 else
@@ -39,6 +41,11 @@ have_ns mlscan-integrations && kubectl apply -f "$ROOT/deploy/stage4/30-service.
   || echo "  (mlscan-integrations не развёрнут — уровень 4)"
 have_ns mlscan-ops && kubectl apply -f "$ROOT/deploy/stage5/20-service.yaml" \
   || echo "  (mlscan-ops не развёрнут — уровень 5)"
+# Применение манифеста stage2 сбрасывает SANDBOX_IMAGE на тег: возвращаем закрепление по digest
+# (Kyverno требует digest), чтобы динамика не блокировалась.
+if have_ns mlscan-testing && [ -f /tmp/mlscan-sandbox-digest ]; then
+  kubectl -n mlscan-testing set env deploy/mlscan-testing SANDBOX_IMAGE="$(cat /tmp/mlscan-sandbox-digest)" >/dev/null 2>&1 || true
+fi
 
 echo "[5/6] Egress-политики (deny-by-default + DNS + внутрикластерный allowlist)"
 # Определяем реальный адрес API-сервера: сначала EndpointSlice (k8s 1.33+),
