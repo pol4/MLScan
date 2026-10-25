@@ -76,6 +76,10 @@ DIRECT_MATERIALIZE_MAX = int(os.environ.get("DIRECT_MATERIALIZE_MAX", str(4 * 10
 # статика по префиксу, а динамика честно помечается как неприменимая.
 SANDBOX_DYNAMIC_MAX_BYTES = int(os.environ.get("SANDBOX_DYNAMIC_MAX_BYTES",
                                                str(6 * 1024 ** 3)))
+# v3 (P1): квоты ingest (0 = без лимита)
+MAX_OBJECT_BYTES = int(os.environ.get("MAX_OBJECT_BYTES", "0"))
+MAX_BYTES_PER_DAY = int(os.environ.get("MAX_BYTES_PER_DAY", "0"))
+MAX_CONCURRENT_UPLOADS = int(os.environ.get("MAX_CONCURRENT_UPLOADS", "8"))
 _pending_uploads: dict = {}
 _pending_lock = threading.Lock()
 
@@ -91,6 +95,32 @@ def _save_session(info: dict, status: str) -> None:
             f"{_lit(status)},{_lit(info.get('subject'))}) "
             "ON CONFLICT (upload_id) DO UPDATE SET status=EXCLUDED.status, updated_at=now(), "
             "s3_key=EXCLUDED.s3_key, part_size=EXCLUDED.part_size")
+
+
+def _daily_bytes(subject: str) -> int:
+    if not DB_ENABLED:
+        return 0
+    rows = db_query("SELECT COALESCE(SUM(size),0) FROM upload_sessions WHERE subject="
+                    + _lit(subject) + " AND created::date = current_date")
+    try:
+        return int(rows[0][0]) if rows else 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _quota_ok(subject: str, size: int) -> tuple[bool, str, int]:
+    """Проверить квоту загрузки. Возвращает (ok, code, http_status)."""
+    if v3quota is None:
+        return True, "ok", 200
+    qu = v3quota.Quota(max_bytes_per_day=MAX_BYTES_PER_DAY, max_object_bytes=MAX_OBJECT_BYTES,
+                       max_concurrent_uploads=MAX_CONCURRENT_UPLOADS)
+    with _pending_lock:
+        conc = len(_pending_uploads)
+    ok, code = v3quota.check_upload(qu, size=size, used_bytes_today=_daily_bytes(subject),
+                                    concurrent_uploads=conc)
+    if ok:
+        return True, code, 200
+    return False, code, (429 if code == v3quota.DENY_DAILY else 403)
 
 
 def _load_session_from_db(upload_id: str) -> dict | None:
@@ -199,6 +229,19 @@ try:
     import i18n  # noqa: E402
 except Exception:  # noqa: BLE001
     i18n = None  # type: ignore
+
+# v3 (P1): квоты ingest + общий пул/refs (модули монтируются в /opt/v3ingest)
+sys.path.insert(0, "/opt/v3ingest")
+try:
+    import quota as v3quota  # noqa: E402
+except Exception:  # noqa: BLE001
+    v3quota = None  # type: ignore
+try:
+    import pool as v3pool  # noqa: E402
+    import objectrefs as v3refs  # noqa: E402
+except Exception:  # noqa: BLE001
+    v3pool = None  # type: ignore
+    v3refs = None  # type: ignore
 
 
 def T(key: str, lang: str = "ru", **fmt) -> str:
@@ -1017,6 +1060,9 @@ class Handler(BaseHTTPRequestHandler):
         if size > MAX_UPLOAD:
             return self._json(413, {"error": f"artifact too large ({size} > {MAX_UPLOAD})"})
         tenant = self._tenant()
+        ok_q, code_q, http_q = _quota_ok(tenant, size)
+        if not ok_q:
+            return self._json(http_q, {"error": code_q, "limit": "quota"})
         key = f"tenant/{tenant}/{sha}/{name}"
         if _s3.exists(key):
             uid = "dedup-" + uuid.uuid4().hex
@@ -1129,6 +1175,58 @@ class Handler(BaseHTTPRequestHandler):
                                 "sha256": info["sha256"], "s3_key": info["key"],
                                 "tenant": info["tenant"]})
 
+    def _objects_import(self) -> None:
+        """v3 (P1): server-side copy объекта в общий пул (import) без перекачки."""
+        if not (S3_ENABLED and _s3 is not None):
+            return self._json(503, {"error": "S3 не сконфигурирован"})
+        if v3pool is None:
+            return self._json(503, {"error": "v3 pool module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        src_key = body.get("src_key") or ""
+        sha = (body.get("sha256") or "").lower()
+        try:
+            size = int(body.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        name = os.path.basename(body.get("name") or os.path.basename(src_key) or "imported.bin")
+        if not src_key:
+            return self._json(400, {"error": "src_key обязателен"})
+        if not v3pool.is_sha256(sha):
+            return self._json(400, {"error": "sha256 обязателен (64 hex)"})
+        if size <= 0:
+            return self._json(400, {"error": "size обязателен (>0)"})
+        tenant = self._tenant()
+        ok_q, code_q, http_q = _quota_ok(tenant, size)
+        if not ok_q:
+            return self._json(http_q, {"error": code_q, "limit": "quota"})
+        key = v3pool.pool_key(sha)
+        dedup = _s3.exists(key)
+        if not dedup:
+            try:
+                st, _, data = _s3.copy_object(src_key, key)
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"S3 copy: {type(exc).__name__}: {exc}"})
+            if st not in (200, 201):
+                return self._json(502, {"error": f"S3 copy status {st}: {data[:120]!r}"})
+        if v3refs is not None and DB_ENABLED:
+            try:
+                db_exec(v3refs.ref_add_sql(tenant, sha, name, size))
+            except Exception:  # noqa: BLE001
+                pass
+        if authz is not None:
+            try:
+                authz.audit(getattr(self, "_subject", "anonymous"), "object_import", "object", sha,
+                            getattr(self, "_rid", ""), self.client_address[0],
+                            {"src_key": src_key, "dst_key": key, "tenant": tenant, "size": size})
+            except Exception:  # noqa: BLE001
+                pass
+        return self._json(200, {"key": key, "sha256": sha, "size": size, "tenant": tenant,
+                                "dedup": dedup})
+
     def do_DELETE(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         if self._require() is None:
@@ -1146,6 +1244,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._uploads_initiate()
         if u.path == "/scans/complete":
             return self._scans_complete()
+        if u.path == "/objects/import":
+            return self._objects_import()
         if u.path in ("/scans", "/scans/upload", "/upload"):
             ident = getattr(self, "_subject", "") or (self.client_address[0] if self.client_address else "?")
             ok, retry = rate_allow(ident)

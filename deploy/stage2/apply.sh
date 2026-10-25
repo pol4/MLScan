@@ -15,6 +15,11 @@ python3 "$HERE/40-gen-configmaps.py" | kubectl apply -f -
 # S3-клиент (stdlib) для режима S3
 kubectl -n "$NS" create configmap mlscan-s3client \
   --from-file=s3client.py="$HERE/../v2/data/s3/s3client.py" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$NS" create configmap mlscan-v3-ingest \
+  --from-file=quota.py="$HERE/../v3/ingest/quota.py" \
+  --from-file=pool.py="$HERE/../v3/data/pool.py" \
+  --from-file=objectrefs.py="$HERE/../v3/data/objectrefs.py" \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 # Реквизиты S3 (Secret mlscan-s3 из mlscan-data -> mlscan-testing)
 if kubectl -n mlscan-data get secret mlscan-s3 >/dev/null 2>&1; then
   kubectl -n mlscan-data get secret mlscan-s3 -o json \

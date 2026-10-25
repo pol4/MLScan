@@ -9,7 +9,10 @@ NODE_IP="$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="
 S3_TLS_NP="$(kubectl -n istio-system get svc istio-ingressgateway -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}')"
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
-echo "node=$NODE_IP s3-tls=$NODE_IP:$S3_TLS_NP"
+PREV="$(kubectl -n "$NS" get deploy mlscan-testing -o jsonpath='{range .spec.template.spec.containers[0].env[?(@.name=="S3_PUBLIC_ENDPOINT")]}{.value}{end}')"
+restore(){ if [ -n "$PREV" ]; then kubectl -n "$NS" set env deploy/mlscan-testing "S3_PUBLIC_ENDPOINT=$PREV" >/dev/null 2>&1; else kubectl -n "$NS" set env deploy/mlscan-testing S3_PUBLIC_ENDPOINT- >/dev/null 2>&1; fi; }
+trap restore EXIT
+echo "node=$NODE_IP s3-tls=$NODE_IP:$S3_TLS_NP prev_pub=${PREV:-<unset>}"
 kubectl -n "$NS" set env deploy/mlscan-testing "S3_PUBLIC_ENDPOINT=https://s3.mlscan.local:$S3_TLS_NP" >/dev/null
 kubectl -n "$NS" rollout status deploy/mlscan-testing --timeout=180s >/dev/null
 sleep 2

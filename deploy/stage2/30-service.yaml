@@ -97,6 +97,7 @@ spec:
         - {name: formats, mountPath: /opt/formats, readOnly: true}
         - {name: authz, mountPath: /opt/auth, readOnly: true}
         - {name: i18n, mountPath: /opt/i18n, readOnly: true}
+        - {name: v3ingest, mountPath: /opt/v3ingest, readOnly: true}
         - {name: modeltmp, mountPath: /var/tmp}
         - {name: tmp, mountPath: /tmp}
       volumes:
@@ -108,6 +109,7 @@ spec:
       - {name: formats, configMap: {name: mlscan-formats}}
       - {name: authz, configMap: {name: mlscan-authz}}
       - {name: i18n, configMap: {name: mlscan-i18n}}
+      - {name: v3ingest, configMap: {name: mlscan-v3-ingest}}
       - {name: modeltmp, emptyDir: {sizeLimit: 120Gi}}
       - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
 ---
