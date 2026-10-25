@@ -80,3 +80,38 @@ CREATE TABLE IF NOT EXISTS llm_events (
   created TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_llm_events_scan ON llm_events(scan_id);
+
+-- L3: наборы тестов (XLSX→БД) и оценка ответов
+CREATE TABLE IF NOT EXISTS prompt_sets (
+  version TEXT PRIMARY KEY,
+  name TEXT,
+  cases TEXT,
+  warnings TEXT,
+  errors TEXT,
+  active BOOLEAN NOT NULL DEFAULT false,
+  created TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS llm_prompts (
+  prompt_set TEXT NOT NULL,
+  id TEXT,
+  domain TEXT,
+  prompt TEXT,
+  reference TEXT,
+  criticality INT,
+  severity TEXT,
+  weight INT,
+  tolerance REAL,
+  policy_class TEXT,
+  class_reviewed BOOLEAN,
+  PRIMARY KEY (prompt_set, id)
+);
+CREATE TABLE IF NOT EXISTS llm_scores (
+  scan_id TEXT,
+  prompt_set TEXT,
+  passed INT,
+  total INT,
+  safety_fail INT,
+  pass_rate REAL,
+  details TEXT,
+  created TIMESTAMPTZ DEFAULT now()
+);

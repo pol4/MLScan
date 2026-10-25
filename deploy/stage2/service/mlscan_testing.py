@@ -22,9 +22,9 @@ Artifact-сервер (8090):
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import http.client
+import base64
 import json
 import os
 import secrets
@@ -363,11 +363,15 @@ try:  # v3 (L0): классификатор LLM + binding/bundle
     import binding as v3binding  # noqa: E402
     import llm_env as v3llmenv  # noqa: E402
     import tetragon as v3tetragon  # noqa: E402
+    import promptset as v3promptset  # noqa: E402
+    import evaluators as v3evaluators  # noqa: E402
 except Exception:  # noqa: BLE001
     v3classifier = None  # type: ignore
     v3binding = None  # type: ignore
     v3llmenv = None  # type: ignore
     v3tetragon = None  # type: ignore
+    v3promptset = None  # type: ignore
+    v3evaluators = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3control")
 try:  # v3 (P2): персистентная очередь + orchestrator + тенанты
@@ -1010,6 +1014,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"scans": list_scans(), "language": lang})
         if u.path == "/stats":
             return self._json(200, stats())
+        if u.path == "/prompt-sets/active":
+            return self._prompt_sets_active()
         if u.path.startswith("/llm/events/"):
             return self._llm_events_get(u.path.split("/", 3)[3])
         if u.path == "/images/verify":
@@ -1335,6 +1341,113 @@ class Handler(BaseHTTPRequestHandler):
                                 "sha256": info["sha256"], "s3_key": info["key"],
                                 "tenant": info["tenant"]})
 
+    def _prompt_sets_upload(self) -> None:
+        """L3: загрузка набора тестов XLSX (админ) → парсинг → БД/версия (активная до новой)."""
+        if v3promptset is None:
+            return self._json(503, {"error": "v3 promptset module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        name = os.path.basename(body.get("name") or "questions.xlsx")
+        content = body.get("content_b64") or ""
+        if not content:
+            return self._json(400, {"error": "content_b64 обязателен"})
+        try:
+            raw = base64.b64decode(content)
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad base64: {exc}"})
+        try:
+            parsed = v3promptset.parse_xlsx(raw, version=body.get("version", ""))
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"parse: {type(exc).__name__}: {exc}"})
+        if parsed.get("errors") and not parsed.get("cases"):
+            return self._json(400, {"error": "нет валидных кейсов", "errors": parsed["errors"]})
+        ver = parsed["version"]
+        if DB_ENABLED:
+            try:
+                db_exec("UPDATE prompt_sets SET active=false WHERE active")
+                db_exec("INSERT INTO prompt_sets(version,name,cases,warnings,errors,active) VALUES ("
+                        f"{_lit(ver)},{_lit(name)},"
+                        f"{_lit(json.dumps(parsed['cases'], ensure_ascii=False))},"
+                        f"{_lit(json.dumps(parsed['warnings'], ensure_ascii=False))},"
+                        f"{_lit(json.dumps(parsed['errors'], ensure_ascii=False))},true) "
+                        "ON CONFLICT (version) DO UPDATE SET active=true, name=EXCLUDED.name, "
+                        "cases=EXCLUDED.cases, warnings=EXCLUDED.warnings, errors=EXCLUDED.errors")
+                for c in parsed["cases"]:
+                    db_exec("INSERT INTO llm_prompts(prompt_set,id,domain,prompt,reference,criticality,"
+                            "severity,weight,tolerance,policy_class,class_reviewed) VALUES ("
+                            f"{_lit(ver)},{_lit(str(c['id']))},{_lit(c['domain'])},{_lit(c['prompt'])},"
+                            f"{_lit(c['reference'])},{int(c['criticality'])},{_lit(c['severity'])},"
+                            f"{int(c['weight'])},{float(c['tolerance'])},{_lit(c['policy_class'])},"
+                            f"{'true' if c['class_reviewed'] else 'false'}) "
+                            "ON CONFLICT (prompt_set,id) DO UPDATE SET domain=EXCLUDED.domain, "
+                            "prompt=EXCLUDED.prompt, reference=EXCLUDED.reference, "
+                            "criticality=EXCLUDED.criticality, severity=EXCLUDED.severity, "
+                            "weight=EXCLUDED.weight, tolerance=EXCLUDED.tolerance, "
+                            "policy_class=EXCLUDED.policy_class, class_reviewed=EXCLUDED.class_reviewed")
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(201, {"version": ver, "cases": len(parsed["cases"]),
+                                "warnings": parsed["warnings"], "errors": parsed["errors"]})
+
+    def _prompt_sets_active(self) -> None:
+        if v3promptset is None:
+            return self._json(503, {"error": "v3 promptset module unavailable"})
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT version,name,cases,warnings,errors FROM prompt_sets WHERE active "
+                        "ORDER BY created DESC LIMIT 1")
+        if not rows:
+            return self._json(404, {"error": "нет активного набора"})
+        r = rows[0]
+        cases = json.loads(r[2] or "[]")
+        reviewed = sum(1 for c in cases if c.get("class_reviewed"))
+        return self._json(200, {"version": r[0], "name": r[1], "cases": len(cases),
+                                "class_reviewed": reviewed,
+                                "warnings": json.loads(r[3] or "[]"),
+                                "errors": json.loads(r[4] or "[]")})
+
+    def _llm_score(self) -> None:
+        """L3: оценка ответов (правила; опц. judge) с допуском по критичности + агрегация."""
+        if v3evaluators is None or v3promptset is None:
+            return self._json(503, {"error": "v3 evaluators module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        responses = body.get("responses") or {}
+        ver = body.get("version") or ""
+        if not ver and DB_ENABLED:
+            rows = db_query("SELECT version,cases FROM prompt_sets WHERE active ORDER BY created DESC LIMIT 1")
+            if rows:
+                ver, cases = rows[0][0], json.loads(rows[0][1] or "[]")
+            else:
+                cases = []
+        else:
+            cases = json.loads(db_query("SELECT cases FROM prompt_sets WHERE version=" + _lit(ver))[0][0]) if DB_ENABLED else []
+        results = []
+        for c in cases:
+            key = str(c["id"])
+            if key not in responses and key not in {str(k) for k in responses}:
+                continue
+            answers = responses.get(key) or responses.get(int(c["id"]) if str(c["id"]).isdigit() else key) or []
+            results.append(v3evaluators.evaluate_case(c, answers))
+        agg = v3evaluators.aggregate(results)
+        agg.update({"version": ver})
+        if DB_ENABLED and body.get("scan_id"):
+            try:
+                db_exec("INSERT INTO llm_scores(scan_id,prompt_set,passed,total,safety_fail,pass_rate,details) "
+                        "VALUES (" + ",".join([_lit(body["scan_id"]), _lit(ver), str(int(agg["passed"])),
+                                               str(int(agg["total"])), str(int(agg["safety_fail"])),
+                                               str(float(agg["pass_rate"])),
+                                               _lit(json.dumps(results, ensure_ascii=False))]) + ")")
+            except Exception:  # noqa: BLE001
+                pass
+        return self._json(200, agg)
+
     def _llm_events(self) -> None:
         """L2: принять события eBPF/Tetragon, смапить в findings (LLM-B-*), сохранить и вернуть."""
         if v3tetragon is None:
@@ -1573,6 +1686,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._llm_precheck()
         if u.path == "/llm/events":
             return self._llm_events()
+        if u.path == "/prompt-sets":
+            return self._prompt_sets_upload()
+        if u.path == "/llm/score":
+            return self._llm_score()
         if u.path in ("/scans", "/scans/upload", "/upload"):
             ident = getattr(self, "_subject", "") or (self.client_address[0] if self.client_address else "?")
             ok, retry = rate_allow(ident)
