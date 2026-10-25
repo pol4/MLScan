@@ -121,5 +121,49 @@ class MultipartTest(unittest.TestCase):
         self.assertGreaterEqual(st, 400)
 
 
+class PresignTest(unittest.TestCase):
+    """Проверки presigned-URL (P0-2): структура, подпись, публичный хост."""
+
+    def _s3(self, public=""):
+        return S3("http://127.0.0.1:3900", ACCESS, SECRET, region="garage",
+                  bucket="mlscan-artifacts", public_endpoint=public)
+
+    def test_presign_contains_signature_and_query(self):
+        url = self._s3().presign_upload_part("k/model.bin", "UID123", 3)
+        self.assertIn("X-Amz-Signature=", url)
+        self.assertIn("X-Amz-Algorithm=AWS4-HMAC-SHA256", url)
+        self.assertIn("partNumber=3", url)
+        self.assertIn("uploadId=UID123", url)
+        self.assertIn("/mlscan-artifacts/k/model.bin?", url)
+
+    def test_presign_signature_matches_recompute(self):
+        import hashlib as H
+        import hmac as M
+        import urllib.parse as UP
+        s3 = self._s3()
+        url = s3.presign_upload_part("k/x.bin", "U1", 1, expires=600)
+        q = UP.parse_qsl(UP.urlsplit(url).query, keep_blank_values=True)
+        qd = dict(q)
+        sig_got = qd.pop("X-Amz-Signature")
+        cq = "&".join(f"{UP.quote(k, safe='-_.~')}={UP.quote(v, safe='-_.~')}"
+                      for k, v in sorted(qd.items()))
+        path = "/mlscan-artifacts/k/x.bin"
+        ch = f"host:{s3.pub_host}:{s3.pub_port}\n"
+        creq = "\n".join(["PUT", path, cq, ch, "host", "UNSIGNED-PAYLOAD"])
+        scope = qd["X-Amz-Credential"].split("/", 1)[1]
+        sts = "\n".join(["AWS4-HMAC-SHA256", qd["X-Amz-Date"], scope,
+                         H.sha256(creq.encode()).hexdigest()])
+        ds = qd["X-Amz-Credential"].split("/")[1]
+        key = M.new(("AWS4" + SECRET).encode(), ds.encode(), H.sha256).digest()
+        for p in ("garage", "s3", "aws4_request"):
+            key = M.new(key, p.encode(), H.sha256).digest()
+        sig_want = M.new(key, sts.encode(), H.sha256).hexdigest()
+        self.assertEqual(sig_got, sig_want)
+
+    def test_presign_public_host_override(self):
+        url = self._s3(public="http://s3.example.com:30900").presign_upload_part("k/y", "U", 2)
+        self.assertTrue(url.startswith("http://s3.example.com:30900/"), url)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

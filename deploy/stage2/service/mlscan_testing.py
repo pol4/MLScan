@@ -56,13 +56,23 @@ if S3_ENABLED:
     sys.path.insert(0, "/opt/s3")
     from s3client import S3  # noqa: E402
     _s3 = S3(S3_ENDPOINT, os.environ["S3_ACCESS_KEY"], os.environ["S3_SECRET_KEY"],
-             region=os.environ.get("S3_REGION", "garage"), bucket=os.environ["S3_BUCKET"], timeout=3600)
+             region=os.environ.get("S3_REGION", "garage"), bucket=os.environ["S3_BUCKET"], timeout=3600,
+             public_endpoint=os.environ.get("S3_PUBLIC_ENDPOINT", ""))
 
 # Multipart-загрузка в S3 (этап P0-1, docs/15 §11.6): объекты ≥ порога грузятся
 # параллельными частями вместо одиночного PUT (снимает одно-поточный потолок).
 S3_MULTIPART_THRESHOLD = int(os.environ.get("S3_MULTIPART_THRESHOLD", str(64 * 1024 ** 2)))
 S3_PART_SIZE = int(os.environ.get("S3_PART_SIZE", str(64 * 1024 ** 2)))
 S3_PART_WORKERS = int(os.environ.get("S3_PART_WORKERS", "8"))
+
+# Прямая presigned-multipart загрузка клиентом в Garage (этап P0-2, docs/15 §11.6):
+# клиент (браузер/aws-cli/rclone/CI) грузит объект напрямую в S3 в партицию
+# tenant/<субъект>/, минуя сервис тестирования (он выдаёт presigned-URL и регистрирует объект).
+DIRECT_PART_SIZE = int(os.environ.get("DIRECT_PART_SIZE", str(128 * 1024 ** 2)))
+DIRECT_URL_TTL = int(os.environ.get("DIRECT_URL_TTL", "3600"))
+DIRECT_MATERIALIZE_MAX = int(os.environ.get("DIRECT_MATERIALIZE_MAX", str(4 * 1024 ** 3)))
+_pending_uploads: dict = {}
+_pending_lock = threading.Lock()
 
 # --- PostgreSQL (dual-write; не критично для работы сервиса) ---
 PG_HOST = os.environ.get("PGHOST", "")
@@ -559,6 +569,34 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
                                      for m in ("static", "dynamic", "behavior")}})
 
 
+def _materialize_and_scan(scan_id: str, name: str, fmt: str, key: str, size: int) -> None:
+    """Прямая загрузка (P0-2): при размере в пределах лимита — локальная копия и
+    обычный анализ; иначе (ТБ-объекты) — честный Inconclusive до потокового анализа (P1-6)."""
+    if size <= DIRECT_MATERIALIZE_MAX:
+        tmp = os.path.join(DATA_TMP, "up-" + scan_id + "-" + name)
+        try:
+            os.makedirs(DATA_TMP, exist_ok=True)
+            st, hd, resp = _s3.get_stream(key)
+            if st != 200:
+                raise RuntimeError(f"get_stream {st}")
+            with open(tmp, "wb") as fh:
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+            process_scan(scan_id, name, fmt, tmp)
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"[testing] {scan_id}: материализация не удалась: {type(exc).__name__}: {exc}",
+                  file=sys.stderr)
+    update(scan_id, state="done", stage="done", progress=100, verdict="Inconclusive",
+           reason="объект больше лимита локальной материализации — анализ будет потоковым (P1-6)",
+           coverage={"complete": False, "failed": ["static", "dynamic", "behavior"],
+                     "modules": {m: {"ok": False, "reason": "ожидает потокового анализа (P1-6)"}
+                                 for m in ("static", "dynamic", "behavior")}})
+
+
 # ----------------------------------------------------------------------------
 # Artifact-сервер (порт 8090) — отдача артефакта в песочницу по токену
 # ----------------------------------------------------------------------------
@@ -798,11 +836,142 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": got,
                                 "sha256": sha, "s3_key": rec.get("s3_key")})
 
+    # --- Прямая presigned-multipart загрузка (P0-2) -------------------------
+    def _tenant(self) -> str:
+        subj = getattr(self, "_subject", "") or "shared"
+        t = re.sub(r"[^A-Za-z0-9._-]+", "-", subj).strip("-.")[:64]
+        return t or "shared"
+
+    def _uploads_initiate(self) -> None:
+        if not (S3_ENABLED and _s3 is not None):
+            return self._json(503, {"error": "S3 не сконфигурирован"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        name = os.path.basename((body.get("name") or "sample.pkl"))
+        fmt = body.get("fmt") or "pickle"
+        sha = (body.get("sha256") or "").lower()
+        try:
+            size = int(body.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if not re.fullmatch(r"[0-9a-f]{64}", sha):
+            return self._json(400, {"error": "sha256 обязателен (64 hex)"})
+        if size <= 0:
+            return self._json(400, {"error": "size обязателен (>0)"})
+        if size > MAX_UPLOAD:
+            return self._json(413, {"error": f"artifact too large ({size} > {MAX_UPLOAD})"})
+        tenant = self._tenant()
+        key = f"tenant/{tenant}/{sha}/{name}"
+        if _s3.exists(key):
+            return self._json(200, {"dedup": True, "key": key, "sha256": sha,
+                                    "size": size, "tenant": tenant})
+        part = DIRECT_PART_SIZE
+        n_parts = (size + part - 1) // part
+        if n_parts > 10000:                    # лимит числа частей S3
+            part = (size + 9999) // 10000
+            n_parts = (size + part - 1) // part
+        try:
+            uid = _s3.create_multipart(key)
+            parts = [{"part_number": i, "size": min(part, size - (i - 1) * part),
+                      "url": _s3.presign_upload_part(key, uid, i, expires=DIRECT_URL_TTL)}
+                     for i in range(1, n_parts + 1)]
+        except Exception as exc:  # noqa: BLE001
+            return self._json(502, {"error": f"S3: {type(exc).__name__}: {exc}"})
+        with _pending_lock:
+            _pending_uploads[uid] = {"key": key, "name": name, "fmt": fmt, "sha256": sha,
+                                     "size": size, "tenant": tenant, "created": time.time(),
+                                     "subject": getattr(self, "_subject", "")}
+        return self._json(200, {"upload_id": uid, "key": key, "part_size": part,
+                                "count": n_parts, "parts": parts, "dedup": False,
+                                "tenant": tenant, "expires_in": DIRECT_URL_TTL})
+
+    def _scans_complete(self) -> None:
+        if not (S3_ENABLED and _s3 is not None):
+            return self._json(503, {"error": "S3 не сконфигурирован"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        uid = body.get("upload_id") or ""
+        with _pending_lock:
+            info = _pending_uploads.get(uid)
+        if not info:
+            return self._json(404, {"error": "unknown upload_id"})
+        parts_in = body.get("parts") or []
+        if parts_in:
+            try:
+                parts = [(int(p["part_number"]), str(p["etag"]).strip('"')) for p in parts_in]
+            except (KeyError, TypeError, ValueError) as exc:
+                return self._json(400, {"error": f"bad parts: {exc}"})
+            try:
+                st, _, data = _s3.complete_multipart(info["key"], uid, parts)
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"S3 complete: {type(exc).__name__}: {exc}"})
+            if st not in (200, 201):
+                return self._json(502, {"error": f"S3 complete status {st}"})
+        elif not _s3.exists(info["key"]):
+            return self._json(400, {"error": "parts обязателен"})
+        size = info["size"]
+        try:
+            hs, hh, _ = _s3.head(info["key"])
+            if hs == 200 and hh.get("Content-Length"):
+                size = int(hh["Content-Length"])
+        except Exception:  # noqa: BLE001
+            pass
+        scan_id = uuid.uuid4().hex
+        token = uuid.uuid4().hex
+        rec = {"scan_id": scan_id, "name": info["name"], "format": info["fmt"], "size": size,
+               "sha256": info["sha256"], "artifact_token": token, "s3_key": info["key"],
+               "tenant": info["tenant"], "direct": True,
+               "state": "queued", "stage": "queued", "progress": 0,
+               "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        save_scan(rec)
+        if DB_ENABLED:
+            rows = db_query(
+                "INSERT INTO artifacts(sha256,size,format,filename,s3_key) VALUES "
+                f"({_lit(info['sha256'])},{int(size)},{_lit(info['fmt'])},{_lit(info['name'])},"
+                f"{_lit(info['key'])}) ON CONFLICT (sha256) DO UPDATE SET size=EXCLUDED.size, "
+                "filename=EXCLUDED.filename, s3_key=EXCLUDED.s3_key RETURNING id")
+            art_id = rows[0][0] if rows else None
+            if art_id is not None:
+                rec["artifact_id"] = art_id
+                save_scan(rec)
+            db_exec("INSERT INTO scans(scan_id,artifact_id,status,stage,progress) VALUES "
+                    f"({_lit(scan_id)},{art_id if art_id is not None else 'NULL'},'queued','queued',0) "
+                    "ON CONFLICT (scan_id) DO UPDATE SET artifact_id=EXCLUDED.artifact_id")
+            db_exec("INSERT INTO uploads(artifact_id,request_id,bytes,status,finished_at) "
+                    f"SELECT id,{_lit(scan_id)},{int(size)},'received',now() FROM artifacts "
+                    f"WHERE sha256={_lit(info['sha256'])}")
+        if authz is not None:
+            try:
+                authz.audit(getattr(self, "_subject", "anonymous"), "upload_direct", "artifact",
+                            info["sha256"], getattr(self, "_rid", scan_id), self.client_address[0],
+                            {"name": info["name"], "size": size, "s3_key": info["key"],
+                             "tenant": info["tenant"]})
+            except Exception:  # noqa: BLE001
+                pass
+        with _pending_lock:
+            _pending_uploads.pop(uid, None)
+        threading.Thread(target=_materialize_and_scan,
+                         args=(scan_id, info["name"], info["fmt"], info["key"], size),
+                         daemon=True).start()
+        return self._json(202, {"scan_id": scan_id, "state": "queued", "size": size,
+                                "sha256": info["sha256"], "s3_key": info["key"],
+                                "tenant": info["tenant"]})
+
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         if self._require() is None:
             return
+        if u.path == "/uploads/initiate":
+            return self._uploads_initiate()
+        if u.path == "/scans/complete":
+            return self._scans_complete()
         if u.path in ("/scans", "/scans/upload", "/upload"):
             ident = getattr(self, "_subject", "") or (self.client_address[0] if self.client_address else "?")
             ok, retry = rate_allow(ident)

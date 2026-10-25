@@ -36,7 +36,8 @@ def _enc(s: str) -> str:
 
 class S3:
     def __init__(self, endpoint: str, access: str, secret: str,
-                 region: str = "garage", bucket: str = "", timeout: int = 300):
+                 region: str = "garage", bucket: str = "", timeout: int = 300,
+                 public_endpoint: str = ""):
         u = urllib.parse.urlparse(endpoint)
         self.host = u.hostname
         self.port = u.port or 3900
@@ -44,6 +45,12 @@ class S3:
         self.access, self.secret, self.region = access, secret, region
         self.bucket = bucket
         self.timeout = timeout
+        # Публичный адрес S3 для presigned-URL (клиент снаружи кластера).
+        pe = public_endpoint or endpoint
+        pu = urllib.parse.urlparse(pe)
+        self.pub_host = pu.hostname or self.host
+        self.pub_port = pu.port or (443 if pu.scheme == "https" else 3900)
+        self.pub_secure = (pu.scheme == "https")
 
     def _conn(self):
         if self.secure:
@@ -189,6 +196,53 @@ class S3:
 
     def abort_multipart(self, key: str, upload_id: str):
         return self._send("DELETE", key, query=[("uploadId", upload_id)])
+
+    # --- Presigned URL (query-подпись, P0-2) --------------------------------
+    def presign(self, method: str, key: str, query=None, expires: int = 3600,
+                extra_headers: dict | None = None) -> str:
+        """Сформировать presigned URL (SigV4 query) для метода/ключа.
+
+        Позволяет клиенту (браузер/aws-cli/rclone) обращаться прямо к S3 без секретов.
+        """
+        path = self._path(key)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        amzdate = now.strftime("%Y%m%dT%H%M%SZ")
+        datestamp = now.strftime("%Y%m%d")
+        scope = f"{datestamp}/{self.region}/s3/aws4_request"
+        signed = ["host"] + sorted((extra_headers or {}).keys())
+        params = [
+            ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
+            ("X-Amz-Credential", f"{self.access}/{scope}"),
+            ("X-Amz-Date", amzdate),
+            ("X-Amz-Expires", str(int(expires))),
+            ("X-Amz-SignedHeaders", ";".join(signed)),
+        ]
+        for k, v in (query or []):
+            params.append((k, v))
+        cq = self._canonical_query(params)
+        hdrs = {"host": f"{self.pub_host}:{self.pub_port}"}
+        hdrs.update({k.lower(): v for k, v in (extra_headers or {}).items()})
+        canonical_headers = "".join(f"{h}:{hdrs[h]}\n" for h in signed)
+        canonical_request = "\n".join([method, path, cq, canonical_headers,
+                                       ";".join(signed), "UNSIGNED-PAYLOAD"])
+        string_to_sign = "\n".join(["AWS4-HMAC-SHA256", amzdate, scope,
+                                    hashlib.sha256(canonical_request.encode()).hexdigest()])
+        sig = hmac.new(_signing_key(self.secret, datestamp, self.region, "s3"),
+                       string_to_sign.encode(), hashlib.sha256).hexdigest()
+        scheme = "https" if self.pub_secure else "http"
+        return f"{scheme}://{self.pub_host}:{self.pub_port}{path}?{cq}&X-Amz-Signature={sig}"
+
+    def presign_upload_part(self, key: str, upload_id: str, part_number: int,
+                            expires: int = 3600) -> str:
+        return self.presign("PUT", key,
+                            query=[("partNumber", str(part_number)), ("uploadId", upload_id)],
+                            expires=expires)
+
+    def presign_create_multipart(self, key: str, expires: int = 3600) -> str:
+        return self.presign("POST", key, query=[("uploads", "")], expires=expires)
+
+    def presign_complete_multipart(self, key: str, upload_id: str, expires: int = 3600) -> str:
+        return self.presign("POST", key, query=[("uploadId", upload_id)], expires=expires)
 
     # --- высокоуровневые загрузки -------------------------------------------
     def _multipart_upload(self, key: str, stream, length: int, part_size: int, workers: int,
