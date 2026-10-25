@@ -65,3 +65,12 @@
 
 v2 давал базовые `mlscan_*`/`mlscan_upload_*` и `/quality` без per-tenant SLO, трейсинга и capacity
 модели. v3 добавляет per-tenant наблюдаемость, трейсинг и планирование ёмкости под ТБ+.
+
+## 9. LLM-инференс: метрики
+
+- Готовность инференса (время до health), успешность запуска, `Rejected` по ресурсам.
+- Покрытие проб (доля выполненных запросов), `pass_rate` по категориям, `safety_fail`, `refusal_ok`,
+  `schema_ok`, `leakage`.
+- События eBPF/Tetragon по типам (exec/net/file/mmap), задержка событие→finding (N14).
+- Ресурсы: GPU-утилизация/ожидание, RAM/диск, длительность прогонов.
+- SLO: N12–N14 (`01-requirements.md`); алёрт на рост `Rejected`/`safety_fail`.

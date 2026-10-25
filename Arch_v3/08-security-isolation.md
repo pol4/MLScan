@@ -14,6 +14,9 @@
 | Компрометация секретов | KMS/Secret, per-tenant ключи, ротация, TTL ключей |
 | Изменение журнала | Evidence append-only, HMAC-цепочка, WORM-анкоринг, нотаризация |
 | Парсер 0-day | parser-sandbox, fuzzing, минимальные привилегии парсеров |
+| 0-day в движке LLM-инференса | Kata + кастомное ядро + seccomp + наблюдение eBPF/Tetragon (`16`) |
+| Эксфильтрация через инференс | egress deny-by-default; eBPF-детект сетевых попыток |
+| Подмена образа движка LLM | образ по digest + SBOM/подпись + admission |
 | «Шумный сосед»/DoS | Квоты, fair-share, rate-limit, бюджеты, backpressure |
 | Lateral movement | Namespace + NetworkPolicy + egress-allowlist |
 
@@ -77,3 +80,14 @@
 Устранены: plaintext S3-passthrough (B1), длинные presigned-TTL (B2), отсутствие mTLS/OIDC (B3),
 одиночный писатель evidence без WORM (B4), отсутствие per-tenant KMS (B5), хрупкая привязка digest
 (O2), поверхностная мультитенантность.
+
+## 11. LLM-инференс: изоляция и наблюдение
+
+- Движок инференса и модель — **недоверенные**: запуск только в Kata с **кастомным ядром**,
+  включающим **eBPF/Tetragon** (см. [`16-llm-inference-testing.md`](16-llm-inference-testing.md)).
+- Образ движка — по digest + SBOM/подпись + admission; read-only FS; non-root; drop ALL; seccomp.
+- Egress — **deny-by-default** (разрешены только внутренний API для проб, DNS, sinkhole);
+  попытки внешних соединений фиксируются Tetragon как индикатор.
+- Honeypot-секреты (`~/.aws`, `~/.ssh`, `~/.kube`) — детект попыток чтения.
+- Ресурсы (GPU/RAM/диск) выделяются изолированно; отдельный пул узлов и очередь.
+- Наблюдение не исполняет артефакт в доверенной зоне; события eBPF → findings с нонсом скана.

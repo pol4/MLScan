@@ -6,27 +6,59 @@ v3 разделена на **edge**, **control plane**, **data plane** и **anal
 от v2: данные не проходят через сервис анализа, а анализ читает **нужные диапазоны** объекта прямо
 из распределённого S3 (при необходимости — через node-local кэш).
 
-```
-              ┌────────────────────────── Edge (TLS/mTLS) ───────────────────────────┐
-Клиент/CI ───▶│  Upload Edge (presigned/multipart)   API/UI (OIDC)   Gate (CI/SIEM)   │
-              └───────────────┬──────────────────────────────┬──────────────────────┘
-                              │ presigned parts              │ submit scan / results
-                              ▼                              ▼
-                   ┌─────────────────────── Control plane ────────────────────────┐
-                   │  Tenant/Quota  Scheduler/Queue  Policy  Scan Orchestrator    │
-                   └───────────┬───────────────────────────────┬──────────────────┘
-                               ▼                               ▼
-        ┌──────────── Data plane (distributed S3) ───────┐   ┌──── Evidence/Registry ────┐
-        │ Storage nodes (shards, RF≥2/EC, hot NVMe+cold) │   │ PostgreSQL + WORM bucket  │
-        └───────────┬────────────────────────────────────┘   └───────────────────────────┘
-                    │ range-read (parallel)
-                    ▼
-    ┌──────────────────────── Analysis plane ─────────────────────────┐
-    │  Static engine (streaming, index/sampling, workers)             │
-    │  Archive walker (member streaming, nested, index)               │
-    │  Node-local NVMe cache (read-through)                           │
-    │  Sandbox (Kata) — sampled dynamic; Parser-sandbox (fuzzing)     │
-    └─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+  subgraph Edge["Edge (TLS/mTLS)"]
+    UE["Upload Edge (presigned / multipart)"]
+    API["API/UI (OIDC)"]
+    GATE["Gate (CI / SIEM)"]
+  end
+  subgraph Control["Control plane"]
+    TEN["Tenant / Quota"]
+    Q["Scheduler / Queue"]
+    POL["Policy"]
+    ORCH["Scan Orchestrator"]
+  end
+  subgraph Data["Data plane (distributed S3)"]
+    S3C["Storage nodes: shards, RF>=2 / EC, hot NVMe + cold"]
+  end
+  subgraph Anal["Analysis plane"]
+    STAT["Static engine (streaming, index/sampling)"]
+    ARC["Archive walker (member streaming)"]
+    CACHE["Node-local NVMe cache"]
+    OBSDF["DFIR observer (eBPF Tetragon)"]
+    LLM["LLM inference runtime (custom Kata kernel)"]
+    APR["OpenAI-API probe suite (configurable prompts)"]
+    PBX["Parser-sandbox / dynamic sandbox"]
+  end
+  subgraph Reg["Registry / Evidence"]
+    PG[("PostgreSQL")]
+    WORM["WORM evidence bucket"]
+  end
+  CL["Client / CI"] --> UE
+  CL --> API
+  CL --> GATE
+  UE --> TEN
+  UE --> S3C
+  API --> ORCH
+  GATE --> ORCH
+  ORCH --> Q
+  ORCH --> POL
+  ORCH --> STAT
+  ORCH --> ARC
+  ORCH --> PBX
+  ORCH --> LLM
+  STAT --> CACHE
+  ARC --> CACHE
+  CACHE --> S3C
+  LLM --> OBSDF
+  LLM --> APR
+  OBSDF --> PG
+  APR --> PG
+  STAT --> PG
+  ARC --> PG
+  PBX --> PG
+  PG --> WORM
 ```
 
 ## 2. Компоненты
@@ -55,9 +87,25 @@ v3 разделена на **edge**, **control plane**, **data plane** и **anal
   вложенные архивы (depth-бюджет), индекс членов, параллельные member-workers.
 - **Sandbox (Kata)** — сэмплированная динамика (срезы/члены) с бюджетами.
 - **Parser-sandbox** — изолированный разбор недоверенных форматов/фаззинг.
+- **LLM inference runtime** — запуск **движка инференса в изоляции Kata** вместе с моделью
+  (движок поставляется **контейнерным образом**, который тестируется как часть скана), с
+  выделенными ресурсами (GPU/CPU/RAM/диск).
+- **DFIR observer (eBPF/Tetragon)** — наблюдение за работой инференса через **eBPF Tetragon** в
+  **кастомном ядре Kata** (syscalls, процессы, сеть, файлы, mmap/exec) → вердикт по поведению.
+- **OpenAI-API probe suite** — отправка тестовых запросов в OpenAI-совместимый API инференса по
+  **настраиваемому списку** (промпты) и оценка ответов по **эталонным** ответам/критериям.
 
-### 2.5 Registry/Evidence
-- **PostgreSQL** — объекты/сканы/находки/члены/покрытие/квоты/аудит.
+### 2.5 LLM-инференс как отдельный тип тестирования
+См. [`16-llm-inference-testing.md`](16-llm-inference-testing.md). Кратко: для особенно больших LLM
+модель и её движок (образ контейнера) подаются вместе; тестовый сервер должен иметь достаточно
+ресурсов для запуска конкретного инференса; вердикт формируется по поведению (eBPF/Tetragon в
+кастомном ядре Kata) и по качеству/безопасности ответов на тестовые запросы (OpenAI API +
+эталонные ответы). Это дополняет обычные статику/динамику и требует отдельного пула узлов,
+политик ресурсов и стратегии `llm-inference`.
+
+### 2.6 Registry/Evidence
+- **PostgreSQL** — объекты/сканы/находки/члены/покрытие/квоты/аудит; для LLM-тестов — прогоны,
+  промпты/эталоны, оценённые ответы, поведенческие события eBPF.
 - **WORM/evidence** — append-only журнал, HMAC-цепочка, анкоринг во внешний object-lock bucket,
   периодическая нотаризация.
 
@@ -140,7 +188,7 @@ stateDiagram-v2
 
   Parts : клиент PUT частей напрямую в S3 (16..64 параллельно)
   Parts --> Resume : обрыв/рестарт
-  Resume : GET /uploads/<id>/parts -> догрузка
+  Resume : GET /uploads/<id>/parts → догрузка
   Resume --> Parts
   Parts --> Complete : POST /uploads/complete (ETag+SHA-256)
 
@@ -162,9 +210,9 @@ stateDiagram-v2
   StaticStream --> Aggregate
   SampledDyn --> Aggregate
   FullDyn --> Aggregate
-  Aggregate : findings + coverage -> вердикт
+  Aggregate : findings + coverage → вердикт
   Aggregate --> Policy
-  Policy : scoring + policy (+ coverage -> Inconclusive)
+  Policy : scoring + policy (+ coverage → Inconclusive)
   Policy --> Evidence
   Evidence : PG + WORM + HMAC
   Evidence --> [*]

@@ -28,6 +28,7 @@
 | 13 | [`13-formats.md`](13-formats.md) | Поддерживаемые форматы и расширяемость |
 | 14 | [`14-limitations.md`](14-limitations.md) | Честные ограничения v3 |
 | 15 | [`15-implementation-plan.md`](15-implementation-plan.md) | **Новый план реализации v3** (фазы, тесты, критерии) |
+| 16 | [`16-llm-inference-testing.md`](16-llm-inference-testing.md) | **LLM-инференс как отдельный тип теста**: Kata + кастомное ядро/eBPF-Tetragon + OpenAI-API пробы и эталоны |
 
 Диаграммы: диаграмма развёртывания — `02-architecture.md`/`10-deployment.md`; диаграммы состояния
 для (a) загрузки и анализа модели 1 ТБ и (b) комплексного анализа архива 1 ТБ — `02-architecture.md`.

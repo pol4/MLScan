@@ -54,3 +54,11 @@ Russian original carries two Mermaid state diagrams: (a) upload+analysis of a 1 
 3. Evidence is append-only with HMAC and WORM anchoring.
 4. Every object/scan belongs to a tenant; quotas and SLOs are per-tenant.
 5. Images/configs/policies are versioned and signed; analysis is reproducible by version.
+
+## 6. LLM inference testing (separate test type)
+
+Large LLMs are tested by running their **inference engine (container image) together with the model**
+inside an isolated **Kata** microVM with a **custom kernel that includes eBPF/Tetragon**; the verdict
+comes from observing runtime behavior (syscalls/exec/net/file/mmap) and from **OpenAI-API probes**
+(configurable prompt list evaluated against reference answers). Requires a dedicated resource/GPU node
+pool. Full design: `../16-llm-inference-testing.md` (RU).
