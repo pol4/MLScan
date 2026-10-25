@@ -14,7 +14,9 @@ import datetime
 import hashlib
 import hmac
 import http.client
+import os
 import re
+import time
 import urllib.parse
 
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
@@ -33,6 +35,16 @@ def _signing_key(secret: str, datestamp: str, region: str, service: str) -> byte
 
 def _enc(s: str) -> str:
     return urllib.parse.quote(s, safe="-_.~")
+
+
+def adaptive_part_size(size: int, max_parts: int = 10000, floor: int = 8 * 1024 * 1024,
+                       ceil: int = 512 * 1024 * 1024) -> int:
+    """Размер части multipart: не больше max_parts частей, кратен 1 МиБ, в [floor, ceil]."""
+    if size <= floor:
+        return floor
+    need = (size + max_parts - 1) // max_parts
+    need = (need + 1024 * 1024 - 1) // (1024 * 1024) * (1024 * 1024)
+    return max(floor, min(need, ceil))
 
 
 class S3:
@@ -284,8 +296,11 @@ class S3:
     def _multipart_upload(self, key: str, stream, length: int, part_size: int, workers: int,
                           content_type: str, sha256_hex: str | None = None,
                           progress=None) -> dict:
+        if not part_size or int(part_size) <= 0:
+            part_size = adaptive_part_size(length)
         part_size = max(int(part_size), 1)
         workers = max(int(workers), 1)
+        retries = max(int(os.environ.get("S3_UPLOAD_RETRIES", "3")), 1)
         uid = self.create_multipart(key, content_type)
         hasher = hashlib.sha256()
         results: dict[int, str] = {}
@@ -295,11 +310,19 @@ class S3:
         sent = 0
 
         def _one(num: int, chunk: bytes) -> str:
-            et = self.upload_part(key, uid, num, chunk, content_type)
             md5 = hashlib.md5(chunk).hexdigest()
-            if et and et != md5:
-                raise RuntimeError(f"part {num} etag mismatch: server={et} md5={md5}")
-            return et
+            last: Exception | None = None
+            for attempt in range(1, retries + 1):
+                try:
+                    et = self.upload_part(key, uid, num, chunk, content_type)
+                    if et and et != md5:
+                        raise RuntimeError(f"part {num} etag mismatch: server={et} md5={md5}")
+                    return et
+                except Exception as exc:  # noqa: BLE001
+                    last = exc
+                    if attempt < retries:
+                        time.sleep(min(0.2 * attempt, 2.0))
+            raise last if last else RuntimeError(f"part {num} failed")
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
         try:

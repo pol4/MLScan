@@ -48,6 +48,7 @@ class _Store:
         self.uploads = {}   # upload_id -> {"key":..., "parts": {n: bytes}}
         self.objects = {}   # key -> bytes
         self.aborted = set()
+        self.fail_parts = 0  # сколько ближайших PUT-частей «упасть» (тест retry)
 
 
 class MultipartS3(http.server.BaseHTTPRequestHandler):
@@ -158,6 +159,9 @@ class MultipartS3(http.server.BaseHTTPRequestHandler):
         if "partNumber" in q and "uploadId" in q:
             uid, n = q["uploadId"], int(q["partNumber"])
             with self.store.lock:
+                if self.store.fail_parts > 0:
+                    self.store.fail_parts -= 1
+                    return self._xml(503, b"<Error><Code>SlowDown</Code></Error>")
                 up = self.store.uploads.get(uid)
                 if not up:
                     return self._xml(404, b"<Error><Code>NoSuchUpload</Code></Error>")

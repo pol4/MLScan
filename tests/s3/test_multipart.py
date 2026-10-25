@@ -16,8 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "deploy", "v2", "data", "s3"))
 
-from fake_s3 import ACCESS, SECRET, FakeS3Server  # noqa: E402
-from s3client import S3  # noqa: E402
+from fake_s3 import ACCESS, SECRET, FakeS3Server, MultipartS3  # noqa: E402
+from s3client import S3, adaptive_part_size  # noqa: E402
 
 
 class MultipartTest(unittest.TestCase):
@@ -114,6 +114,22 @@ class MultipartTest(unittest.TestCase):
         self.assertEqual(sorted(parts), [1, 2])
         self.assertEqual(parts[1], hashlib.md5(b"aaaa").hexdigest())
 
+    def test_retry_on_transient_part_failure(self):
+        s3 = self.make()
+        body = os.urandom(64_000)
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmp.write(body)
+        tmp.close()
+        sha = hashlib.sha256(body).hexdigest()
+        MultipartS3.store.fail_parts = 2        # две ближайшие части «падают» -> retry
+        with open(tmp.name, "rb") as fh:
+            res = s3.put_stream_multipart("retry.bin", fh, len(body), sha,
+                                          part_size=16_000, workers=2)
+        self.assertEqual(res["status"], 200)
+        st, _, got = s3.get("retry.bin")
+        self.assertEqual(got, body)
+        os.unlink(tmp.name)
+
     def test_abort(self):
         s3 = self.make()
         uid = s3.create_multipart("abort.bin")
@@ -172,6 +188,20 @@ class PresignTest(unittest.TestCase):
     def test_presign_public_host_override(self):
         url = self._s3(public="http://s3.example.com:30900").presign_upload_part("k/y", "U", 2)
         self.assertTrue(url.startswith("http://s3.example.com:30900/"), url)
+
+
+class AdaptiveSizeTest(unittest.TestCase):
+    def test_small_file(self):
+        self.assertEqual(adaptive_part_size(1024), 8 * 1024 * 1024)
+
+    def test_1tb_within_max_parts(self):
+        one_tb = 1024 ** 4
+        p = adaptive_part_size(one_tb)
+        self.assertLessEqual((one_tb + p - 1) // p, 10000)
+        self.assertEqual(p % (1024 * 1024), 0)
+
+    def test_ceil(self):
+        self.assertEqual(adaptive_part_size(10 ** 15), 512 * 1024 * 1024)
 
 
 if __name__ == "__main__":
