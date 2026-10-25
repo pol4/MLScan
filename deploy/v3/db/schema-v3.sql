@@ -29,3 +29,27 @@ CREATE TABLE IF NOT EXISTS tasks (
   error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_dequeue ON tasks(status, rank, seq);
+
+-- L0: профили моделей (классификация LLM) и bundle (образ движка + модель + версии)
+CREATE TABLE IF NOT EXISTS model_profiles (
+  sha256 TEXT PRIMARY KEY,
+  is_llm BOOLEAN NOT NULL DEFAULT false,
+  family TEXT DEFAULT '',
+  confidence REAL DEFAULT 0,
+  evidence TEXT DEFAULT '[]',
+  suggested_engines TEXT DEFAULT '[]',
+  source TEXT DEFAULT 'auto',
+  updated TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS bundles (
+  bundle_id TEXT PRIMARY KEY,
+  engine_image TEXT NOT NULL,
+  model_sha256 TEXT NOT NULL,
+  engine_manifest TEXT DEFAULT '{}',
+  prompt_set TEXT DEFAULT '',
+  detectors TEXT DEFAULT '',
+  policy TEXT DEFAULT '',
+  tenant TEXT DEFAULT '',
+  created TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_bundles_model ON bundles(model_sha256);

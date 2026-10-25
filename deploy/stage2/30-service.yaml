@@ -99,6 +99,7 @@ spec:
         - {name: i18n, mountPath: /opt/i18n, readOnly: true}
         - {name: v3ingest, mountPath: /opt/v3ingest, readOnly: true}
         - {name: v3control, mountPath: /opt/v3control, readOnly: true}
+        - {name: v3llm, mountPath: /opt/v3llm, readOnly: true}
         - {name: modeltmp, mountPath: /var/tmp}
         - {name: tmp, mountPath: /tmp}
       volumes:
@@ -112,6 +113,7 @@ spec:
       - {name: i18n, configMap: {name: mlscan-i18n}}
       - {name: v3ingest, configMap: {name: mlscan-v3-ingest}}
       - {name: v3control, configMap: {name: mlscan-v3-control}}
+      - {name: v3llm, configMap: {name: mlscan-v3-llm}}
       - {name: modeltmp, emptyDir: {sizeLimit: 120Gi}}
       - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
 ---

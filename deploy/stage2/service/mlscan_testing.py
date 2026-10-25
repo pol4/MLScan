@@ -108,6 +108,33 @@ def _daily_bytes(subject: str) -> int:
         return 0
 
 
+def _upsert_model_profile(sha: str, profile: dict, source: str = "auto") -> None:
+    if not DB_ENABLED or not sha:
+        return
+    try:
+        db_exec("INSERT INTO model_profiles(sha256,is_llm,family,confidence,evidence,"
+                "suggested_engines,source) VALUES ("
+                f"{_lit(sha)},{'true' if profile.get('is_llm') else 'false'},"
+                f"{_lit(profile.get('family',''))},{float(profile.get('confidence') or 0)},"
+                f"{_lit(json.dumps(profile.get('evidence') or [], ensure_ascii=False))},"
+                f"{_lit(json.dumps(profile.get('suggested_engines') or [], ensure_ascii=False))},"
+                f"{_lit(source)}) ON CONFLICT (sha256) DO UPDATE SET "
+                "is_llm=EXCLUDED.is_llm, family=EXCLUDED.family, confidence=EXCLUDED.confidence, "
+                "evidence=EXCLUDED.evidence, suggested_engines=EXCLUDED.suggested_engines, "
+                "source=EXCLUDED.source, updated=now()")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] model_profile failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
+def _classify_and_record(name: str, fmt: str, size: int, family: str = "",
+                         source: str = "auto") -> dict | None:
+    if v3classifier is None:
+        return None
+    cfg = {"model_type": family} if family else None
+    prof = v3classifier.classify(filenames=[name], config=cfg, size_bytes=size)
+    return prof
+
+
 def _task_priority(subject: str) -> str:
     if v3pq is None:
         return "interactive"
@@ -315,6 +342,14 @@ try:
 except Exception:  # noqa: BLE001
     v3pool = None  # type: ignore
     v3refs = None  # type: ignore
+
+sys.path.insert(0, "/opt/v3llm")
+try:  # v3 (L0): классификатор LLM + binding/bundle
+    import classifier as v3classifier  # noqa: E402
+    import binding as v3binding  # noqa: E402
+except Exception:  # noqa: BLE001
+    v3classifier = None  # type: ignore
+    v3binding = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3control")
 try:  # v3 (P2): персистентная очередь + orchestrator + тенанты
@@ -957,6 +992,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"scans": list_scans(), "language": lang})
         if u.path == "/stats":
             return self._json(200, stats())
+        if u.path.startswith("/bundles/"):
+            return self._bundles_get(u.path.split("/", 2)[2])
         if u.path.startswith("/uploads/") and u.path.endswith("/parts"):
             return self._uploads_parts(u.path.split("/")[2])
         if u.path.startswith("/scans/"):
@@ -976,6 +1013,8 @@ class Handler(BaseHTTPRequestHandler):
     def _receive_upload(self, query: dict) -> None:
         name = os.path.basename((query.get("name", ["sample.pkl"])[0]) or "sample.pkl")
         fmt = query.get("fmt", ["pickle"])[0]
+        kind = query.get("kind", ["model"])[0]
+        fam_hint = query.get("family", [""])[0]
         n = int(self.headers.get("Content-Length", "0") or "0")
         if n <= 0:
             return self._json(400, {"error": T("msg.empty_body_cl", self._lang(query))})
@@ -998,7 +1037,10 @@ class Handler(BaseHTTPRequestHandler):
         sha = h.hexdigest()
         t_recv = time.monotonic()
         token = uuid.uuid4().hex
-        rec = {"scan_id": scan_id, "name": name, "format": fmt, "size": got,
+        prof = (_classify_and_record(name, fmt, got, fam_hint)
+                if (kind == "model" and v3classifier is not None) else None)
+        rec = {"scan_id": scan_id, "name": name, "format": fmt, "size": got, "kind": kind,
+               "model_profile": prof,
                "sha256": sha, "artifact_token": token,
                "state": "queued", "stage": "queued", "progress": 0,
                "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
@@ -1064,6 +1106,8 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         pipe_add(t_recv - t0, max(time.monotonic() - t_recv, 0.0), 0, got,
                  bool(rec.get("s3_multipart")))
+        if prof is not None:
+            _upsert_model_profile(sha, prof, "manual" if fam_hint else "auto")
         _tid = _enqueue_scan_task(rec, getattr(self, "_subject", ""))
         save_scan(rec)
         threading.Thread(target=_run_scan_with_task, args=(scan_id, name, fmt, local, _tid),
@@ -1071,7 +1115,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": got,
                                 "sha256": sha, "s3_key": rec.get("s3_key"),
                                 "multipart": bool(rec.get("s3_multipart")),
-                                "parts": rec.get("s3_parts")})
+                                "parts": rec.get("s3_parts"), "kind": rec.get("kind", "model"),
+                                "model_profile": rec.get("model_profile")})
 
     # --- Прямая presigned-multipart загрузка (P0-2) -------------------------
     def _tenant(self) -> str:
@@ -1255,6 +1300,8 @@ class Handler(BaseHTTPRequestHandler):
         info["upload_id"] = uid
         _save_session(info, "completed")
         pipe_add(0.0, round(time.monotonic() - t0, 3), 0.0, size, True)
+        if prof is not None:
+            _upsert_model_profile(sha, prof, "manual" if fam_hint else "auto")
         _tid = _enqueue_scan_task(rec, getattr(self, "_subject", ""))
         save_scan(rec)
         threading.Thread(target=_run_direct_with_task,
@@ -1263,6 +1310,48 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(202, {"scan_id": scan_id, "state": "queued", "size": size,
                                 "sha256": info["sha256"], "s3_key": info["key"],
                                 "tenant": info["tenant"]})
+
+    def _bundles_create(self) -> None:
+        """L0/L4: создать неизменяемый bundle (образ движка + модель + версии)."""
+        if v3binding is None:
+            return self._json(503, {"error": "v3 llm module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        b = v3binding.make_bundle(
+            image_digest=(body.get("engine_image") or "").strip(),
+            model_sha256=(body.get("model_sha256") or "").lower(),
+            engine_manifest=body.get("engine_manifest") or {},
+            prompt_set=body.get("prompt_set", ""), detectors=body.get("detectors", ""),
+            policy=body.get("policy", ""), tenant=self._tenant())
+        ok, why = v3binding.validate_bundle(b)
+        if not ok:
+            return self._json(400, {"error": why})
+        if DB_ENABLED:
+            try:
+                db_exec("INSERT INTO bundles(bundle_id,engine_image,model_sha256,engine_manifest,"
+                        "prompt_set,detectors,policy,tenant) VALUES ("
+                        f"{_lit(b['bundle_id'])},{_lit(b['engine_image'])},{_lit(b['model_sha256'])},"
+                        f"{_lit(json.dumps(b['engine_manifest'], ensure_ascii=False))},"
+                        f"{_lit(b['prompt_set'])},{_lit(b['detectors'])},{_lit(b['policy'])},"
+                        f"{_lit(b['tenant'])}) ON CONFLICT (bundle_id) DO NOTHING")
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(201, b)
+
+    def _bundles_get(self, bundle_id: str) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT bundle_id,engine_image,model_sha256,engine_manifest,prompt_set,"
+                        "detectors,policy,tenant FROM bundles WHERE bundle_id=" + _lit(bundle_id))
+        if not rows:
+            return self._json(404, {"error": "bundle not found"})
+        r = rows[0]
+        return self._json(200, {"bundle_id": r[0], "engine_image": r[1], "model_sha256": r[2],
+                                "engine_manifest": json.loads(r[3] or "{}"), "prompt_set": r[4],
+                                "detectors": r[5], "policy": r[6], "tenant": r[7]})
 
     def _objects_import(self) -> None:
         """v3 (P1): server-side copy объекта в общий пул (import) без перекачки."""
@@ -1335,6 +1424,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._scans_complete()
         if u.path == "/objects/import":
             return self._objects_import()
+        if u.path == "/bundles":
+            return self._bundles_create()
         if u.path in ("/scans", "/scans/upload", "/upload"):
             ident = getattr(self, "_subject", "") or (self.client_address[0] if self.client_address else "?")
             ok, retry = rate_allow(ident)
