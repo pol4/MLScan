@@ -109,6 +109,16 @@ echo "  Целостность: MLSCAN_CM_DIGEST=$CM_DIGEST"
 # при каждом применении манифестов фиксируем опубликованный digest (тег можно перезаписать).
 if [ -f /tmp/mlscan-sandbox-digest ]; then
   DIGEST_IMAGE="$(cat /tmp/mlscan-sandbox-digest)"
+  case "$DIGEST_IMAGE" in
+    *@sha256:*) ;;
+    *) echo "ОШИБКА: /tmp/mlscan-sandbox-digest не содержит ссылку по digest (@sha256:...)" >&2; exit 1 ;;
+  esac
   kubectl -n "$NS" set env deploy/mlscan-testing SANDBOX_IMAGE="$DIGEST_IMAGE" >/dev/null
   echo "  SANDBOX_IMAGE=$DIGEST_IMAGE"
+else
+  # Без digest Kyverno отклонит sandbox-джобы сканов -> это не «мягкая» деградация, а поломка
+  echo "ОШИБКА: нет /tmp/mlscan-sandbox-digest — sandbox-джобы будут отклонены admission-политикой." >&2
+  echo "  Соберите/опубликуйте образ песочницы и создайте файл:" >&2
+  echo "    echo '<repo>@sha256:<digest>' > /tmp/mlscan-sandbox-digest" >&2
+  exit 1
 fi

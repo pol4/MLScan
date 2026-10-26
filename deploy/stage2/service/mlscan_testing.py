@@ -596,6 +596,7 @@ MAX_UPLOAD = int(os.environ.get("MAX_UPLOAD", str(20 * 1024**3)))
 JOB_MEMORY = os.environ.get("JOB_MEMORY", "2Gi")
 JOB_EPHEMERAL = os.environ.get("JOB_EPHEMERAL", "8Gi")
 TMP_SIZE = os.environ.get("TMP_SIZE", "6Gi")
+# Kyverno-политика sandbox-джобов требует ССЫЛКУ ПО DIGEST (тег -> отказ admission; см. /healthz)
 SANDBOX_IMAGE = os.environ.get("SANDBOX_IMAGE", "python:3.12-slim")
 
 sys.path.insert(0, "/opt/formats")
@@ -1327,7 +1328,8 @@ class Handler(BaseHTTPRequestHandler):
             lang = self._lang(q)
             return self._json(200, {"status": "ok" if INTEGRITY_OK else "degraded", "sandbox_ns": SANDBOX_NS,
                                     "language": lang, "integrity": INTEGRITY_OK, "expected_digest": INTEGRITY_ENV,
-                                    "actual_digest": INTEGRITY_DIGEST})
+                                    "actual_digest": INTEGRITY_DIGEST,
+                                    "sandbox_image_pinned": "@sha256:" in (SANDBOX_IMAGE or "")})
         if self._require() is None:
             return
         lang = self._lang(q)
@@ -2655,6 +2657,11 @@ def main() -> None:
     port = int(os.environ.get("PORT", "8080"))
     print(f"[testing] api :{port}, artifacts :{ARTIFACT_PORT}, artifacts_dir={ARTIFACTS_DIR}",
           flush=True)
+    if "@sha256:" not in (SANDBOX_IMAGE or ""):
+        print("[testing] ВНИМАНИЕ: SANDBOX_IMAGE не пинится по digest — sandbox-джобы сканов будут "
+              "отклонены admission-политикой (Kyverno). Выполните deploy/stage2/apply.sh или "
+              "kubectl -n mlscan-testing set env deploy/mlscan-testing SANDBOX_IMAGE=<repo>@sha256:<digest>",
+              file=sys.stderr, flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 

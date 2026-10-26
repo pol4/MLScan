@@ -156,3 +156,15 @@ NetworkPolicy `sandbox-to-testing-artifacts`; Job: `runcmd` с `urlretrieve` + `
   и их payload'ы исполняются (проверено: `pytorch_model.bin` 265 МБ → `Malicious`, `mem_exec=2`).
 - Формулировка вердикта уточнена: различает «динамика не выполнялась» / «завершилась без
   результата» / «выполнена, но жёстких сигналов нет».
+
+## Важно: `SANDBOX_IMAGE` и admission-политика
+
+Kyverno-политика sandbox-джобов (`mlscan-sandbox-jobs`) требует ссылку на образ **по digest**
+(`repo@sha256:…`). Поэтому:
+
+- манифест `30-service.yaml` содержит значение-заглушку (тег) — после `kubectl apply` этого файла
+  **обязательно** выполните `deploy/stage2/apply.sh` (он зафиксирует digest из `/tmp/mlscan-sandbox-digest`);
+- если `/tmp/mlscan-sandbox-digest` отсутствует, `apply.sh` теперь завершается с ошибкой (раньше
+  молча пропускал шаг, и сканы падали с `require-kata-and-digest` от Kyverno);
+- состояние видно в `/healthz`: поле `sandbox_image_pinned` (false = джобы сканов будут отклонены),
+  а при старте сервис печатает предупреждение в stderr.
