@@ -311,7 +311,7 @@ Tetragon; OpenAI-API probe suite + эталоны; GPU-пул/ресурсный
 
 - GPU узла: 2× Quadro RTX 4000 (8 ГБ) + GTX 1050; доступ в поде — `runtimeClassName: nvidia` + hostPath
   `/dev` (+ `NVIDIA_VISIBLE_DEVICES`, `CUDA_VISIBLE_DEVICES`); внутри `CUDA0: Quadro RTX 4000`.
-- `nvidia.com/gpu` (device-plugin) пока не планируется: образ плагина на nvcr.io требует NGC-ключ (403).
+- `nvidia.com/gpu` работает: официальный плагин v0.17.0 собран из исходников и опубликован в локальный реестр; pod’ы запрашивают `resources.limits."nvidia.com/gpu"` (+`runtimeClassName: nvidia`) без hostPath. MIG на этих GPU не поддерживается.
 - Образ: CPU-вариант (`server`) и **GPU-вариант** (`server-cuda`, `Dockerfile.gpu`, `-ngl 99`).
 - Результат E2E (`llama_cpp_gpu_e2e.sh`): 10 вопросов заказчика на GPU — `passed=6/10`, `pass_rate=0.6`,
-  `~23.9 tok/s`; GPU-утилизация подтверждена `nvidia-smi`.
+  `~23 tok/s` (CPU и device-plugin варианты); GPU-утилизация подтверждена `nvidia-smi`.

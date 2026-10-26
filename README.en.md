@@ -498,4 +498,6 @@ image was obtained. Kata guest kernel is **without BTF** by default (host kernel
 - Инференс на GPU работает через `runtimeClassName: nvidia` + hostPath `/dev`; образ llama.cpp **CUDA**
   (`server-cuda`, `-ngl 99`) выдаёт ответы на RTX 4000 (подтверждено `nvidia-smi`).
 - E2E: 10 случайных вопросов заказчика на GPU — `passed=6/10`, `~23.9 tok/s` (`tests/e2e/llama_cpp_gpu_e2e.sh`).
-- `nvidia.com/gpu` (device-plugin) пока не включён: публичный образ на nvcr.io требует NGC-ключ (403).
+- `nvidia.com/gpu` **включён**: официальный `nvidia/k8s-device-plugin` v0.17.0 собран из исходников (kaniko) и
+  опубликован в локальный реестр; pod’ы получают GPU через `resources.limits."nvidia.com/gpu"` + `runtimeClassName: nvidia`.
+- **MIG** на этих GPU не поддерживается (`mig.mode.current=[N/A]`; нужны A100/A30/H100).

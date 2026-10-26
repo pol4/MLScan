@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata: {name: build-device-plugin, namespace: mlscan-build}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: clone
+        image: alpine/git:2.45.2
+        command: ["sh","-c"]
+        args:
+        - |
+          set -e
+          git clone --depth 1 --branch v0.17.0 https://github.com/NVIDIA/k8s-device-plugin /work/repo
+          cat > /work/repo/Dockerfile.mlscan <<'DF'
+          FROM golang:1.22-bookworm AS build
+          WORKDIR /src
+          ENV GOFLAGS=-mod=vendor CGO_ENABLED=1
+          COPY . .
+          RUN go build -o /out/nvidia-device-plugin ./cmd/nvidia-device-plugin && ls -l /out
+          FROM debian:bookworm-slim
+          RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+          COPY --from=build /out/nvidia-device-plugin /usr/bin/nvidia-device-plugin
+          ENTRYPOINT ["/usr/bin/nvidia-device-plugin"]
+          DF
+          echo "dockerfile ready"; grep -c FROM /work/repo/Dockerfile.mlscan
+        volumeMounts: [{name: work, mountPath: /work}]
+        securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:v1.23.2
+        args:
+        - "--context=dir:///work/repo"
+        - "--dockerfile=Dockerfile.mlscan"
+        - "--skip-unused-stages=true"
+        - "--destination=192.168.20.116:32000/nvidia/k8s-device-plugin:v0.17.0-mlscan"
+        - "--insecure"
+        - "--skip-tls-verify"
+        - "--skip-tls-verify-pull"
+        - "--snapshot-mode=redo"
+        volumeMounts: [{name: work, mountPath: /work}]
+      volumes: [{name: work, emptyDir: {}}]

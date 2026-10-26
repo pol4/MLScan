@@ -4,7 +4,7 @@
 #   bash tests/e2e/llama_cpp_gpu_e2e.sh [QUESTIONS_XLSX] [N] [CUDA_VISIBLE_DEVICES]
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
-XLSX="${1:-/home/col/Documents/Сибинтек/LLM_Sec/questions_v9.xlsx}"; N="${2:-10}"; CUDA_IDX="${3:-1}"
+XLSX="${1:-/home/col/Documents/Сибинтек/LLM_Sec/questions_v9.xlsx}"; N="${2:-10}"; CUDA_IDX="${3:-1}"; GPU_COUNT="${4:-1}"
 NS_BUILD=mlscan-build; NS_T=mlscan-testing
 IMG="ghcr.io/ggml-org/llama.cpp:server-cuda"
 MODEL_URL="https://huggingface.co/ggml-org/gemma-3-270m-it-GGUF/resolve/main/gemma-3-270m-it-Q8_0.gguf"
@@ -51,10 +51,10 @@ spec:
       containers:
       - name: engine
         image: $IMG
-        env: [{name: CUDA_VISIBLE_DEVICES, value: "$CUDA_IDX"}, {name: NVIDIA_VISIBLE_DEVICES, value: "all"}]
+        resources: {limits: {"nvidia.com/gpu": ${GPU_COUNT:-1}}}
         args: ["-m","/models/gemma-3-270m-it-Q8_0.gguf","--host","127.0.0.1","--port","8000","-c","2048","-ngl","99","--jinja"]
         readinessProbe: {httpGet: {path: /v1/models, port: 8000}, initialDelaySeconds: 10, periodSeconds: 3, failureThreshold: 80}
-        volumeMounts: [{name: models, mountPath: /models, readOnly: true}, {name: dev, mountPath: /dev}]
+        volumeMounts: [{name: models, mountPath: /models, readOnly: true}]
         securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
       - name: probe
         image: python:3.12-slim
@@ -95,7 +95,6 @@ spec:
       - name: models
         persistentVolumeClaim: {claimName: llama-models}
       - {name: prompts, configMap: {name: mlscan-gpu-prompts}}
-      - {name: dev, hostPath: {path: /dev}}
 Y
 kubectl -n "$NS_BUILD" delete job llama-gpu-e2e --ignore-not-found >/dev/null 2>&1
 kubectl apply -f /tmp/llama_gpu_job.yaml >/dev/null; echo "  GPU job запущен"

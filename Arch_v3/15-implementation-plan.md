@@ -488,7 +488,7 @@ containerd-runtime-хендлеров; разные RuntimeClass → разны�
 | # | Что | Почему ещё не сделано | Что нужно |
 |---|-----|------------------------|-----------|
 | B1 | RuntimeClass **`kata-btf`** (BTF-ядро Kata) + **in-guest eBPF/Tetragon**, затем полный **H3** | host-level аддитивные правки узла (containerd template + kata config + рестарт демона), правки Kyverno; требуется согласование | шаги по §8.9/§8.10; BTF-вариант ядра на узле есть (`vmlinuz-debug.container`) |
-| B2 | **GPU-пул** и запуск крупных движков | **частично закрыто**: GPU на узле есть (2× Quadro RTX 4000 8 ГБ + GTX 1050, драйвер 580.178, toolkit 1.20.1); инференс на GPU **работает** через `runtimeClassName: nvidia` + hostPath `/dev` (проверено E2E). Осталось: k8s-планирование `nvidia.com/gpu` — нужен device-plugin, публичный образ требует NGC-ключ (nvcr.io) | NGC-ключ или сборка device-plugin; затем `nvidia.com/gpu` в ресурсах |
+| B2 | **GPU-пул** и запуск крупных движков | **закрыто (стенд)**: GPU-планирование `nvidia.com/gpu` работает — официальный `nvidia/k8s-device-plugin` v0.17.0 собран из исходников (kaniko) и опубликован в локальный реестр (`192.168.20.116:32000/nvidia/k8s-device-plugin:v0.17.0-mlscan`), DaemonSet зарегистрирован, `nvidia.com/gpu=3`; инференс на GPU проверён (`llama_cpp_gpu_e2e.sh`: `passed=6/10`, ~23 tok/s). MIG на этих GPU не поддерживается (`[N/A]`; нужен A100/A30/H100) | целевое железо для MIG и крупных моделей (>8 ГБ VRAM) |
 | B3 | **Реальный Hugging Face** (не mock) | egress подов закрыт нашей NetworkPolicy | токен HF + allowlist к huggingface.co/CDN |
 | B4 | **Harbor + cosign/SBOM**, подпись образов и admission | нет движка реестра/cosign в контуре | развернуть Harbor (S3-бэкенд) + cosign в CI |
 | B5 | **Vault/AES-GCM, WORM-bucket + TSA**, mTLS | внешние сервисы PKI/KMS отсутствуют | инфраструктура KMS/PKI, object-lock bucket |
@@ -581,3 +581,14 @@ F28–F32, N19–N20.
   сохраняется безопасно; **LLM-модель нельзя скачать без выбранного скачанного движка**; движок и модель
   качаются раздельно; при неудачном старте движок можно **переassign** и **перезапустить тест** (новый bundle);
   всё покрыто unit/e2e/UI-тестами.
+
+### 8.12 GPU: device-plugin из исходников (закрытие B2)
+
+- Публичный образ плагина на `nvcr.io` требует NGC-ключ (403) → собрали **официальный плагин из исходников**:
+  `deploy/v3/images/nvidia-device-plugin/` (`build-job.yaml` — kaniko клонирует `NVIDIA/k8s-device-plugin@v0.17.0`
+  и собирает по нашему `Dockerfile.mlscan` (Go→debian-slim), `daemonset.yaml` — развёртывание).
+- Результат: `nvidia.com/gpu = 3` в планировщике; pod с `resources.limits."nvidia.com/gpu": 1` и
+  `runtimeClassName: nvidia` получает GPU без hostPath (проверено `nvidia-smi`).
+- **GPU-E2E** переведён на device-plugin: `llama_cpp_gpu_e2e.sh` (10 вопросов заказчика) — `passed=6/10`,
+  `~23 tok/s`.
+- **MIG**: не поддерживается железом стенда (`mig.mode.current=[N/A]`); плагин запущен с `--mig-strategy=none`.

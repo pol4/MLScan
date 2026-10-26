@@ -170,3 +170,17 @@ graph TB
   собрать плагин и опубликовать в локальный реестр. GPU-аддон MicroK8s (`nvidia`) объявлен включённым,
   но GPU Operator не развёрнут.
 - Node-level изменения не требуются для текущего способа (кроме установленного toolkit/драйвера).
+
+---
+
+## 13. GPU: device-plugin и MIG (уточнение)
+
+- `nvidia.com/gpu` в планировщике получен **официальным** плагином `NVIDIA/k8s-device-plugin@v0.17.0`,
+  собранным из исходников (kaniko) и опубликованным в локальный реестр
+  (`192.168.20.116:32000/nvidia/k8s-device-plugin:v0.17.0-mlscan`). Манифесты и скрипт сборки —
+  `deploy/v3/images/nvidia-device-plugin/`. Плагин: `--mig-strategy=none`, `--device-discovery-strategy=nvml`,
+  монтирует `device-plugins` и хост-библиотеки (`libnvidia-ml.so.1`).
+- Pod’ы получают GPU через `resources.limits."nvidia.com/gpu"` + `runtimeClassName: nvidia`
+  (создан RuntimeClass `nvidia`); hostPath `/dev` больше не нужен.
+- **MIG**: на стенде недоступен (`mig.mode.current = [N/A]`; MIG требуют A100/A30/H100/A10G).
+  Для целевого стенда с MIG — включить `--mig-strategy=single|mixed` и MIG-профили.
