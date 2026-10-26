@@ -73,7 +73,8 @@ E2E `llama_cpp_gpu_e2e.sh`: 10 вопросов на GPU, `passed=6/10`, `~23.9 
 `crd.projectcalico.org/v1` и `globalnetworkpolicies`), поэтому доступ открыт **IP-allowlist**
 (`deploy/ingress/33-egress-hf.yaml`, ns `mlscan-testing`, только TCP/443): `huggingface.co`, `*.hf.co`
 (`cdn-lfs*`, `us.aws.cdn.hf.co`), `cas-bridge/cas-server/transfer.xethub.hf.co` — CIDR `/32` + `/24`
-подсетей. Генератор: `deploy/ingress/gen-hf-egress.sh` (резолв хостов на узле; по умолчанию только `/32`). Проверено из пода:
+подсетей. Генератор: `MLSCAN_NODE_SSH=user@node bash deploy/ingress/gen-hf-egress.sh` (резолв хостов на
+указанном узле; по умолчанию только `/32`; site-specific значений в скрипте нет). Проверено из пода:
 `HEAD` реального GGUF → `Content-Length=291 545 600`, `GET Range` → `206`.
 
 **Загрузка LLM с HF (реальная).** Воркер доработан под настоящий HF:

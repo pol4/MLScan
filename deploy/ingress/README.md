@@ -172,7 +172,7 @@ kubectl apply -f deploy/stage2/30-service.yaml -f deploy/stage3/30-service.yaml 
 - **AuthN/Z**: JWT/OIDC (RequestAuthentication + AuthorizationPolicy) перед UI/API.
 - **Egress к Hugging Face**: реализован точечный allowlist (только TCP/443 к хостам HF и его CDN):
   манифест `33-egress-hf.yaml` (ns `mlscan-testing`), генерируется скриптом
-  `deploy/ingress/gen-hf-egress.sh` (резолв `huggingface.co`, `*.hf.co`, `cas-*/transfer.xethub.hf.co`
+  `MLSCAN_NODE_SSH=user@node bash deploy/ingress/gen-hf-egress.sh` (резолв `huggingface.co`, `*.hf.co`, `cas-*/transfer.xethub.hf.co`
   на узле → только `/32`; `/24` подсети добавляются лишь при `HF_EGRESS_INCLUDE_24=1`). FQDN-политики
   (`toFQDNs`/`destination.domains`) в этом Calico-CRD **отсутствуют** (проверено), поэтому используется
   IP-allowlist; адреса ротируются — при поломке реального HF перегенерировать и применить заново

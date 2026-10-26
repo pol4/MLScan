@@ -9,13 +9,19 @@
 # HF_EGRESS_INCLUDE_24=1 дополнительно добавляет /24 подсети (устойчивость к ротации внутри
 # подсети, но шире заявленного «только HF») — включать осознанно.
 #
-# Запуск:  bash deploy/ingress/gen-hf-egress.sh
+# Запуск:  MLSCAN_NODE_SSH=user@node bash deploy/ingress/gen-hf-egress.sh
 # Применение: kubectl apply -f deploy/ingress/33-egress-hf.yaml  (также делает deploy/ingress/apply.sh)
 # Адреса HF/CDN ротируются — при поломке реального HF перегенерировать и применить заново.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/33-egress-hf.yaml"
-NODE="${MLSCAN_NODE_SSH:-col@rtx-cluster}"
+# Узел для резолва задаётся явно (без site-specific значений в репозитории):
+NODE="${MLSCAN_NODE_SSH:-${1:-}}"
+if [ -z "$NODE" ]; then
+  echo "укажите узел: MLSCAN_NODE_SSH=user@node bash deploy/ingress/gen-hf-egress.sh" >&2
+  echo "(нужен хост с DNS/интернетом, например узел кластера; доступ по known_hosts)" >&2
+  exit 2
+fi
 # Аутентификация узла обязательна (host key из known_hosts); доп. опции — через MLSCAN_NODE_SSH_OPTS.
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 ${MLSCAN_NODE_SSH_OPTS:-})
 

@@ -88,7 +88,8 @@ else
 fi
 # HF-egress: доступ ТОЛЬКО к Hugging Face и адресам загрузки моделей (TCP/443).
 # Адреса HF/CDN ротируются — при поломке реального HF перегенерировать:
-#   bash deploy/ingress/gen-hf-egress.sh && kubectl apply -f deploy/ingress/33-egress-hf.yaml
+#   MLSCAN_NODE_SSH=user@node bash deploy/ingress/gen-hf-egress.sh
+#   kubectl apply -f deploy/ingress/33-egress-hf.yaml
 if have_ns mlscan-testing; then
   kubectl apply -f "$HERE/33-egress-hf.yaml"
   echo "  HF-egress применён (ns mlscan-testing; обновлять при смене адресов HF)"
