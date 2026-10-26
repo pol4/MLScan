@@ -592,3 +592,16 @@ F28–F32, N19–N20.
 - **GPU-E2E** переведён на device-plugin: `llama_cpp_gpu_e2e.sh` (10 вопросов заказчика) — `passed=6/10`,
   `~23 tok/s`.
 - **MIG**: не поддерживается железом стенда (`mig.mode.current=[N/A]`); плагин запущен с `--mig-strategy=none`.
+
+### 8.13 GPU: тесты «вторая карта» и «две карты» (проверено)
+
+Условия: device-plugin (nvidia.com/gpu) ограничен двумя **Quadro RTX 4000** (GTX 1050 исключён; allocatable=2),
+`runtimeClassName: nvidia`, модели — в PVC `llama-models`.
+
+| Тест | Конфигурация | Доказательства | Результат |
+|------|--------------|----------------|-----------|
+| **A. Небольшая модель на ВТОРОЙ карте** | `nvidia.com/gpu: 2` + `CUDA_VISIBLE_DEVICES=1`; gemma-3-270m Q8 | `--list-devices` → `CUDA0: Quadro RTX 4000` (одна, вторая карта); per-request eval 288–354 tok/s | 10 вопросов: `passed=6/10`, `pass_rate=0.6` |
+| **B. Модель побольше на ДВУХ картах** | `nvidia.com/gpu: 2`; Qwen2.5-3B-Instruct-Q4_K_M (1.93 ГБ); `--tensor-split 1,1 --split-mode layer` | `--list-devices` → `CUDA0`, `CUDA1` (обе RTX 4000); `nvidia-smi` во время генерации: GPU1 40%/1134 МиБ, GPU2 45%/1256 МиБ (GTX 1050 idle) | 10 вопросов: **`passed=10/10`, `pass_rate=1.0`**; e2e 14.3 tok/s |
+
+Скрипт: `tests/e2e/llama_gpu_cards_e2e.sh` (A и B). Примечание: завершённые GPU-поды держат GPU до удаления —
+после каждого теста под/джоб нужно удалять (иначе следующий запрос `nvidia.com/gpu: 2` останется Pending).

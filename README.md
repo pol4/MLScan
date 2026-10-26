@@ -504,3 +504,6 @@ Guest-ядро Kata по умолчанию **без BTF** (host-ядро — с
 - `nvidia.com/gpu` **включён**: официальный `nvidia/k8s-device-plugin` v0.17.0 собран из исходников (kaniko) и
   опубликован в локальный реестр; pod’ы получают GPU через `resources.limits."nvidia.com/gpu"` + `runtimeClassName: nvidia`.
 - **MIG** на этих GPU не поддерживается (`mig.mode.current=[N/A]`; нужны A100/A30/H100).
+- **Две карты**: `nvidia.com/gpu=2` (обе RTX 4000); проверены (A) запуск небольшой модели на **второй** карте
+  и (B) **двухкарточный** инференс 3B-модели (`--tensor-split 1,1`) — обе карты заняты (nvidia-smi 40–45%,
+  ~1.1–1.3 ГБ), 10 вопросов `passed=10/10`.

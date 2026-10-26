@@ -315,3 +315,15 @@ Tetragon; OpenAI-API probe suite + эталоны; GPU-пул/ресурсный
 - Образ: CPU-вариант (`server`) и **GPU-вариант** (`server-cuda`, `Dockerfile.gpu`, `-ngl 99`).
 - Результат E2E (`llama_cpp_gpu_e2e.sh`): 10 вопросов заказчика на GPU — `passed=6/10`, `pass_rate=0.6`,
   `~23 tok/s` (CPU и device-plugin варианты); GPU-утилизация подтверждена `nvidia-smi`.
+
+---
+
+## 18. GPU: тесты второй карты и двух карт (проверено)
+
+- Device-plugin ограничен двумя RTX 4000 (`nvidia.com/gpu=2`), GTX 1050 исключён.
+- **A**: небольшая модель (gemma-3-270m Q8) на **второй** RTX 4000 (`CUDA_VISIBLE_DEVICES=1`, выделено 2 GPU):
+  `--list-devices` показывает одну `Quadro RTX 4000`; eval 288–354 tok/s; 10 вопросов — `passed=6/10`.
+- **B**: **двухкарточный** инференс Qwen2.5-3B-Instruct-Q4_K_M (`--tensor-split 1,1 --split-mode layer`):
+  `CUDA0` и `CUDA1`; во время генерации `nvidia-smi` — обе карты заняты (~1.1–1.3 ГБ, 40–45%);
+  10 вопросов — **`passed=10/10`, `pass_rate=1.0`**.
+- Скрипт: `tests/e2e/llama_gpu_cards_e2e.sh`.

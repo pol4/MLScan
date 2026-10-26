@@ -63,3 +63,5 @@
 **GPU (проверено):** 2× RTX 4000 + GTX 1050; доступ — `runtimeClassName: nvidia` + hostPath `/dev`;
 E2E `llama_cpp_gpu_e2e.sh`: 10 вопросов на GPU, `passed=6/10`, `~23.9 tok/s`; `nvidia.com/gpu`
 (device-plugin) — требует NGC-ключа (nvcr.io 403).
+
+**GPU (расширено):** device-plugin ограничен 2× RTX 4000 (`nvidia.com/gpu=2`); проверены (A) запуск небольшой модели на второй карте и (B) двухкарточный инференс 3B-модели (`--tensor-split 1,1`) — обе карты заняты (nvidia-smi 40–45%, ~1.1–1.3 ГБ каждая).
