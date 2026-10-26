@@ -650,6 +650,10 @@ th{color:#9aa4b2;font-weight:600} code{background:#1d2330;padding:1px 5px;border
 .v-Malicious{color:#ff6b6b}.v-Dangerous{color:#ffb057}.v-Needs{color:#ffd166}.v-Safe{color:#5dd39e}.v-Inconclusive{color:#9aa4b2}
 .pbar{background:#232a36;border-radius:5px;height:14px;position:relative;overflow:hidden;min-width:120px}
 .pbar>span{display:block;height:100%;background:#3d7dd8}
+.tabs{display:flex;gap:6px;margin-bottom:8px}
+.tab{background:#1b2130;color:#cfe3ff;border:1px solid #2b3a55;border-radius:8px;padding:6px 10px;cursor:pointer}
+.tab.active{background:#2b3a55}
+.tabpane{display:none}
 .badge{background:#2b3a55;color:#cfe3ff;border-radius:6px;padding:1px 6px;font-size:11px}
 form.upload{background:#161a23;border:1px solid #232a36;border-radius:10px;padding:16px;margin-bottom:20px}
 input[type=file]{color:#e6e6e6} button{background:#3d7dd8;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
@@ -788,6 +792,47 @@ document.getElementById('f').addEventListener('submit',e=>{
   xhr.onerror=()=>{alert(L.upload_error);};
   xhr.send(file);
 });
+(function(){const dl=document.getElementById('downloads');if(!dl)return;
+  const tabs=dl.querySelectorAll('.tab');
+  const show=id=>{dl.querySelectorAll('.tabpane').forEach(p=>p.style.display=(p.id===id?'block':'none'));
+    tabs.forEach(b=>b.classList.toggle('active',b.dataset.tab===id));};
+  tabs.forEach(b=>b.addEventListener('click',()=>show(b.dataset.tab))); show('tab-models');
+  const loadEngines=()=>fetch('/images/list').then(r=>r.ok?r.json():null).then(d=>{
+    const opts=((d&&d.images)||[]).map(i=>`<option value="${i.digest}">${(i.ref||i.digest).slice(0,48)}</option>`).join('');
+    ['englist','hfengine','locengine','rbengine'].forEach(id=>{const el=document.getElementById(id);
+      if(el) el.innerHTML='<option value="">engine: (выберите скачанный)</option>'+opts;});}).catch(()=>{});
+  loadEngines(); const er=document.getElementById('engrefresh'); er&&er.addEventListener('click',loadEngines);
+  const rf=document.getElementById('hfresults');
+  rf&&rf.addEventListener('click',ev=>{const b=ev.target.closest('button[data-repo]');if(!b)return;
+    if(!(document.getElementById('hfengine')||{}).value){ev.preventDefault();ev.stopImmediatePropagation();
+      document.getElementById('hfstatus').textContent='ERR: выберите движок из уже скачанных';}},true);
+  const ts=document.getElementById('hftokensave');
+  ts&&ts.addEventListener('click',()=>{const t=document.getElementById('hftoken').value.trim();
+    fetch('/hf/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})})
+      .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{document.getElementById('hftokenstatus').textContent=ok?('saved '+j.masked):('ERR '+(j.error||''));});});
+  fetch('/hf/token').then(r=>r.ok?r.json():null).then(d=>{if(d&&d.present)document.getElementById('hftokenstatus').textContent='token: '+d.masked;}).catch(()=>{});
+  const lb=document.getElementById('locbtn');
+  lb&&lb.addEventListener('click',()=>{const f=document.getElementById('locfile').files[0];const eng=document.getElementById('locengine').value;
+    const st=document.getElementById('locstatus');
+    if(!f){st.textContent='ERR: выберите файл';return;} if(!eng){st.textContent='ERR: выберите движок из скачанных';return;}
+    const xhr=new XMLHttpRequest(); xhr.open('POST','/upload?name='+encodeURIComponent(f.name)+'&fmt=pickle&kind=model');
+    xhr.onload=()=>{try{const r=JSON.parse(xhr.responseText); const sha=r.sha256;
+      fetch('/bundles',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model_sha256:sha,engine_image:eng,engine_manifest:{entrypoint:'engine'},prompt_set:'ps-v9'})})
+        .then(x=>x.json().then(j=>({ok:x.ok,j}))).then(({ok,j})=>{st.textContent=ok?('bundle '+j.bundle_id+' (тест запущен)'):('ERR '+(j.error||''));});
+    }catch(e){st.textContent='ERR';}};
+    xhr.onerror=()=>{st.textContent='ERR upload';}; xhr.send(f);});
+  const rb=document.getElementById('rbbtn');
+  rb&&rb.addEventListener('click',()=>{const sha=(document.getElementById('rbsha').value||'').trim().toLowerCase();
+    const eng=document.getElementById('rbengine').value; const st=document.getElementById('rbstatus');
+    if(!sha||!eng){st.textContent='ERR: нужны model sha256 и движок';return;}
+    fetch('/bundles?model='+encodeURIComponent(sha)).then(r=>r.ok?r.json():null).then(d=>{
+      const bs=(d&&d.bundles)||[]; if(!bs.length){st.textContent='ERR: bundle для модели не найден';return;}
+      fetch('/bundles/'+bs[0].bundle_id+'/rebind',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({engine_image:eng})}).then(x=>x.json().then(j=>({ok:x.ok,j})))
+        .then(({ok,j})=>{st.textContent=ok?('новый bundle '+j.bundle_id+' (тест перезапущен)'):('ERR '+(j.error||''));});});
+  });
+})();
 (function(){const sb=document.getElementById('hfsearch-btn');if(!sb)return;
   const res=document.getElementById('hfresults'), st=document.getElementById('hfstatus');
   const poll=id=>fetch('/hf/downloads/'+id).then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
@@ -804,7 +849,7 @@ document.getElementById('f').addEventListener('submit',e=>{
         res.querySelectorAll('button[data-repo]').forEach(b=>b.addEventListener('click',()=>{
           document.getElementById('hfquant').value=qz||'';
           fetch('/hf/downloads',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({repo_id:b.dataset.repo,quantization:qz})})
+            body:JSON.stringify({repo_id:b.dataset.repo,quantization:qz,engine_image:(document.getElementById('hfengine')||{}).value||''})})
             .then(r=>r.json()).then(d=>{ if(d.id){st.textContent='queued '+d.id.slice(0,8);poll(d.id);} else st.textContent='ERR '+(d.error||''); });}));})
       .catch(()=>{res.textContent='ERR';});});})();
 (function(){const b=document.getElementById('dcsave');if(!b)return;
@@ -863,7 +908,13 @@ def _login_page(error: str = "", lang: str = "ru", notice: str = "") -> bytes:
 
 def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> bytes:
     body = ("<div class='cards' id='cards'></div>"
-            f"<form class='upload' id='f'><b>{T('dash.upload', lang)}</b><br><br>"
+            + "<div class='dl' id='downloads'><div class='tabs'>"
+            + f"<button type='button' class='tab' data-tab='tab-models'>{'Модели (кроме LLM)' if lang=='ru' else 'Models (non-LLM)'}</button>"
+            + f"<button type='button' class='tab' data-tab='tab-local'>{'Локальные LLM' if lang=='ru' else 'Local LLMs'}</button>"
+            + f"<button type='button' class='tab' data-tab='tab-engines'>{'Движки инференса' if lang=='ru' else 'Inference engines'}</button>"
+            + f"<button type='button' class='tab' data-tab='tab-hf'>{'Модель с HF' if lang=='ru' else 'Model from HF'}</button>"
+            + "</div><div class='tabpane' id='tab-models'>"
+            + f"<form class='upload' id='f'><b>{T('dash.upload', lang)}</b><br><br>"
             + "<label style='color:#9aa4b2;font-size:12px'>"
             + ("Тип артефакта" if lang == "ru" else "Artifact kind") + ": </label>"
             + "<select id='kind' name='kind'>"
@@ -883,29 +934,46 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
             + "</div>"
             f"<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>{T('dash.upload_hint', lang)}</div>"
             "</form>"
-            + ("<div class='upload' id='hfpanel' style='margin-top:0'>"
-               + "<b>" + ("Hugging Face: поиск и загрузка" if lang == "ru" else "Hugging Face: search & download") + "</b><br><br>"
-               + "<input id='hfquery' type='text' placeholder='name/query' style='width:25%'> "
-               + "<input id='hftype' type='text' placeholder='type (text-generation)' style='width:18%'> "
-               + "<select id='hfquant'><option value=''>quant: any</option><option>Q4_K_M</option><option>Q5_K_M</option><option>Q8_0</option><option>F16</option></select> "
-               + "<button id='hfsearch-btn' type='button'>" + ("Найти" if lang == "ru" else "Search") + "</button>"
-               + "<div id='hfresults' style='margin-top:6px;font-size:12px'></div>"
-               + "<div id='hfstatus' style='color:#9aa4b2;font-size:12px'></div>"
-               + "</div>" if "admin" in (roles or []) else "")
-            + ("<div class='upload' id='dcs' style='margin-top:0'>"
-               + "<b>" + ("Домен → класс policy (переопределение)" if lang == "ru" else "Domain → policy class (override)") + "</b><br><br>"
-               + "<input id='dcdomain' type='text' placeholder='Домен вопроса' style='width:35%'> "
-               + "<input id='dcclass' type='text' placeholder='policy_class' style='width:25%'> "
-               + "<button id='dcsave' type='button'>" + ("Сохранить" if lang == "ru" else "Save") + "</button>"
-               + "<div id='dcstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div>"
-               + "</div>" if "admin" in (roles or []) else "")
-            + ("<div class='upload' id='imgs' style='margin-top:0'>"
+            + "</div>"  # /tab-models
+            + ("<div class='tabpane' id='tab-local' style='display:none'>"
+               + "<div class='upload' style='margin-top:0'><b>" + ("Локальная LLM: файл + движок (обязателен)" if lang == "ru" else "Local LLM: file + engine (required)") + "</b><br><br>"
+               + "<input type='file' id='locfile'> "
+               + "<select id='locengine'><option value=''>engine: (выберите скачанный)</option></select> "
+               + "<button id='locbtn' type='button'>" + ("Загрузить и запустить тест" if lang == "ru" else "Upload & run test") + "</button>"
+               + "<div id='locstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div></div>"
+               + "<div class='upload' style='margin-top:0'><b>" + ("Перепривязка движка (перезапуск теста)" if lang == "ru" else "Engine rebind (re-run test)") + "</b><br><br>"
+               + "<input id='rbsha' type='text' placeholder='model sha256' style='width:45%'> "
+               + "<select id='rbengine'><option value=''>engine: (выберите скачанный)</option></select> "
+               + "<button id='rbbtn' type='button'>" + ("Сменить движок и перезапустить" if lang == "ru" else "Rebind & re-run") + "</button>"
+               + "<div id='rbstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div></div>"
+               + "</div>")
+            + ("<div class='tabpane' id='tab-engines' style='display:none'>"
+               + "<div class='upload' id='imgs' style='margin-top:0'>"
                + "<b>" + ("Импорт образа движка" if lang == "ru" else "Engine image import") + "</b><br><br>"
                + "<input id='imgref' type='text' placeholder='mlscan-registry/…@sha256:…' style='width:60%'> "
                + "<input id='imgtarkey' type='text' placeholder='oci_tar_key (опц.)' style='width:20%'> "
                + "<button id='imgimport-btn' type='button'>" + ("Импорт" if lang == "ru" else "Import") + "</button>"
                + "<div id='imgstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div>"
-               + "</div>" if "admin" in (roles or []) else "")
+               + "<div style='margin-top:6px;font-size:12px'>" + ("Скачанные движки:" if lang == "ru" else "Downloaded engines:")
+               + " <select id='englist' style='min-width:40%'></select> <button id='engrefresh' type='button'>refresh</button></div>"
+               + "</div></div>" if "admin" in (roles or []) else "<div class='tabpane' id='tab-engines' style='display:none'></div>")
+            + ("<div class='tabpane' id='tab-hf' style='display:none'>"
+               + "<div class='upload' id='hfpanel' style='margin-top:0'>"
+               + "<b>" + ("Hugging Face: поиск и загрузка" if lang == "ru" else "Hugging Face: search & download") + "</b><br><br>"
+               + "<input id='hfquery' type='text' placeholder='name/query' style='width:22%'> "
+               + "<input id='hftype' type='text' placeholder='type (text-generation)' style='width:16%'> "
+               + "<select id='hfquant'><option value=''>quant: any</option><option>Q4_K_M</option><option>Q5_K_M</option><option>Q8_0</option><option>F16</option></select> "
+               + "<button id='hfsearch-btn' type='button'>" + ("Найти" if lang == "ru" else "Search") + "</button> "
+               + "<select id='hfengine'><option value=''>engine: (обязателен из скачанных)</option></select>"
+               + "<div id='hfresults' style='margin-top:6px;font-size:12px'></div>"
+               + "<div id='hfstatus' style='color:#9aa4b2;font-size:12px'></div>"
+               + "</div>"
+               + "<div class='upload' style='margin-top:0'><b>HF token</b> "
+               + "<input id='hftoken' type='password' placeholder='hf_…' style='width:28%'> "
+               + "<button id='hftokensave' type='button'>" + ("Сохранить токен" if lang == "ru" else "Save token") + "</button> "
+               + "<span id='hftokenstatus' style='color:#9aa4b2;font-size:12px'></span></div>"
+               + "</div>" if "admin" in (roles or []) else "<div class='tabpane' id='tab-hf' style='display:none'></div>")
+            + "</div>"  # /downloads
             + ("<div class='upload' id='psset' style='margin-top:0'>"
                + "<b>" + ("Набор тестов (XLSX)" if lang == "ru" else "Prompt set (XLSX)") + "</b><br><br>"
                + "<input type='file' id='psfile' accept='.xlsx' name='psfile'> "
@@ -1205,6 +1273,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/prompt-sets":
             return self._prompt_sets_proxy(q)
+        if p == "/images/list":
+            code, body = self._test_request("GET", "/images/list")
+            return self._send(code, body, "application/json; charset=utf-8")
+        if p == "/hf/token":
+            code, body = self._test_request("GET", "/hf/token")
+            return self._send(code, body, "application/json; charset=utf-8")
+        if p == "/bundles":
+            code, body = self._test_request("GET", "/bundles" + (("?" + (u.query or "")) if u.query else ""))
+            return self._send(code, body, "application/json; charset=utf-8")
         if p == "/hf/downloads":
             code, body = self._test_request("GET", "/hf/downloads")
             return self._send(code, body, "application/json; charset=utf-8")
@@ -1365,6 +1442,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._proxy_upload(q)
         if u.path == "/prompt-sets":
             return self._prompt_sets_proxy(q)
+        if u.path == "/hf/token":
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", "/hf/token", data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", u.path, data)
+            return self._send(code, body, "application/json; charset=utf-8")
         if u.path in ("/hf/search", "/hf/downloads"):
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"

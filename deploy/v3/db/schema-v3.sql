@@ -150,3 +150,6 @@ CREATE TABLE IF NOT EXISTS hf_downloads (
   status TEXT DEFAULT 'queued', error TEXT, created TIMESTAMPTZ DEFAULT now(),
   updated TIMESTAMPTZ DEFAULT now()
 );
+
+-- §10: HF-токены (per-tenant, хранятся зашифрованно/маскированно)
+CREATE TABLE IF NOT EXISTS hf_tokens (tenant TEXT PRIMARY KEY, token_enc TEXT, updated TIMESTAMPTZ DEFAULT now());

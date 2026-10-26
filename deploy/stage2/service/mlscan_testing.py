@@ -1198,6 +1198,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, stats())
         if u.path == "/detectors":
             return self._detectors_list()
+        if u.path == "/bundles":
+            return self._bundles_list(q)
+        if u.path == "/hf/token":
+            return self._hf_token_get()
         if u.path == "/tenants/fairshare":
             return self._tenants_fairshare()
         if u.path == "/domain-class":
@@ -1216,6 +1220,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._prompt_sets_active()
         if u.path.startswith("/llm/events/"):
             return self._llm_events_get(u.path.split("/", 3)[3])
+        if u.path == "/images/list":
+            return self._images_list()
         if u.path == "/images/verify":
             return self._images_verify((q.get("ref", [""])[0]))
         if u.path.startswith("/images/"):
@@ -1776,6 +1782,91 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
 
+    def _images_list(self) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT digest,ref,source,size,status FROM registry_images ORDER BY created DESC") or []
+        return self._json(200, {"images": [{"digest": r[0], "ref": r[1], "source": r[2],
+                                            "size": r[3], "status": r[4]} for r in rows]})
+
+    @staticmethod
+    def _to_digest(engine_image: str) -> str:
+        return "sha256:" + engine_image.split("@sha256:")[-1] if "@sha256:" in (engine_image or "") else (engine_image or "")
+
+    def _engine_ok(self, engine_image: str) -> bool:
+        if not engine_image:
+            return False
+        if not DB_ENABLED:
+            return True
+        rows = db_query("SELECT 1 FROM registry_images WHERE digest=" + _lit(self._to_digest(engine_image)) + " LIMIT 1")
+        return bool(rows)
+
+    def _hf_token_set(self) -> None:
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        token = (body.get("token") or "").strip()
+        tenant = self._tenant()
+        if not token:
+            return self._json(400, {"error": "token обязателен"})
+        if DB_ENABLED:
+            try:
+                db_exec("INSERT INTO hf_tokens(tenant,token_enc) VALUES ("
+                        f"{_lit(tenant)},{_lit('enc:' + hashlib.sha256(token.encode()).hexdigest()[:16])}) "
+                        "ON CONFLICT (tenant) DO UPDATE SET token_enc=EXCLUDED.token_enc, updated=now()")
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(200, {"tenant": tenant, "stored": True, "masked": "hf_***" + token[-4:],
+                                "hint": "токен сохранён; значение не возвращается"})
+
+    def _hf_token_get(self) -> None:
+        tenant = self._tenant()
+        present = False
+        if DB_ENABLED:
+            try:
+                present = bool(db_query("SELECT 1 FROM hf_tokens WHERE tenant=" + _lit(tenant)))
+            except Exception:  # noqa: BLE001
+                present = False
+        return self._json(200, {"tenant": tenant, "present": present, "masked": "hf_***" if present else ""})
+
+    def _bundle_rebind(self, bundle_id: str) -> None:
+        """§10 D4: смена движка и перезапуск теста (новый bundle) без перезагрузки модели."""
+        if v3binding is None:
+            return self._json(503, {"error": "v3 llm module unavailable"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        new_engine = (body.get("engine_image") or "").strip()
+        if not self._engine_ok(new_engine):
+            return self._json(400, {"error": "engine_image должен быть из уже скачанных (registry_images)"})
+        rows = db_query("SELECT engine_image,model_sha256,engine_manifest,prompt_set,detectors,policy,tenant "
+                        "FROM bundles WHERE bundle_id=" + _lit(bundle_id)) if DB_ENABLED else []
+        if not rows:
+            return self._json(404, {"error": "bundle not found"})
+        r = rows[0]
+        b = v3binding.make_bundle(image_digest=new_engine, model_sha256=r[1],
+                                  engine_manifest=json.loads(r[2] or "{}"), prompt_set=r[3],
+                                  detectors=r[4], policy=r[5], tenant=r[6])
+        ok, why = v3binding.validate_bundle(b)
+        if not ok:
+            return self._json(400, {"error": why})
+        if DB_ENABLED:
+            try:
+                db_exec("INSERT INTO bundles(bundle_id,engine_image,model_sha256,engine_manifest,prompt_set,"
+                        "detectors,policy,tenant) VALUES ("
+                        f"{_lit(b['bundle_id'])},{_lit(b['engine_image'])},{_lit(b['model_sha256'])},"
+                        f"{_lit(json.dumps(b['engine_manifest'], ensure_ascii=False))},{_lit(b['prompt_set'])},"
+                        f"{_lit(b['detectors'])},{_lit(b['policy'])},{_lit(b['tenant'])}) "
+                        "ON CONFLICT (bundle_id) DO NOTHING")
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(201, {"bundle_id": b["bundle_id"], "engine_image": b["engine_image"],
+                                "previous_bundle": bundle_id, "restarted": True, "bundle": b})
+
     def _hf_search(self) -> None:
         n = int(self.headers.get("Content-Length", "0") or "0")
         try:
@@ -1812,6 +1903,12 @@ class Handler(BaseHTTPRequestHandler):
         repo = (body.get("repo_id") or "").strip()
         if not repo:
             return self._json(400, {"error": "repo_id обязателен"})
+        # §10 D3: LLM-модель требует выбранный движок из уже скачанных
+        kind = (body.get("kind") or "llm").lower()
+        engine_image = (body.get("engine_image") or "").strip()
+        if kind != "nonllm" and not self._engine_ok(engine_image):
+            return self._json(400, {"error": "для LLM-модели обязателен engine_image из уже скачанных "
+                                             "(registry_images); скачайте движок в подзакладке «Движки инференса»"})
         files = body.get("files") or []
         sizes = {}
         for m in _HF_MOCK_MODELS:
@@ -2123,6 +2220,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
         return self._json(201, b)
 
+    def _bundles_list(self, q: dict) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        model = (q.get("model", [""])[0] or "").lower()
+        if not model:
+            return self._json(400, {"error": "нужен параметр model=<sha256>"})
+        rows = db_query("SELECT bundle_id,engine_image,model_sha256,prompt_set,detectors,policy,"
+                        "to_char(created,'YYYY-MM-DD\"T\"HH24:MI:SS') FROM bundles WHERE model_sha256="
+                        + _lit(model) + " ORDER BY created DESC") or []
+        return self._json(200, {"model_sha256": model, "bundles": [
+            {"bundle_id": r[0], "engine_image": r[1], "model_sha256": r[2], "prompt_set": r[3],
+             "detectors": r[4], "policy": r[5], "created": r[6]} for r in rows]})
+
     def _bundles_get(self, bundle_id: str) -> None:
         if not DB_ENABLED:
             return self._json(503, {"error": "db disabled"})
@@ -2210,6 +2320,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._bundles_create()
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
             return self._bundle_verdict_set(u.path.split("/", 3)[2])
+        if u.path == "/hf/token":
+            return self._hf_token_set()
+        if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):
+            return self._bundle_rebind(u.path.split("/", 3)[2])
         if u.path == "/images/import":
             return self._images_import()
         if u.path == "/domain-class":

@@ -19,10 +19,15 @@ function chrome(){ if(process.env.CHROME_PATH&&fs.existsSync(process.env.CHROME_
     await page.waitForSelector('input[name=username]',{timeout:15000});
     await page.type('input[name=username]',USER); await page.type('input[name=password]',PASS);
     await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded',timeout:30000}),page.click('button[type=submit]')]);
+    await page.click('#downloads .tab[data-tab="tab-hf"]');
+    await page.waitForFunction(()=>getComputedStyle(document.getElementById('tab-hf')).display!=='none',{timeout:10000});
     await page.waitForSelector('#hfquery',{timeout:15000});
     await page.type('#hfquery','tinyllama');
     await page.type('#hftype','text-generation');
     await page.select('#hfquant','Q5_K_M');
+    await page.waitForFunction(()=>{const s=document.getElementById('hfengine');return s&&s.options.length>1;},{timeout:20000});
+    const engval=await page.$eval('#hfengine', e=>e.options[1].value);
+    await page.select('#hfengine', engval);
     await page.click('#hfsearch-btn');
     await page.waitForFunction(()=>{const e=document.getElementById('hfresults');return e&&/TinyLlama/.test(e.textContent);},{timeout:30000});
     console.log('[ui-hf] результаты поиска получены');
