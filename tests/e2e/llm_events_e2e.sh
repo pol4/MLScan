@@ -22,7 +22,9 @@ def api(method, path, payload=None):
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")
 
+import time
 N = "nonce-e2e-1"
+SCAN = "e2e-llm-" + str(int(time.time()))
 events = [
     {"type": "process_exec", "process": {"binary": "/bin/sh", "args": ["-c", "curl x"]}, "phase": "load", "nonce": N},
     {"type": "network", "dst": {"ip": "8.8.8.8", "port": 443}, "phase": "probe", "probe_id": "p1", "nonce": N},
@@ -30,13 +32,13 @@ events = [
     {"type": "network", "dst": {"ip": "127.0.0.1", "port": 8000}, "phase": "probe", "nonce": N},  # allowed
     {"type": "process_exec", "process": {"binary": "sh"}, "nonce": "WRONG"},                       # spoofed
 ]
-st, r = api("POST", "/llm/events", {"scan_id": "e2e-llm-1", "nonce": N, "events": events})
+st, r = api("POST", "/llm/events", {"scan_id": SCAN, "nonce": N, "events": events})
 assert st == 200, (st, r)
 ids = sorted(f["check_id"] for f in r["findings"])
 assert ids == ["LLM-B-01", "LLM-B-02", "LLM-B-03"], ids
 assert r["max_severity"] == "high", r
 assert r["rejected"] == 1, r
-st2, g = api("GET", "/llm/events/e2e-llm-1")
+st2, g = api("GET", "/llm/events/" + SCAN)
 assert st2 == 200 and g["count"] == 3, (st2, g)
 print("  [OK]   события -> findings LLM-B-01/02/03, локальная сеть не флагается, чужой nonce отклонён")
 PY

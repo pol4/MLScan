@@ -201,6 +201,24 @@ def _hf_mock_search(search: str, type_: str) -> list[dict]:
     return res
 
 
+def _norm_engine(engine_image: str) -> str:
+    """Привести движок к виду <ref>@sha256:... (bundle требует digest-форму).
+
+    UI отдаёт значение из списка движков как «голый» digest; заменяем его на ref из registry_images.
+    """
+    e = (engine_image or "").strip()
+    if not e or "@sha256:" in e:
+        return e
+    if e.startswith("sha256:") and DB_ENABLED:
+        try:
+            rows = db_query("SELECT ref FROM registry_images WHERE digest=" + _lit(e) + " LIMIT 1")
+            if rows and rows[0][0]:
+                return rows[0][0]
+        except Exception:  # noqa: BLE001
+            pass
+    return e
+
+
 def _hf_download_worker(dl_id: str) -> None:
     try:
         rows = db_query("SELECT repo_id,revision,files FROM hf_downloads WHERE id=" + _lit(dl_id))
@@ -208,20 +226,30 @@ def _hf_download_worker(dl_id: str) -> None:
             return
         repo, revision, files_json = rows[0][0], rows[0][1], rows[0][2]
         files = json.loads(files_json or "[]")
+        db_exec("UPDATE hf_downloads SET status='running', updated=now() WHERE id=" + _lit(dl_id))
         done = 0
         for fname in files:
             if dl_id in _hf_cancel:
                 raise RuntimeError("cancelled")
-            size = 4096
+            size = 0
             for m in _HF_MOCK_MODELS:
                 if m["id"] == repo and fname in m["files"]:
                     size = int(m["files"][fname])
             url = f"{HF_BASE_URL}/{repo}/resolve/{revision or 'main'}/{fname}"
+            if not size:      # реальный HF: размер по HEAD (Content-Length)
+                try:
+                    hreq = urllib.request.Request(url, method="HEAD")
+                    if HF_TOKEN:
+                        hreq.add_header("Authorization", f"Bearer {HF_TOKEN}")
+                    with _HF_OPENER.open(hreq, timeout=30) as hr:
+                        size = int(hr.headers.get("Content-Length") or 0)
+                except Exception:  # noqa: BLE001
+                    size = 0
             dest = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(fname)}")
             os.makedirs(DATA_TMP, exist_ok=True)
             got = 0; attempts = 0; etag = ""
             with open(dest, "ab" if os.path.exists(dest) else "wb") as fh:
-                while got < size and attempts < 8:
+                while (size == 0 or got < size) and attempts < 8:
                     attempts += 1
                     req = urllib.request.Request(url, headers={"Range": f"bytes={got}-"})
                     if etag:
@@ -229,18 +257,30 @@ def _hf_download_worker(dl_id: str) -> None:
                     if HF_TOKEN:
                         req.add_header("Authorization", f"Bearer {HF_TOKEN}")
                     try:
-                        with _HF_OPENER.open(req, timeout=60) as resp:
+                        with _HF_OPENER.open(req, timeout=120) as resp:
                             etag = resp.headers.get("ETag", etag) or etag
-                            while got < size:
-                                chunk = resp.read(min(65536, size - got))
+                            if not size and resp.headers.get("Content-Length"):
+                                size = int(resp.headers["Content-Length"]) + (got or 0)
+                            last_upd = 0
+                            while size == 0 or got < size:
+                                chunk = resp.read(1 << 20)
                                 if not chunk:
                                     break
                                 fh.write(chunk); got += len(chunk)
+                                if got - last_upd >= 8 * 1024 * 1024:  # прогресс в UI
+                                    last_upd = got
+                                    db_exec("UPDATE hf_downloads SET bytes_done=" + str(done + got)
+                                            + ", updated=now() WHERE id=" + _lit(dl_id))
+                        if size and got >= size:
+                            break
                     except Exception:  # noqa: BLE001 — обрыв: повтор с докачкой (Range)
                         time.sleep(0.2)
                         continue
-            if got < size:
+            if got == 0:
+                raise RuntimeError(f"empty download {fname} (HTTP error или файл недоступен)")
+            if size and got < size:
                 raise RuntimeError(f"incomplete {fname}: {got}/{size}")
+            size = got or size
             if S3_ENABLED and _s3 is not None:
                 sha = hashlib.sha256(open(dest, "rb").read()).hexdigest()
                 with open(dest, "rb") as fh:
@@ -248,7 +288,37 @@ def _hf_download_worker(dl_id: str) -> None:
                                              part_size=1024 * 1024, workers=4)
             done += size
             db_exec("UPDATE hf_downloads SET bytes_done=" + str(done) + ", updated=now() WHERE id=" + _lit(dl_id))
-        db_exec("UPDATE hf_downloads SET status='done', updated=now() WHERE id=" + _lit(dl_id))
+        # sha первого/основного файла и bundle (если выбран движок) — §10 D3
+        try:
+            rows2 = db_query("SELECT files, engine_image FROM hf_downloads WHERE id=" + _lit(dl_id))
+            fl = json.loads((rows2[0][0] if rows2 else "[]") or "[]")
+            eng = (rows2[0][1] if rows2 else "") or ""
+            if fl:
+                f0 = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(fl[0])}")
+                if os.path.exists(f0):
+                    hh = hashlib.sha256()
+                    with open(f0, "rb") as fh:
+                        for blk in iter(lambda: fh.read(1 << 20), b""):
+                            hh.update(blk)
+                    msha = hh.hexdigest()
+                    db_exec("UPDATE hf_downloads SET model_sha256=" + _lit(msha) + ", updated=now() WHERE id=" + _lit(dl_id))
+                    if eng and v3binding is not None:
+                        b = v3binding.make_bundle(image_digest=eng, model_sha256=msha,
+                                                  engine_manifest={"entrypoint": "engine", "source": "hf"},
+                                                  prompt_set="", detectors=DETECTORS_VERSION, policy="")
+                        ok, _why = v3binding.validate_bundle(b)
+                        if ok and DB_ENABLED:
+                            db_exec("INSERT INTO bundles(bundle_id,engine_image,model_sha256,engine_manifest,"
+                                    "prompt_set,detectors,policy,tenant) VALUES ("
+                                    f"{_lit(b['bundle_id'])},{_lit(b['engine_image'])},{_lit(b['model_sha256'])},"
+                                    f"{_lit(json.dumps(b['engine_manifest'], ensure_ascii=False))},"
+                                    f"{_lit(b['prompt_set'])},{_lit(b['detectors'])},{_lit(b['policy'])},"
+                                    f"{_lit('')}) ON CONFLICT (bundle_id) DO NOTHING")
+                            db_exec("UPDATE hf_downloads SET bundle_id=" + _lit(b["bundle_id"]) + " WHERE id=" + _lit(dl_id))
+        except Exception:  # noqa: BLE001
+            pass
+        db_exec("UPDATE hf_downloads SET status='done', bytes_total=" + str(done) +
+                ", bytes_done=" + str(done) + ", updated=now() WHERE id=" + _lit(dl_id))
     except Exception as exc:  # noqa: BLE001
         st = "cancelled" if dl_id in _hf_cancel else "error"
         try:
@@ -1770,15 +1840,37 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "нужны image и model"})
         if not DB_ENABLED:
             return self._json(503, {"error": "db disabled"})
-        rows = db_query("SELECT bundle_id FROM bundles WHERE engine_image=" + _lit(image)
+        image = _norm_engine(image)
+        where = ("engine_image=" + _lit(image)) if image else ("engine_image LIKE " + _lit("%" + q.get("image", [""])[0]))
+        rows = db_query("SELECT bundle_id FROM bundles WHERE " + where
                         + " AND model_sha256=" + _lit(model) + " LIMIT 1")
         if not rows:
-            return self._json(404, {"error": "bundle not found", "decision": "unknown"})
+            # bundle нет: решение по вердикту артефакта модели (если модель уже проверялась)
+            rec = None
+            for it in list_scans():
+                if (it.get("sha256") or "") == model:
+                    rec = load_scan(it.get("scan_id") or "")
+                    if rec and rec.get("state") == "done":
+                        break
+            verdict = (rec or {}).get("verdict") or ""
+            if verdict in ("Malicious", "Dangerous"):
+                dec = "block"
+            elif verdict in ("Needs review", "Inconclusive"):
+                dec = "quarantine"
+            elif verdict == "Safe":
+                dec = "allow"
+            else:
+                dec = "quarantine"
+            return self._json(200, {"bundle_id": None, "decision": dec, "verdict": verdict or None,
+                                    "reason": ("нет bundle для пары (образ, модель); решение по артефакту модели"
+                                               if verdict else "нет bundle и вердикта; политика по умолчанию")})
         bid = rows[0][0]
         vr = db_query("SELECT verdict,action,attestation_digest,signature FROM bundle_verdicts "
                       "WHERE bundle_id=" + _lit(bid))
         if not vr:
-            return self._json(200, {"bundle_id": bid, "decision": "unknown", "reason": "нет вердикта"})
+            # fail-closed: bundle без вердикта (тест не прогнан) — не allow
+            return self._json(200, {"bundle_id": bid, "decision": "quarantine",
+                                    "reason": "нет вердикта bundle: тест (инференс/набор вопросов) не прогнан"})
         return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
 
@@ -1840,7 +1932,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
         except Exception as exc:  # noqa: BLE001
             return self._json(400, {"error": f"bad json: {exc}"})
-        new_engine = (body.get("engine_image") or "").strip()
+        new_engine = _norm_engine(body.get("engine_image") or "")
         if not self._engine_ok(new_engine):
             return self._json(400, {"error": "engine_image должен быть из уже скачанных (registry_images)"})
         rows = db_query("SELECT engine_image,model_sha256,engine_manifest,prompt_set,detectors,policy,tenant "
@@ -1878,7 +1970,7 @@ class Handler(BaseHTTPRequestHandler):
             items = _hf_mock_search(body.get("query", ""), body.get("type", ""))
         else:
             try:
-                qs = urllib.parse.urlencode({"search": body.get("query", ""), "limit": "20"})
+                qs = urllib.parse.urlencode({"search": body.get("query", ""), "limit": "30", "full": "true"})
                 req = urllib.request.Request(f"{HF_BASE_URL}/api/models?{qs}")
                 if HF_TOKEN:
                     req.add_header("Authorization", f"Bearer {HF_TOKEN}")
@@ -1905,7 +1997,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "repo_id обязателен"})
         # §10 D3: LLM-модель требует выбранный движок из уже скачанных
         kind = (body.get("kind") or "llm").lower()
-        engine_image = (body.get("engine_image") or "").strip()
+        engine_image = _norm_engine(body.get("engine_image") or "")
         if kind != "nonllm" and not self._engine_ok(engine_image):
             return self._json(400, {"error": "для LLM-модели обязателен engine_image из уже скачанных "
                                              "(registry_images); скачайте движок в подзакладке «Движки инференса»"})
@@ -1914,21 +2006,35 @@ class Handler(BaseHTTPRequestHandler):
         for m in _HF_MOCK_MODELS:
             if m["id"] == repo:
                 sizes = dict(m["files"])
+        if not files and HF_MOCK:
+            files = [f for f in sizes]
         if not files:
-            files = [f for f in sizes] or ["model.gguf"]
+            # реальный HF: список файлов репозитория (/api/models/{repo})
+            try:
+                meta = json.loads(_HF_OPENER.open(f"{HF_BASE_URL}/api/models/{repo}", timeout=30).read() or b"{}")
+                files = [f.get("rfilename") for f in (meta.get("siblings") or []) if f.get("rfilename")]
+            except Exception:  # noqa: BLE001
+                files = []
+        files = [f for f in files if not f.lower().endswith((".md", ".png", ".jpg", ".jpeg", ".gif", ".svg"))]
         if v3hf is not None and body.get("quantization"):
             sel = v3hf.select_files(files, quantization=body.get("quantization"))
             files = sel or files
-        total = sum(int(sizes.get(f, 4096)) for f in files)
+        elif files:
+            gg = [f for f in files if f.lower().endswith(".gguf")]
+            files = gg or files
+        if not files:
+            files = ["model.gguf"]
+        total = sum(int(sizes.get(f, 0)) for f in files)
         dl_id = uuid.uuid4().hex
         tenant = self._tenant()
         try:
-            db_exec("INSERT INTO hf_downloads(id,tenant,repo_id,revision,quantization,files,bytes_total,status) "
+            db_exec("INSERT INTO hf_downloads(id,tenant,repo_id,revision,quantization,files,bytes_total,status,engine_image) "
                     "VALUES (" + ",".join([_lit(dl_id), _lit(tenant), _lit(repo),
                                            _lit(body.get("revision", "main")),
                                            _lit(body.get("quantization", "")),
                                            _lit(json.dumps(files, ensure_ascii=False)),
-                                           str(total), _lit("queued")]) + ")")
+                                           str(total), _lit("queued"),
+                                           _lit(engine_image)]) + ")")
         except Exception as exc:  # noqa: BLE001
             return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
         threading.Thread(target=_hf_download_worker, args=(dl_id,), daemon=True).start()
@@ -1938,24 +2044,26 @@ class Handler(BaseHTTPRequestHandler):
     def _hf_downloads_list(self) -> None:
         if not DB_ENABLED:
             return self._json(503, {"error": "db disabled"})
-        rows = db_query("SELECT id,repo_id,revision,quantization,files,bytes_total,bytes_done,status,error "
-                        "FROM hf_downloads ORDER BY created DESC LIMIT 100") or []
+        rows = db_query("SELECT id,repo_id,revision,quantization,files,bytes_total,bytes_done,status,error,"
+                        "engine_image,bundle_id,model_sha256 FROM hf_downloads ORDER BY created DESC LIMIT 100") or []
         return self._json(200, {"downloads": [
             {"id": r[0], "repo_id": r[1], "revision": r[2], "quantization": r[3],
              "files": json.loads(r[4] or "[]"), "bytes_total": r[5], "bytes_done": r[6],
-             "status": r[7], "error": r[8]} for r in rows]})
+             "status": r[7], "error": r[8], "engine_image": r[9], "bundle_id": r[10],
+             "model_sha256": r[11]} for r in rows]})
 
     def _hf_download_get(self, dl_id: str) -> None:
         if not DB_ENABLED:
             return self._json(503, {"error": "db disabled"})
-        rows = db_query("SELECT id,repo_id,revision,quantization,files,bytes_total,bytes_done,status,error "
-                        "FROM hf_downloads WHERE id=" + _lit(dl_id))
+        rows = db_query("SELECT id,repo_id,revision,quantization,files,bytes_total,bytes_done,status,error,"
+                        "engine_image,bundle_id,model_sha256 FROM hf_downloads WHERE id=" + _lit(dl_id))
         if not rows:
             return self._json(404, {"error": "not found"})
         r = rows[0]
         return self._json(200, {"id": r[0], "repo_id": r[1], "revision": r[2], "quantization": r[3],
                                 "files": json.loads(r[4] or "[]"), "bytes_total": r[5],
-                                "bytes_done": r[6], "status": r[7], "error": r[8]})
+                                "bytes_done": r[6], "status": r[7], "error": r[8],
+                                "engine_image": r[9], "bundle_id": r[10], "model_sha256": r[11]})
 
     def _hf_download_cancel(self, dl_id: str) -> None:
         with _hf_lock:
@@ -2200,7 +2308,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             return self._json(400, {"error": f"bad json: {exc}"})
         b = v3binding.make_bundle(
-            image_digest=(body.get("engine_image") or "").strip(),
+            image_digest=_norm_engine(body.get("engine_image") or ""),
             model_sha256=(body.get("model_sha256") or "").lower(),
             engine_manifest=body.get("engine_manifest") or {},
             prompt_set=body.get("prompt_set", ""), detectors=body.get("detectors", ""),

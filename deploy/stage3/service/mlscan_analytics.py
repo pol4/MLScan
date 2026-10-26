@@ -979,6 +979,14 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
                + "<input type='file' id='psfile' accept='.xlsx' name='psfile'> "
                + "<span id='psstatus' style='color:#9aa4b2;font-size:12px'></span>"
                + "</div>" if "admin" in (roles or []) else "")
+            + ("<div class='upload' id='dcpanel' style='margin-top:0'>"
+               + "<b>" + ("Домен → класс policy" if lang == "ru" else "Domain → policy class") + "</b><br><br>"
+               + "<input id='dcdomain' type='text' placeholder='"
+               + ("домен/критерий (напр. Правонарушение)" if lang == "ru" else "domain/criterion") + "' style='width:34%'> "
+               + "<input id='dcclass' type='text' placeholder='policy class' style='width:20%'> "
+               + "<button id='dcsave' type='button'>" + ("Сохранить" if lang == "ru" else "Save") + "</button>"
+               + "<div id='dcstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div></div>"
+               if "admin" in (roles or []) else "")
             + "<div class='controls'>"
             f"<input id='q' type='search' placeholder='{T('dash.filter', lang)}'>"
             "<select id='vf'>"
@@ -1464,6 +1472,11 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"
             code, body = self._test_request("POST", "/domain-class", data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        if u.path == "/bundles":
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", "/bundles", data)
             return self._send(code, body, "application/json; charset=utf-8")
         if u.path == "/images/import":
             n = int(self.headers.get("Content-Length", "0") or "0")

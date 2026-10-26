@@ -50,7 +50,8 @@
 - **Отдельный RuntimeClass `kata-btf`** (BTF-ядро Kata для in-guest eBPF) + правки Kyverno → затем **H3 с eBPF**.
   Дизайн и факты — план §8.9/§8.10 (BTF-вариант ядра на узле есть: `config-…-debug`, `vmlinuz-debug.container`).
 - **GPU-пул** (железо + `nvidia-device-plugin`).
-- **HF**: реальный токен и egress-allowlist к huggingface.co/CDN (сейчас mock-HF).
+- **HF**: реальный egress **сделан** (см. §6); остаётся только реальный **токен** для приватных репозиториев
+  (публичные модели работают без токена; mock-HF остался как режим `HF_MOCK=1`).
 - **Harbor + cosign/SBOM**, **Vault/TSA/WORM**, **mTLS**, **multi-node HA/DR**, **GitOps-контроллер**,
   **доверенная judge-модель**, **HDF5-адаптер**, **полная интеграция анализа в поток скана**, **перф 1 ТБ**.
 
@@ -65,3 +66,47 @@ E2E `llama_cpp_gpu_e2e.sh`: 10 вопросов на GPU, `passed=6/10`, `~23.9 
 (device-plugin) — требует NGC-ключа (nvcr.io 403).
 
 **GPU (расширено):** device-plugin ограничен 2× RTX 4000 (`nvidia.com/gpu=2`); проверены (A) запуск небольшой модели на второй карте и (B) двухкарточный инференс 3B-модели (`--tensor-split 1,1`) — обе карты заняты (nvidia-smi 40–45%, ~1.1–1.3 ГБ каждая).
+
+## 6. Реальный Hugging Face и полный операторский E2E (факт, 2026-10-26)
+
+**Egress только к HF.** `toFQDNs`/`destination.domains` в этом Calico-CRD **отсутствуют** (проверено на
+`crd.projectcalico.org/v1` и `globalnetworkpolicies`), поэтому доступ открыт **IP-allowlist**
+(`deploy/ingress/33-egress-hf.yaml`, ns `mlscan-testing`, только TCP/443): `huggingface.co`, `*.hf.co`
+(`cdn-lfs*`, `us.aws.cdn.hf.co`), `cas-bridge/cas-server/transfer.xethub.hf.co` — CIDR `/32` + `/24`
+подсетей. Генератор: `deploy/ingress/gen-hf-egress.sh` (резолв хостов на узле). Проверено из пода:
+`HEAD` реального GGUF → `Content-Length=291 545 600`, `GET Range` → `206`.
+
+**Загрузка LLM с HF (реальная).** Воркер доработан под настоящий HF:
+- список файлов репозитория берётся из `/api/models/{repo}` (`full=true` в поиске — иначе `siblings` пуст);
+- размер файла — по `HEAD` (`Content-Length`), чтение до EOF, докачка `Range`+`ETag` при обрыве;
+- прогресс пишется в UI каждые 8 МБ; пустая загрузка (0 байт) — ошибка, а не «успех»;
+- после завершения считается `sha256` модели и (если выбран движок) **создаётся bundle**; поля
+  `engine_image`, `bundle_id`, `model_sha256` отдаются в `/hf/downloads` и `/hf/downloads/<id>`.
+Факт: `unsloth/gemma-3-270m-it-GGUF` (Q8_0, 291.5 МБ) — `done` за **40 с**, sha и bundle созданы.
+
+**Нормализация движка.** UI отдаёт значение из списка движков как «голый» digest, а bundle требует
+`<ref>@sha256:…`. Добавлена `_norm_engine()` (ищет `ref` в `registry_images`), применена в создании
+HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
+
+**CI-gate.** `/gate`:
+- при наличии вердикта bundle → `allow|block|quarantine` + подписанная аттестация (вход: `engine_manifest`,
+  `model sha`, версии; метрики: `pass_rate`, `safety_fail`);
+- если bundle есть, а вердикта нет — **fail-closed `quarantine`** («тест не прогнан»);
+- если bundle нет — решение по вердикту артефакта модели, иначе `quarantine` (политика по умолчанию).
+Факт: реальный прогон → `verdict=Needs review`, `safety_fail=4` → `action=block`, аттестация
+`sha256:c17f5b25…`, `/gate` → `decision=block` с той же аттестацией.
+
+**Аналитика.** Добавлен прокси `POST /bundles` (иначе панель «Перепривязка движка» получала 404).
+
+**Полный браузерный E2E** — `tests/ui/operator_browser_e2e.js` (реальные данные; вход в UI, все шаги —
+действиями в браузере): движки по реальным digest → HF-токен → **реальный поиск и загрузка LLM с HF** →
+bundle → загрузка **реального GGUF** (локальные LLM) → скан + bundle → **S4 перепривязка** на другой
+реальный движок → **S1** реальная `safetensors`-модель (вердикт `Safe`, покрытие полное) → **S3** реальный
+архив (`zip` с safetensors + pickle + вложенным zip → `Dangerous`, находки) → **S5** `/gate`. Итог прогона:
+`OK: полный операторский сценарий с реальными моделями пройден (16 шагов)`, лог — `/tmp/operator_e2e.log`.
+Запуск: `MLSCAN_E2E=1 bash tests/ui/run_ui_tests.sh` (нужен `MLSCAN_TESTING_URL`, по умолчанию
+`http://localhost:18080` — port-forward сервиса тестирования).
+
+**Реальный инференс LLM (GPU).** `tests/e2e/llama_cpp_gpu_e2e.sh`: CUDA-движок `llama.cpp:server-cuda` на
+RTX 4000, модель `gemma-3-270m-it-Q8_0`, набор вопросов заказчика — 10 вопросов, `894` токенов за `37.7 с`
+(**23.7 tok/s**), `passed=6/10`, `safety_fail=4`, `pass_rate=0.6` (набор `ps-273cc17fd856`).

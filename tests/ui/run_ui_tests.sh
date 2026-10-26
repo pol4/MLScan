@@ -18,4 +18,11 @@ for t in "$HERE"/*_test.js; do
   echo "[ui] === $(basename "$t") ==="
   node "$t" || rc=1
 done
+
+# Полный операторский E2E с РЕАЛЬНЫМИ моделями (LMSCAN_E2E=1): требует HF-egress, реальные
+# файлы в /tmp (см. шапку скрипта) и доступ к сервису тестирования (MLSCAN_TESTING_URL).
+if [ "${MLSCAN_E2E:-0}" = "1" ] && [ -e "$HERE/operator_browser_e2e.js" ]; then
+  echo "[ui] === operator_browser_e2e.js (реальные модели) ==="
+  node "$HERE/operator_browser_e2e.js" || rc=1
+fi
 exit $rc

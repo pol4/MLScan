@@ -21,6 +21,15 @@ function chrome(){ if(process.env.CHROME_PATH&&fs.existsSync(process.env.CHROME_
     await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded',timeout:30000}),page.click('button[type=submit]')]);
     await page.click('#downloads .tab[data-tab="tab-hf"]');
     await page.waitForFunction(()=>getComputedStyle(document.getElementById('tab-hf')).display!=='none',{timeout:10000});
+    // HF_MOCK=0 (реальный HF): эти проверки рассчитаны на mock-HF с фиктивными размерами.
+    // Чтобы не тянуть реальные многогигабайтные модели, тест пропускается (MLSCAN_UI_HF_MOCK=1 — форсировать).
+    if (process.env.MLSCAN_UI_HF_MOCK !== '1') {
+      const m = await page.evaluate(async () => {
+        try { const r = await fetch('/hf/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          const j = await r.json(); return j.mock === true; } catch (e) { return false; }
+      });
+      if (!m) { console.log('[ui-hf] SKIP: HF_MOCK=0 (реальный HF) — тест рассчитан на mock-HF'); await browser.close(); process.exit(0); }
+    }
     await page.waitForSelector('#hfquery',{timeout:15000});
     await page.type('#hfquery','tinyllama');
     await page.type('#hftype','text-generation');

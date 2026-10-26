@@ -1,0 +1,92 @@
+# HF-egress (docs/15 §10, B3): доступ ТОЛЬКО к Hugging Face и адресам загрузки моделей (443).
+# FQDN-политики в этом Calico-CRD нет, поэтому allowlist по IP-адресам хостов HF и его CDN:
+#   huggingface.co, *.hf.co (cdn-lfs*, us.aws.cdn.hf.co), cas-bridge/cas-server/transfer.xethub.hf.co
+# Включены /32 найденных адресов и /24 их подсетей (устойчивость к ротации внутри подсети).
+# Обновлять при смене адресов HF: перезапустить генерацию (см. deploy/ingress/README.md).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mlscan-hf-egress
+  namespace: mlscan-testing
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "ingress"}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+  - ports:
+    - {protocol: TCP, port: 443}
+    to:
+    - ipBlock: {cidr: 100.52.79.0/24}
+    - ipBlock: {cidr: 100.52.79.44/32}
+    - ipBlock: {cidr: 13.36.122.0/24}
+    - ipBlock: {cidr: 13.36.122.243/32}
+    - ipBlock: {cidr: 13.36.183.0/24}
+    - ipBlock: {cidr: 13.36.183.231/32}
+    - ipBlock: {cidr: 13.37.0.0/24}
+    - ipBlock: {cidr: 13.37.0.65/32}
+    - ipBlock: {cidr: 13.37.65.0/24}
+    - ipBlock: {cidr: 13.37.65.55/32}
+    - ipBlock: {cidr: 13.39.241.0/24}
+    - ipBlock: {cidr: 13.39.241.58/32}
+    - ipBlock: {cidr: 143.204.238.0/24}
+    - ipBlock: {cidr: 143.204.238.109/32}
+    - ipBlock: {cidr: 143.204.238.110/32}
+    - ipBlock: {cidr: 143.204.238.128/32}
+    - ipBlock: {cidr: 143.204.238.31/32}
+    - ipBlock: {cidr: 143.204.238.32/32}
+    - ipBlock: {cidr: 143.204.238.36/32}
+    - ipBlock: {cidr: 143.204.238.43/32}
+    - ipBlock: {cidr: 143.204.238.49/32}
+    - ipBlock: {cidr: 143.204.238.52/32}
+    - ipBlock: {cidr: 143.204.238.79/32}
+    - ipBlock: {cidr: 143.204.238.92/32}
+    - ipBlock: {cidr: 15.188.188.0/24}
+    - ipBlock: {cidr: 15.188.188.74/32}
+    - ipBlock: {cidr: 15.236.197.0/24}
+    - ipBlock: {cidr: 15.236.197.3/32}
+    - ipBlock: {cidr: 15.236.34.0/24}
+    - ipBlock: {cidr: 15.236.34.207/32}
+    - ipBlock: {cidr: 15.236.78.0/24}
+    - ipBlock: {cidr: 15.236.78.196/32}
+    - ipBlock: {cidr: 15.236.85.0/24}
+    - ipBlock: {cidr: 15.236.85.177/32}
+    - ipBlock: {cidr: 15.237.164.0/24}
+    - ipBlock: {cidr: 15.237.164.118/32}
+    - ipBlock: {cidr: 18.213.84.0/24}
+    - ipBlock: {cidr: 18.213.84.241/32}
+    - ipBlock: {cidr: 184.197.159.0/24}
+    - ipBlock: {cidr: 184.197.159.196/32}
+    - ipBlock: {cidr: 184.198.44.0/24}
+    - ipBlock: {cidr: 184.198.44.164/32}
+    - ipBlock: {cidr: 3.174.2.0/24}
+    - ipBlock: {cidr: 3.174.2.126/32}
+    - ipBlock: {cidr: 3.174.2.6/32}
+    - ipBlock: {cidr: 3.174.2.64/32}
+    - ipBlock: {cidr: 3.174.2.99/32}
+    - ipBlock: {cidr: 3.210.66.0/24}
+    - ipBlock: {cidr: 3.210.66.237/32}
+    - ipBlock: {cidr: 3.211.79.0/24}
+    - ipBlock: {cidr: 3.211.79.224/32}
+    - ipBlock: {cidr: 34.198.14.0/24}
+    - ipBlock: {cidr: 34.198.14.237/32}
+    - ipBlock: {cidr: 34.202.8.0/24}
+    - ipBlock: {cidr: 34.202.8.246/32}
+    - ipBlock: {cidr: 34.204.155.0/24}
+    - ipBlock: {cidr: 34.204.155.59/32}
+    - ipBlock: {cidr: 34.233.55.0/24}
+    - ipBlock: {cidr: 34.233.55.156/32}
+    - ipBlock: {cidr: 35.181.67.0/24}
+    - ipBlock: {cidr: 35.181.67.163/32}
+    - ipBlock: {cidr: 44.212.132.0/24}
+    - ipBlock: {cidr: 44.212.132.255/32}
+    - ipBlock: {cidr: 52.21.189.0/24}
+    - ipBlock: {cidr: 52.21.189.204/32}
+    - ipBlock: {cidr: 52.6.144.0/24}
+    - ipBlock: {cidr: 52.6.144.168/32}
+    - ipBlock: {cidr: 52.91.209.0/24}
+    - ipBlock: {cidr: 52.91.209.228/32}
+    - ipBlock: {cidr: 65.9.62.0/24}
+    - ipBlock: {cidr: 65.9.62.103/32}
+    - ipBlock: {cidr: 65.9.62.39/32}
+    - ipBlock: {cidr: 65.9.62.61/32}
+    - ipBlock: {cidr: 65.9.62.67/32}

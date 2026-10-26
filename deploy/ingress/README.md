@@ -170,6 +170,11 @@ kubectl apply -f deploy/stage2/30-service.yaml -f deploy/stage3/30-service.yaml 
   HTTP→HTTPS. Тестовый самоподписанный сертификат или cert-manager.
 - **DNS**: реальные записи вместо `*.mlscan.local` + hosts.
 - **AuthN/Z**: JWT/OIDC (RequestAuthentication + AuthorizationPolicy) перед UI/API.
-- **Egress**: FQDN-allowlist (Calico `fqdn` в NetworkPolicy) или Egress Gateway для точечного
-  доступа к внешним фидам threat-intel; журналирование egress.
+- **Egress к Hugging Face**: реализован точечный allowlist (только TCP/443 к хостам HF и его CDN):
+  манифест `33-egress-hf.yaml` (ns `mlscan-testing`), генерируется скриптом
+  `deploy/ingress/gen-hf-egress.sh` (резолв `huggingface.co`, `*.hf.co`, `cas-*/transfer.xethub.hf.co`
+  на узле → CIDR `/32`+`/24`). FQDN-политики (`toFQDNs`/`destination.domains`) в этом Calico-CRD
+  **отсутствуют** (проверено), поэтому используется IP-allowlist; обновлять при смене адресов HF.
+  Это разблокировало **реальные** поиск/загрузку моделей из UI (S2), в т.ч. LFS/CDN (`us.aws.cdn.hf.co`).
+- **Egress**: точечный доступ к внешним фидам threat-intel по такому же принципу; журналирование egress.
 - Отдельный namespace `mlscan-ingress` уже выделен (в нём Gateway).

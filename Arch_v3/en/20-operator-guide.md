@@ -16,6 +16,8 @@ Full RU guide: `../20-operator-guide.md`. This is the English core for operators
 - **Non-LLM model / dataset / script / archive** — UI “Downloads → Models (non-LLM)” or `POST /scans/upload`.
 - **Local LLM** — “Local LLMs”: file + **required engine** from already downloaded engines.
 - **LLM from Hugging Face** — “Model from HF”: search with filters; **HF token** (stored masked); **engine required**.
+  Hugging Face is connected **for real**: pod egress is a tight allowlist to Hugging Face and its CDN
+  (TCP/443 only; `deploy/ingress/33-egress-hf.yaml`); public models need no token.
 - **Engine image** — “Inference engines”: import by `…@sha256:…` or OCI archive in S3.
 - **Large files (TB class)** — direct-to-S3: `/uploads/initiate` → parts → `/scans/complete`
   (resumable, dedup by `sha256`).
@@ -57,6 +59,16 @@ Sampling for large models/archives (coverage is explicit); design limits (`14-li
 verdicts are bound to a bundle (image+model+rule versions) — a rule update produces a **new** bundle.
 
 ## 5. Appendix
+
+### Full browser E2E over S1–S5 with real models
+
+```bash
+kubectl -n mlscan-testing port-forward svc/mlscan-testing 18080:8080 &
+MLSCAN_TESTING_URL=http://localhost:18080 MLSCAN_E2E=1 bash tests/ui/run_ui_tests.sh
+# or: MLSCAN_TESTING_URL=http://localhost:18080 node tests/ui/operator_browser_e2e.js
+```
+
+Expected: `OK: полный операторский сценарий с реальными моделями пройден (16 шагов)`.
 - API cheat sheet and error codes: see RU guide §5.1–5.2.
 - Operator checklist: artifact type/format clear; upload completed (`sha256`/`size` match); coverage full or
   reason understood; verdict/action read; CI gate checked; decision recorded.

@@ -153,3 +153,8 @@ CREATE TABLE IF NOT EXISTS hf_downloads (
 
 -- §10: HF-токены (per-tenant, хранятся зашифрованно/маскированно)
 CREATE TABLE IF NOT EXISTS hf_tokens (tenant TEXT PRIMARY KEY, token_enc TEXT, updated TIMESTAMPTZ DEFAULT now());
+
+-- §10: привязка движка и bundle к HF-загрузке
+ALTER TABLE hf_downloads ADD COLUMN IF NOT EXISTS engine_image TEXT;
+ALTER TABLE hf_downloads ADD COLUMN IF NOT EXISTS bundle_id TEXT;
+ALTER TABLE hf_downloads ADD COLUMN IF NOT EXISTS model_sha256 TEXT;

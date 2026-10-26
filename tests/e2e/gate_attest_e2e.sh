@@ -45,9 +45,9 @@ st3, g = api("GET", "/gate?image=" + urllib.request.quote(img) + "&model=" + sha
 assert st3 == 200 and g["decision"] == "block" and g["bundle_id"] == bid, (st3, g)
 print("  [OK]   CI-gate: decision=block для (image, model)")
 
-# неизвестная пара -> unknown/404
+# неизвестная пара -> fail-closed quarantine (не allow): bundle не найден, политика по умолчанию
 st4, g2 = api("GET", "/gate?image=" + urllib.request.quote("mlscan-registry/x/y@sha256:" + "e" * 64) + "&model=" + sha)
-assert st4 == 404, (st4, g2)
+assert st4 == 200 and g2["decision"] == "quarantine" and g2["bundle_id"] is None, (st4, g2)
 
 # воспроизводимость: повторный тот же вердикт -> тот же attestation_digest (N15)
 st5, v2 = api("POST", f"/bundles/{bid}/verdict",
