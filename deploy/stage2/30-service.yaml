@@ -38,6 +38,10 @@ spec:
         - {name: JOB_MEMORY, value: "3Gi"}
         - {name: JOB_EPHEMERAL, value: "8Gi"}
         - {name: TMP_SIZE, value: "6Gi"}
+        # ВНИМАНИЕ: значение-заглушка (тег). Политика Kyverno требует ССЫЛКУ ПО DIGEST, поэтому
+        # после `kubectl apply` этого файла обязательно выполнить `deploy/stage2/apply.sh`
+        # (шаг «SANDBOX_IMAGE по digest») либо set env SANDBOX_IMAGE=<repo>@sha256:<digest>;
+        # иначе sandbox-джобы сканов будут отклонены admission-политикой.
         - {name: SANDBOX_IMAGE, value: "localhost:32000/mlscan-sandbox:v4"}
         - {name: DATA_TMP, value: /var/tmp}
         - name: S3_ENDPOINT
@@ -74,6 +78,9 @@ spec:
         # Пределы загрузки HF (защита PVC/памяти): неизвестный размер -> отказ
         - {name: HF_MAX_FILE_BYTES, value: "8589934592"}
         - {name: HF_MAX_TOTAL_BYTES, value: "68719476736"}
+        # Ключ обратимого хранения per-tenant HF-токена (P6 per-tenant KMS)
+        - name: MLSCAN_TOKEN_KEY
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_EVIDENCE_KEY}}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
         - name: MLSCAN_KEYS

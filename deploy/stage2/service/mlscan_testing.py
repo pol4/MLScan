@@ -97,6 +97,39 @@ HF_MAX_TOTAL_BYTES = int(os.environ.get("HF_MAX_TOTAL_BYTES", str(64 << 30)))
 _HF_SEG_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
+def _hf_token_store(tenant: str, token: str) -> None:
+    """Сохранить HF-токен тенанта обратимо (per-tenant KMS); пустой token — удалить запись."""
+    master = HF_TOKEN_KEY.encode()
+    if not v3kms or not master:
+        raise RuntimeError("хранилище HF-токена недоступно (нет MLSCAN_TOKEN_KEY)")
+    if not token:
+        db_exec("DELETE FROM hf_tokens WHERE tenant=" + _lit(tenant))
+        return
+    blob = v3kms.encrypt(master, tenant, token.encode())
+    db_exec("INSERT INTO hf_tokens(tenant,token_enc) VALUES ("
+            f"{_lit(tenant)},{_lit(json.dumps(blob, ensure_ascii=False))}) "
+            "ON CONFLICT (tenant) DO UPDATE SET token_enc=EXCLUDED.token_enc, updated=now()")
+
+
+def _tenant_hf_token(tenant: str) -> str:
+    """HF-токен тенанта (расшифрованный). Пустая строка — нет токена/неприменим (fail-closed)."""
+    if not (v3kms and HF_TOKEN_KEY) or not tenant:
+        return ""
+    try:
+        rows = db_query("SELECT token_enc FROM hf_tokens WHERE tenant=" + _lit(tenant))
+    except Exception:  # noqa: BLE001
+        return ""
+    if not rows or not rows[0][0]:
+        return ""
+    raw = rows[0][0]
+    if str(raw).startswith("enc:"):      # legacy: необратимый хэш (до включения шифрования)
+        return ""
+    try:
+        return v3kms.decrypt(HF_TOKEN_KEY.encode(), json.loads(raw)).decode()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _sha256_file(path: str) -> str:
     """sha256 файла потоково (без чтения целиком в память)."""
     h = hashlib.sha256()
@@ -118,6 +151,8 @@ def _hf_key(repo: str, fname: str) -> str:
     return "hf/" + "/".join(parts + [name])
 HF_MOCK = os.environ.get("HF_MOCK", "0") == "1"
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
+# Ключ для обратимого хранения per-tenant HF-токена (P6 per-tenant KMS).
+HF_TOKEN_KEY = os.environ.get("MLSCAN_TOKEN_KEY", "")
 _hf_lock = threading.Lock()
 _HF_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _hf_cancel: set = set()
@@ -246,11 +281,12 @@ def _norm_engine(engine_image: str) -> str:
 
 def _hf_download_worker(dl_id: str) -> None:
     try:
-        rows = db_query("SELECT repo_id,revision,files FROM hf_downloads WHERE id=" + _lit(dl_id))
+        rows = db_query("SELECT repo_id,revision,files,tenant FROM hf_downloads WHERE id=" + _lit(dl_id))
         if not rows:
             return
         repo, revision, files_json = rows[0][0], rows[0][1], rows[0][2]
         files = json.loads(files_json or "[]")
+        hf_tok = _tenant_hf_token(rows[0][3] if len(rows[0]) > 3 else "") or HF_TOKEN
         db_exec("UPDATE hf_downloads SET status='running', updated=now() WHERE id=" + _lit(dl_id))
         done = 0
         for fname in files:
@@ -264,8 +300,8 @@ def _hf_download_worker(dl_id: str) -> None:
             if not size:      # реальный HF: размер по HEAD (Content-Length)
                 try:
                     hreq = urllib.request.Request(url, method="HEAD")
-                    if HF_TOKEN:
-                        hreq.add_header("Authorization", f"Bearer {HF_TOKEN}")
+                    if hf_tok:
+                        hreq.add_header("Authorization", f"Bearer {hf_tok}")
                     with _HF_OPENER.open(hreq, timeout=30) as hr:
                         size = int(hr.headers.get("Content-Length") or 0)
                 except Exception:  # noqa: BLE001
@@ -285,8 +321,8 @@ def _hf_download_worker(dl_id: str) -> None:
                     req = urllib.request.Request(url, headers={"Range": f"bytes={got}-"})
                     if etag:
                         req.add_header("If-Range", etag)
-                    if HF_TOKEN:
-                        req.add_header("Authorization", f"Bearer {HF_TOKEN}")
+                    if hf_tok:
+                        req.add_header("Authorization", f"Bearer {hf_tok}")
                     try:
                         with _HF_OPENER.open(req, timeout=120) as resp:
                             etag = resp.headers.get("ETag", etag) or etag
@@ -637,6 +673,12 @@ except Exception:  # noqa: BLE001
     v3gguf = None  # type: ignore
     v3promptset = None  # type: ignore
     v3evaluators = None  # type: ignore
+
+sys.path.insert(0, "/opt/v3security")
+try:  # v3 (P6/L4): per-tenant KMS — обратимое шифрование HF-токена
+    import kms as v3kms  # noqa: E402
+except Exception:  # noqa: BLE001
+    v3kms = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3control")
 try:  # v3 (P2): персистентная очередь + orchestrator + тенанты
@@ -1926,27 +1968,41 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": f"bad json: {exc}"})
         token = (body.get("token") or "").strip()
         tenant = self._tenant()
-        if not token:
-            return self._json(400, {"error": "token обязателен"})
-        if DB_ENABLED:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        if not token:                      # пустое значение — удалить сохранённый токен
             try:
-                db_exec("INSERT INTO hf_tokens(tenant,token_enc) VALUES ("
-                        f"{_lit(tenant)},{_lit('enc:' + hashlib.sha256(token.encode()).hexdigest()[:16])}) "
-                        "ON CONFLICT (tenant) DO UPDATE SET token_enc=EXCLUDED.token_enc, updated=now()")
+                _hf_token_store(tenant, "")
             except Exception as exc:  # noqa: BLE001
-                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
-        return self._json(200, {"tenant": tenant, "stored": True, "masked": "hf_***" + token[-4:],
-                                "hint": "токен сохранён; значение не возвращается"})
+                return self._json(502, {"error": f"{type(exc).__name__}: {exc}"})
+            return self._json(200, {"tenant": tenant, "cleared": True, "masked": "",
+                                    "hint": "токен удалён"})
+        try:
+            _hf_token_store(tenant, token)
+        except Exception as exc:  # noqa: BLE001
+            return self._json(503, {"error": f"{type(exc).__name__}: {exc}"})
+        return self._json(200, {"tenant": tenant, "stored": True, "usable": True,
+                                "masked": "hf_***" + token[-4:],
+                                "hint": "токен сохранён (обратимо, per-tenant KMS); значение не возвращается"})
 
     def _hf_token_get(self) -> None:
+        """Состояние HF-токена тенанта: маска и применимость (обратимое шифрование, P6 KMS)."""
         tenant = self._tenant()
+        tok = _tenant_hf_token(tenant)
         present = False
         if DB_ENABLED:
             try:
                 present = bool(db_query("SELECT 1 FROM hf_tokens WHERE tenant=" + _lit(tenant)))
             except Exception:  # noqa: BLE001
                 present = False
-        return self._json(200, {"tenant": tenant, "present": present, "masked": "hf_***" if present else ""})
+        usable = bool(tok)
+        masked = ("hf_***" + tok[-4:]) if usable else ""
+        hint = ""
+        if present and not usable:
+            hint = ("токен сохранён без шифрования (legacy) или ключ MLSCAN_TOKEN_KEY недоступен — "
+                    "сохраните токен заново")
+        return self._json(200, {"tenant": tenant, "present": present, "masked": masked,
+                                "usable": usable, "hint": hint})
 
     def _bundle_rebind(self, bundle_id: str) -> None:
         """§10 D4: смена движка и перезапуск теста (новый bundle) без перезагрузки модели."""
@@ -1997,8 +2053,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 qs = urllib.parse.urlencode({"search": body.get("query", ""), "limit": "30", "full": "true"})
                 req = urllib.request.Request(f"{HF_BASE_URL}/api/models?{qs}")
-                if HF_TOKEN:
-                    req.add_header("Authorization", f"Bearer {HF_TOKEN}")
+                tok = _tenant_hf_token(self._tenant()) or HF_TOKEN
+                if tok:
+                    req.add_header("Authorization", f"Bearer {tok}")
                 with _HF_OPENER.open(req, timeout=30) as r:
                     for it in (json.loads(r.read()) or []):
                         items.append({"id": it.get("modelId") or it.get("id"),

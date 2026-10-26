@@ -16,6 +16,8 @@ Full RU guide: `../20-operator-guide.md`. This is the English core for operators
 - **Non-LLM model / dataset / script / archive** — UI “Downloads → Models (non-LLM)” or `POST /scans/upload`.
 - **Local LLM** — “Local LLMs”: file + **required engine** from already downloaded engines.
 - **LLM from Hugging Face** — “Model from HF”: search with filters; **HF token** (stored masked); **engine required**.
+  The token is stored encrypted per tenant (P6 KMS) and is applied to search and download, so private repos
+  work; saving an empty value clears it. Legacy hash-based tokens are not used — save the token again.
   Hugging Face is connected **for real**: pod egress is a tight allowlist to Hugging Face and its CDN
   (TCP/443 only; `deploy/ingress/33-egress-hf.yaml`); public models need no token.
 - **Engine image** — “Inference engines”: import by `…@sha256:…` or OCI archive in S3.
@@ -25,7 +27,7 @@ Full RU guide: `../20-operator-guide.md`. This is the English core for operators
   archive members **32 MiB/member, 128 MiB/archive**; 30 uploads/min; 5 in-flight scans;
   dynamic only within sandbox limits (~6 GiB) — TB models are static+sampled.
 - Do not put secrets in file names/metadata; the HF token is entered in a dedicated form and shown
-  only masked (`hf_***`).
+  only masked (`hf_***`). The token itself is never returned by the API; it is stored encrypted per tenant.
 
 ## 2. Scenarios
 - **S1 non-LLM model**: upload → wait `queued→running→done` → read verdict, severity/risk, findings, coverage.

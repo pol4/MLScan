@@ -809,8 +809,13 @@ document.getElementById('f').addEventListener('submit',e=>{
   const ts=document.getElementById('hftokensave');
   ts&&ts.addEventListener('click',()=>{const t=document.getElementById('hftoken').value.trim();
     fetch('/hf/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})})
-      .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{document.getElementById('hftokenstatus').textContent=ok?('saved '+j.masked):('ERR '+(j.error||''));});});
-  fetch('/hf/token').then(r=>r.ok?r.json():null).then(d=>{if(d&&d.present)document.getElementById('hftokenstatus').textContent='token: '+d.masked;}).catch(()=>{});
+      .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
+        document.getElementById('hftokenstatus').textContent =
+          ok ? (j.cleared ? 'token cleared' : ('saved '+j.masked)) : ('ERR '+(j.error||''));});});
+  fetch('/hf/token').then(r=>r.ok?r.json():null).then(d=>{
+    const st=document.getElementById('hftokenstatus'); if(!d||!st)return;
+    if(!d.present){st.textContent='token: не сохранён';return;}
+    st.textContent='token: '+(d.usable?d.masked:'не применим — сохраните заново');}).catch(()=>{});
   const lb=document.getElementById('locbtn');
   lb&&lb.addEventListener('click',()=>{const f=document.getElementById('locfile').files[0];const eng=document.getElementById('locengine').value;
     const st=document.getElementById('locstatus');
