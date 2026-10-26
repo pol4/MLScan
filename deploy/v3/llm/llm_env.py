@@ -23,8 +23,8 @@ def resource_check(required: dict, available: dict) -> tuple[bool, str]:
 
 def validate_job(job: dict) -> tuple[bool, str]:
     spec = (((job or {}).get("spec") or {}).get("template") or {}).get("spec") or {}
-    if spec.get("runtimeClassName") != "kata":
-        return False, "runtimeClassName должен быть kata"
+    if spec.get("runtimeClassName") not in ("kata", "kata-btf", "nvidia"):
+        return False, "runtimeClassName должен быть kata/kata-btf/nvidia"
     if spec.get("automountServiceAccountToken") is not False:
         return False, "automountServiceAccountToken должен быть false"
     names = [c.get("name") for c in spec.get("containers", [])]
@@ -56,12 +56,19 @@ def validate_job(job: dict) -> tuple[bool, str]:
 def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_key: str,
                   resources: dict | None = None, api_port: int = 8000, prompt_set: str = "",
                   fetcher_image: str = "", tetragon_image: str = "", probe_image: str = "",
-                  namespace: str = NAMESPACE, model_volume_size: str = "500Gi") -> dict:
+                  namespace: str = NAMESPACE, model_volume_size: str = "500Gi",
+                  runtime_class: str = "kata", mount_dev: bool = False,
+                  cuda_visible_devices: str = "") -> dict:
     res = resources or {"gpu": 1, "ram_gb": 64, "disk_gb": 120}
     limits = {"memory": f"{int(res.get('ram_gb', 64))}Gi", "cpu": "8",
               "ephemeral-storage": f"{int(res.get('disk_gb', 120))}Gi"}
     if int(res.get("gpu", 0) or 0) > 0:
         limits["nvidia.com/gpu"] = int(res["gpu"])
+    engine_env = []
+    if int(res.get("gpu", 0) or 0) > 0 or mount_dev:
+        engine_env.append({"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"})
+        if cuda_visible_devices:
+            engine_env.append({"name": "CUDA_VISIBLE_DEVICES", "value": str(cuda_visible_devices)})
     hardened = {"runAsNonRoot": True, "readOnlyRootFilesystem": True,
                 "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]},
                 "seccompProfile": {"type": "RuntimeDefault"}}
@@ -79,7 +86,7 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
             "template": {
                 "metadata": {"labels": {"app": "mlscan-llm", "scan_id": scan_id}},
                 "spec": {
-                    "runtimeClassName": "kata",
+                    "runtimeClassName": runtime_class,
                     "automountServiceAccountToken": False,
                     "restartPolicy": "Never",
                     "securityContext": {"runAsNonRoot": True, "runAsUser": 65532,
@@ -91,11 +98,13 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
                     }],
                     "containers": [
                         {"name": "engine", "image": engine_image,
+                         **({"env": engine_env} if engine_env else {}),
                          "args": ["--model", "/model", "--host", "127.0.0.1", "--port", str(api_port)],
                          "ports": [{"name": "openai", "containerPort": api_port}],
                          "resources": {"limits": limits},
                          "securityContext": dict(hardened),
-                         "volumeMounts": [{"name": "model", "mountPath": "/model", "readOnly": True}]},
+                         "volumeMounts": ([{"name": "model", "mountPath": "/model", "readOnly": True}]
+                                          + ([{"name": "dev", "mountPath": "/dev"}] if mount_dev else []))},
                         {"name": "tetragon-agent", "image": tetragon_image,
                          "securityContext": tetragon_ctx,
                          "volumeMounts": [{"name": "events", "mountPath": "/events"}]},
@@ -105,10 +114,9 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
                                   "--prompt-set", prompt_set],
                          "volumeMounts": [{"name": "events", "mountPath": "/events"}]},
                     ],
-                    "volumes": [
-                        {"name": "model", "emptyDir": {"sizeLimit": model_volume_size}},
-                        {"name": "events", "emptyDir": {}},
-                    ],
+                    "volumes": ([{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}},
+                                 {"name": "events", "emptyDir": {}}]
+                                + ([{"name": "dev", "hostPath": {"path": "/dev"}}] if mount_dev else [])),
                 },
             },
         },

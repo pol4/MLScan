@@ -495,3 +495,10 @@ Guest-ядро Kata по умолчанию **без BTF** (host-ядро — с
 
 Сводный статус фаз — [`Arch_v3/15-implementation-plan.md`](Arch_v3/15-implementation-plan.md) §7 и
 [`Arch_v3/19-implementation-as-built.md`](Arch_v3/19-implementation-as-built.md).
+
+### GPU (проверено)
+- На узле: **2× Quadro RTX 4000 (8 ГБ)** + GTX 1050 (драйвер 580.178, toolkit 1.20.1).
+- Инференс на GPU работает через `runtimeClassName: nvidia` + hostPath `/dev`; образ llama.cpp **CUDA**
+  (`server-cuda`, `-ngl 99`) выдаёт ответы на RTX 4000 (подтверждено `nvidia-smi`).
+- E2E: 10 случайных вопросов заказчика на GPU — `passed=6/10`, `~23.9 tok/s` (`tests/e2e/llama_cpp_gpu_e2e.sh`).
+- `nvidia.com/gpu` (device-plugin) пока не включён: публичный образ на nvcr.io требует NGC-ключ (403).

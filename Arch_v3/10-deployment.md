@@ -157,3 +157,16 @@ graph TB
   (`kernel=vmlinuz-debug.container`, BTF=1). Откат — удалить хендлер/файл и рестартнуть containerd.
 - **HF-egress**: для реального Hugging Face требуется allowlist к `huggingface.co`/CDN (сейчас mock-HF);
   pull образов не требует изменений egress-политик.
+
+---
+
+## 12. GPU на стенде (как используется)
+
+- В поде: `runtimeClassName: nvidia` (хендлер `nvidia-container-runtime`, toolkit 1.20.1) + hostPath
+  `/dev` + `NVIDIA_VISIBLE_DEVICES=all`, `CUDA_VISIBLE_DEVICES=<idx>`. Проверено: `nvidia-smi` в поде
+  видит 3 GPU; llama.cpp CUDA-образ (`server-cuda`, `-ngl 99`) выдаёт инференс на RTX 4000.
+- **Для k8s-планирования** (`resources.limits."nvidia.com/gpu"`) нужен device-plugin: публичный образ
+  `nvcr.io/nvidia/k8s-device-plugin` требует NGC-ключ (403 при анонимном pull) — предоставить ключ или
+  собрать плагин и опубликовать в локальный реестр. GPU-аддон MicroK8s (`nvidia`) объявлен включённым,
+  но GPU Operator не развёрнут.
+- Node-level изменения не требуются для текущего способа (кроме установленного toolkit/драйвера).

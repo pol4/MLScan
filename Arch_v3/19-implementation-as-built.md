@@ -25,8 +25,8 @@
 | L3 пробы/XLSX | завершено (стенд) | XLSX `questions_v9` → БД/версии; правила+judge+допуск 90/75/50; **редактор «домен→класс»**; UI загрузки XLSX |
 | L4 bundle/аттестации | завершено (стенд) | вердикт уровня bundle + подписанная аттестация + воспроизводимость; **CI-gate в integrations** (`/gate?image&model`) |
 | H1 HF-загрузки | завершено (стенд) | фоновые серверные загрузки с докачкой (Range/ETag), не зависят от браузера; `hf_downloads`; встроенный mock-HF; API+UI |
-| H2 образ llama.cpp | завершено (стенд) | образ `ghcr.io/ggml-org/llama.cpp@sha256:1fa7…` (CPU, `/v1`), запускается с args |
-| H3 E2E HF→llama.cpp | **частично (CPU, без Kata/eBPF)** | 10 случайных вопросов из файла заказчика через llama.cpp; `/llm/score`: total=10, passed=5, safety_fail=5, pass_rate=0.5 |
+| H2 образ llama.cpp | завершено (стенд) + GPU-вариант | образ `ghcr.io/ggml-org/llama.cpp@sha256:1fa7…` (CPU, `/v1`), запускается с args |
+| H3 E2E HF→llama.cpp | **частично (CPU и GPU, без Kata/eBPF)** | 10 случайных вопросов из файла заказчика через llama.cpp; `/llm/score`: total=10, passed=5, safety_fail=5, pass_rate=0.5 |
 
 ## 2. Тесты (сводка)
 
@@ -59,3 +59,7 @@
 - Интернет у узла **есть**; egress подов ограничен **нашей NetworkPolicy** (`mlscan-egress`), поэтому HF/ghcr
   недоступны из подов, но **pull образов делает kubelet** (вне политик) — так получен образ llama.cpp.
 - Host kernel имеет BTF (`/sys/kernel/btf/vmlinux`); **guest-ядро Kata по умолчанию — без BTF** (отсюда §8.9/§8.10).
+
+**GPU (проверено):** 2× RTX 4000 + GTX 1050; доступ — `runtimeClassName: nvidia` + hostPath `/dev`;
+E2E `llama_cpp_gpu_e2e.sh`: 10 вопросов на GPU, `passed=6/10`, `~23.9 tok/s`; `nvidia.com/gpu`
+(device-plugin) — требует NGC-ключа (nvcr.io 403).

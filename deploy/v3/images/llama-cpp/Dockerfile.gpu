@@ -1,0 +1,16 @@
+# MLScan GPU-инференс на llama.cpp (CUDA, OpenAI-совместимый /v1) для LLM (GGUF/квантизации).
+# Требует: runtimeClassName nvidia (nvidia-container-runtime, toolkit) и доступ к /dev (в текущем
+# стенде — hostPath /dev + env NVIDIA_VISIBLE_DEVICES; при наличии device-plugin — nvidia.com/gpu).
+FROM ghcr.io/ggml-org/llama.cpp:server-cuda AS base
+COPY entrypoint-gpu.sh /usr/local/bin/entrypoint-gpu.sh
+RUN chmod +x /usr/local/bin/entrypoint-gpu.sh
+ENV MODEL_DIR=/model \
+    HOST=0.0.0.0 \
+    PORT=8000 \
+    NGL=99 \
+    CTX=2048 \
+    CUDA_VISIBLE_DEVICES=0
+EXPOSE 8000
+HEALTHCHECK --interval=10s --timeout=3s --start-period=60s \
+  CMD wget -qO- "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1 || exit 1
+ENTRYPOINT ["/usr/local/bin/entrypoint-gpu.sh"]

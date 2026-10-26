@@ -69,5 +69,32 @@ class JobManifestTest(unittest.TestCase):
         self.assertTrue(any("127.0.0.1" in a for a in args))
 
 
+class GpuEnvTest(unittest.TestCase):
+    DIG = "ghcr.io/ggml-org/llama.cpp@sha256:" + "c" * 64
+
+    def test_gpu_job_nvidia_runtime(self):
+        job = llm_env.make_scan_job(scan_id="g1", engine_image=self.DIG, model_sha256="b" * 64,
+                                    model_key="t/m.bin", resources={"gpu": 1, "ram_gb": 32, "disk_gb": 50},
+                                    runtime_class="nvidia", mount_dev=True, cuda_visible_devices="1")
+        ok, why = llm_env.validate_job(job); self.assertTrue(ok, why)
+        spec = job["spec"]["template"]["spec"]
+        self.assertEqual(spec["runtimeClassName"], "nvidia")
+        eng = spec["containers"][0]
+        self.assertEqual(eng["resources"]["limits"]["nvidia.com/gpu"], 1)
+        self.assertIn({"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"}, eng["env"])
+        self.assertIn({"name": "CUDA_VISIBLE_DEVICES", "value": "1"}, eng["env"])
+        self.assertTrue(any(v["name"] == "dev" and v["hostPath"]["path"] == "/dev" for v in spec["volumes"]))
+
+    def test_kata_default_unchanged(self):
+        job = llm_env.make_scan_job(scan_id="k1", engine_image=self.DIG, model_sha256="b" * 64, model_key="t/m.bin")
+        self.assertEqual(job["spec"]["template"]["spec"]["runtimeClassName"], "kata")
+        self.assertEqual([v["name"] for v in job["spec"]["template"]["spec"]["volumes"]], ["model", "events"])
+
+    def test_bad_runtime_rejected(self):
+        job = llm_env.make_scan_job(scan_id="x", engine_image=self.DIG, model_sha256="b" * 64,
+                                    model_key="t/m.bin", runtime_class="bogus")
+        self.assertFalse(llm_env.validate_job(job)[0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

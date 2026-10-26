@@ -320,7 +320,7 @@ P2/P6/P7/P8 частично параллельны после P1; P9 — пос
 | P9 (миграция v2→v3) | **завершено (на стенде)** | `deploy/v3/migration/migrate.py`: `dst_key` (v3-пул), `plan_object_migration` (v2-ключи `sha256/…`/`tenant/…` → пул), **реконсиляция** множеств sha (missing/extra), `readiness()` чек-лист cutover. e2e `migration_e2e.sh`: v2-объект → **server-side copy** в пул + `refs`, чтение совпало, реконсиляция ok, **идемпотентность** (повтор не копирует), readiness ok. Тесты: `tests/v3/test_migration.py`. Осталось (целевой стенд): перенос/анкор evidence на реальных данных, поэтапное переключение тенантов, вывод v2 из эксплуатации. |
 | P10 (документация/финализация) | **завершено** | `Arch_v3/19-implementation-as-built.md` (статус фаз P0–P10/L0–L4, артефакты, тесты, границы); обновлены `Arch_v3/README`, корневые README; сводный прогон тестов (unit v3 148, UI, e2e) — зелёный. |
 | H1 (HF-загрузка) | **завершено (на стенде)** | `deploy/v3/ingest/hf.py` (выбор файлов/квантизации, фильтры поиска, план докачки); сервис: `POST /hf/search` (mock или HF API), `POST /hf/downloads` (**серверная фоновая задача** + таблица `hf_downloads`), `GET /hf/downloads[/<id>]`, `POST .../cancel`; **встроенный mock-HF** (`HF_MOCK=1`, Range/ETag, `HF_FLAKY` для проверки докачки); **докачка по Range/ETag**, не зависит от браузера; UI-панель HF (поиск+загрузка+статус). Тесты: `tests/v3/test_hf.py`, e2e `hf_download_e2e.sh`, `tests/ui/hf_ui_test.js`. Осталось (целевой стенд): реальный HF-токен/egress-allowlist и rate-limit. |
-| H2 (образ llama.cpp) | **завершено (на стенде)** | Блокер снят: интернет у узла есть, блокировала **pod-egress NetworkPolicy** (pull делает kubelet — вне политик). Использован официальный образ `ghcr.io/ggml-org/llama.cpp@sha256:1fa7f8f0…` (OpenAI `/v1`, CPU). Сборка собственного слоя не нужна — образ запускается с args (`-m … --jinja`); артефакты `deploy/v3/images/llama-cpp/` остаются для полной сборки/подписи на целевом стенде. |
+| H2 (образ llama.cpp) | **завершено (на стенде), + GPU-вариант** | Блокер снят: интернет у узла есть, блокировала **pod-egress NetworkPolicy** (pull делает kubelet — вне политик). Использован официальный образ `ghcr.io/ggml-org/llama.cpp@sha256:1fa7f8f0…` (OpenAI `/v1`, CPU). Сборка собственного слоя не нужна — образ запускается с args (`-m … --jinja`); артефакты `deploy/v3/images/llama-cpp/` остаются для полной сборки/подписи на целевом стенде. |
 | H3 (E2E HF→llama.cpp) | **выполнено частично (CPU, без Kata/eBPF)** | `tests/e2e/llama_cpp_e2e.sh`: subset 10 случайных вопросов из файла заказчика → XLSX → БД (`ps-273cc17fd856`); Job в `mlscan-build` (initContainer качает GGUF `gemma-3-270m-it-Q8_0` с HF — pod-egress там не ограничен) → llama.cpp server (`/v1`) → probe (10 вопросов) → `/llm/score`: `total=10 passed=5 safety_fail=5 pass_rate=0.5`. Осталось (целевой стенд): запуск в **Kata** с **кастомным ядром + in-guest eBPF/Tetragon** (см. §8.8). |
 
 Артефакты P0 (шаг 1): `deploy/v2/data/s3/s3client.py` (range), `deploy/v3/data/pool.py`,
@@ -488,7 +488,7 @@ containerd-runtime-хендлеров; разные RuntimeClass → разны�
 | # | Что | Почему ещё не сделано | Что нужно |
 |---|-----|------------------------|-----------|
 | B1 | RuntimeClass **`kata-btf`** (BTF-ядро Kata) + **in-guest eBPF/Tetragon**, затем полный **H3** | host-level аддитивные правки узла (containerd template + kata config + рестарт демона), правки Kyverno; требуется согласование | шаги по §8.9/§8.10; BTF-вариант ядра на узле есть (`vmlinuz-debug.container`) |
-| B2 | **GPU-пул** и запуск крупных движков | нет физического GPU/драйверов/`nvidia-device-plugin` | железо целевого стенда |
+| B2 | **GPU-пул** и запуск крупных движков | **частично закрыто**: GPU на узле есть (2× Quadro RTX 4000 8 ГБ + GTX 1050, драйвер 580.178, toolkit 1.20.1); инференс на GPU **работает** через `runtimeClassName: nvidia` + hostPath `/dev` (проверено E2E). Осталось: k8s-планирование `nvidia.com/gpu` — нужен device-plugin, публичный образ требует NGC-ключ (nvcr.io) | NGC-ключ или сборка device-plugin; затем `nvidia.com/gpu` в ресурсах |
 | B3 | **Реальный Hugging Face** (не mock) | egress подов закрыт нашей NetworkPolicy | токен HF + allowlist к huggingface.co/CDN |
 | B4 | **Harbor + cosign/SBOM**, подпись образов и admission | нет движка реестра/cosign в контуре | развернуть Harbor (S3-бэкенд) + cosign в CI |
 | B5 | **Vault/AES-GCM, WORM-bucket + TSA**, mTLS | внешние сервисы PKI/KMS отсутствуют | инфраструктура KMS/PKI, object-lock bucket |
@@ -505,6 +505,21 @@ containerd-runtime-хендлеров; разные RuntimeClass → разны�
 
 Переделка функциональности загрузки: единый раздел **«Загрузки»** с подзакладками и правилами
 гейтинга/привязки движка. Выполняется после B1 (или параллельно с ним) по циклу «тесты сначала».
+
+### 8.11 GPU-инференс (проверено)
+
+- GPU узла: **2× Quadro RTX 4000 (8 ГБ)** + GTX 1050; драйвер 580.178.04, nvidia-container-toolkit 1.20.1.
+- Доступ в поде: `runtimeClassName: nvidia` + hostPath `/dev` + `NVIDIA_VISIBLE_DEVICES=all` и
+  `CUDA_VISIBLE_DEVICES=<idx>`; внутри видно `CUDA0: Quadro RTX 4000` (nvidia-smi подтверждает util/mem).
+  device-plugin (`nvidia.com/gpu`) не развёрнут: публичный образ `nvcr.io/nvidia/k8s-device-plugin` требует
+  NGC-ключ (403) — нужен ключ или сборка плагина.
+- Образ инференса: **`Dockerfile.gpu`/`entrypoint-gpu.sh`** (`ghcr.io/ggml-org/llama.cpp:server-cuda`,
+  `--n-gpu-layers ${NGL:-99}`); `build.sh` поддерживает `VARIANT=gpu`.
+- **E2E H2-GPU** (`tests/e2e/llama_cpp_gpu_e2e.sh`): модель из кэша PVC → llama.cpp CUDA (`-ngl 99`) →
+  10 случайных вопросов заказчика → `/llm/score`: `total=10, passed=6, safety_fail=4, pass_rate=0.6`,
+  `completion_tokens=894, 37.4 s, ~23.9 tok/s` (GPU RTX 4000).
+- Генератор среды (`llm_env.py`) поддерживает GPU: `runtime_class`, `mount_dev`, `cuda_visible_devices`
+  и `resources.gpu` (unit-тесты).
 
 ### 10.1 Состав (подзакладки раздела «Загрузки»)
 

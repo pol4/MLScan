@@ -4,10 +4,12 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REGISTRY="${REGISTRY:-localhost:32000}"
 IMAGE="${IMAGE:-mlscan-llama-cpp}"
+VARIANT="${VARIANT:-cpu}"   # cpu|gpu: gpu -> Dockerfile.gpu (CUDA)
 TAG="${TAG:-v1}"
 FULL="$REGISTRY/$IMAGE:$TAG"
 echo "[1/3] build $FULL"
-docker build -t "$FULL" "$HERE"
+if [ "$VARIANT" = "gpu" ]; then DF="-f $HERE/Dockerfile.gpu"; else DF="-f $HERE/Dockerfile"; fi
+docker build $DF -t "$FULL" "$HERE"
 echo "[2/3] push"
 docker push "$FULL"
 echo "[3/3] digest"

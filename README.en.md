@@ -492,3 +492,10 @@ Old `docs/NN-*.md` paths are redirect stubs (link compatibility).
 The **node** has internet; **pod** egress is restricted by our NetworkPolicy (`mlscan-egress`), so HF/ghcr are
 unreachable from pods, but **image pulls are done by kubelet** (outside policies) — that is how the llama.cpp
 image was obtained. Kata guest kernel is **without BTF** by default (host kernel has BTF).
+
+### GPU (проверено)
+- На узле: **2× Quadro RTX 4000 (8 ГБ)** + GTX 1050 (драйвер 580.178, toolkit 1.20.1).
+- Инференс на GPU работает через `runtimeClassName: nvidia` + hostPath `/dev`; образ llama.cpp **CUDA**
+  (`server-cuda`, `-ngl 99`) выдаёт ответы на RTX 4000 (подтверждено `nvidia-smi`).
+- E2E: 10 случайных вопросов заказчика на GPU — `passed=6/10`, `~23.9 tok/s` (`tests/e2e/llama_cpp_gpu_e2e.sh`).
+- `nvidia.com/gpu` (device-plugin) пока не включён: публичный образ на nvcr.io требует NGC-ключ (403).

@@ -304,3 +304,14 @@ Tetragon; OpenAI-API probe suite + эталоны; GPU-пул/ресурсный
 - Выбор фиксируется **bundle** (модель+образ+manifest+версии).
 - Если при старте движок не подошёл (health/ошибка) — **смена назначения движка** и **перезапуск теста**
   создают **новый bundle/вердикт** (F31/N20); артефакт модели повторно не загружается.
+
+---
+
+## 17. GPU-инференс (проверено на стенде)
+
+- GPU узла: 2× Quadro RTX 4000 (8 ГБ) + GTX 1050; доступ в поде — `runtimeClassName: nvidia` + hostPath
+  `/dev` (+ `NVIDIA_VISIBLE_DEVICES`, `CUDA_VISIBLE_DEVICES`); внутри `CUDA0: Quadro RTX 4000`.
+- `nvidia.com/gpu` (device-plugin) пока не планируется: образ плагина на nvcr.io требует NGC-ключ (403).
+- Образ: CPU-вариант (`server`) и **GPU-вариант** (`server-cuda`, `Dockerfile.gpu`, `-ngl 99`).
+- Результат E2E (`llama_cpp_gpu_e2e.sh`): 10 вопросов заказчика на GPU — `passed=6/10`, `pass_rate=0.6`,
+  `~23.9 tok/s`; GPU-утилизация подтверждена `nvidia-smi`.
