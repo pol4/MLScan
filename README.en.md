@@ -504,3 +504,4 @@ image was obtained. Kata guest kernel is **without BTF** by default (host kernel
 - **Две карты**: `nvidia.com/gpu=2` (обе RTX 4000); проверены (A) запуск небольшой модели на **второй** карте
   и (B) **двухкарточный** инференс 3B-модели (`--tensor-split 1,1`) — обе карты заняты (nvidia-smi 40–45%,
   ~1.1–1.3 ГБ), 10 вопросов `passed=10/10`.
+- Operator guide (model verification: scenarios, data requirements, result interpretation) — [`Arch_v3/en/20-operator-guide.md`](Arch_v3/en/20-operator-guide.md)
