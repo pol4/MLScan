@@ -73,7 +73,7 @@ E2E `llama_cpp_gpu_e2e.sh`: 10 вопросов на GPU, `passed=6/10`, `~23.9 
 `crd.projectcalico.org/v1` и `globalnetworkpolicies`), поэтому доступ открыт **IP-allowlist**
 (`deploy/ingress/33-egress-hf.yaml`, ns `mlscan-testing`, только TCP/443): `huggingface.co`, `*.hf.co`
 (`cdn-lfs*`, `us.aws.cdn.hf.co`), `cas-bridge/cas-server/transfer.xethub.hf.co` — CIDR `/32` + `/24`
-подсетей. Генератор: `deploy/ingress/gen-hf-egress.sh` (резолв хостов на узле). Проверено из пода:
+подсетей. Генератор: `deploy/ingress/gen-hf-egress.sh` (резолв хостов на узле; по умолчанию только `/32`). Проверено из пода:
 `HEAD` реального GGUF → `Content-Length=291 545 600`, `GET Range` → `206`.
 
 **Загрузка LLM с HF (реальная).** Воркер доработан под настоящий HF:
@@ -97,6 +97,20 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
 `sha256:c17f5b25…`, `/gate` → `decision=block` с той же аттестацией.
 
 **Аналитика.** Добавлен прокси `POST /bundles` (иначе панель «Перепривязка движка» получала 404).
+
+**Жёсткость реального HF (по итогам ревью).** Добавлены: пределы загрузки (`HF_MAX_FILE_BYTES`,
+по умолчанию 8 ГиБ; `HF_MAX_TOTAL_BYTES`, 64 ГиБ) и **отказ** загружать файл с неизвестным размером
+(нет `Content-Length` → ошибка, а не поток до EOF); потоковый `sha256` (файл не читается в память);
+санитизация ключа объекта S3 (`hf/<repo>/<file>`, запрет `..`/абсолютных/пустых сегментов);
+выбор файлов делегирован каноническому `ingest/hf.py::select_files` (без квантизации — один лучший GGUF).
+`/gate` при отсутствии bundle ищет вердикт **по индексу** (одна выборка по `sha256` артефакта), а не
+перебором всех сканов; маппинг вердикт→решение вынесен в `v3/control/attest.py::gate_decision`, дефолт
+которого сделан **fail-closed** (неизвестный/пустой вердикт → `quarantine`). Политика HF-egress
+генерируется **только из `/32`** (адреса — узкие; `/24` подсети добавляются лишь при
+`HF_EGRESS_INCLUDE_24=1`) и применяется установщиком (`deploy/ingress/apply.sh`, шаг `[5/6]`);
+резолвер узла использует аутентификацию host key (`BatchMode`/known_hosts). Тест
+`tests/ui/operator_browser_e2e.js` больше не содержит admin-ключа: он берётся из `MLSCAN_API_KEY`
+(в `run_ui_tests.sh` при `MLSCAN_E2E=1` — из Secret `mlscan-keys`).
 
 **Полный браузерный E2E** — `tests/ui/operator_browser_e2e.js` (реальные данные; вход в UI, все шаги —
 действиями в браузере): движки по реальным digest → HF-токен → **реальный поиск и загрузка LLM с HF** →

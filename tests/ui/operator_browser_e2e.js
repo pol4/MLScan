@@ -20,7 +20,9 @@ const SAFETENSORS = process.env.MLSCAN_ST || '/tmp/real-model.safetensors';
 const ARCHIVE = process.env.MLSCAN_ZIP || '/tmp/real-model-pack.zip';
 const HF_WAIT_MS = +(process.env.MLSCAN_HF_WAIT_MS || 900000);
 const TESTING = process.env.MLSCAN_TESTING_URL || 'http://localhost:18080';
-const API_KEY = process.env.MLSCAN_API_KEY || 'adm_6632cd8b4ea7b93c';
+// Ключ НЕ хранится в репозитории: задаётся через MLSCAN_API_KEY (tests/ui/run_ui_tests.sh
+// при MLSCAN_E2E=1 достаёт его из Secret mlscan-keys кластера).
+const API_KEY = process.env.MLSCAN_API_KEY || '';
 
 /* Прямой вызов API сервиса тестирования (для проверок вне UI). */
 function tapi(p) {
@@ -59,12 +61,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (r.status() >= 400 && !/favicon\.ico$/.test(u)) bad.push(r.status() + ' ' + u); });
   page.on('pageerror', (e) => fails.push('JS: ' + String(e)));
 
-  const apiUnused = (p, opts) => page.evaluate(async (p, opts) => {
-    const r = await fetch(p, Object.assign({ cache: 'no-store' }, opts || {}));
-    let j = null; try { j = await r.json(); } catch (e) {}
-    return { status: r.status, json: j };
-  }, p, opts);
 
+  if (!API_KEY) {
+    console.log('[e2e] SKIP: MLSCAN_API_KEY не задан (нужен для API-проверок)');
+    process.exit(0);
+  }
   try {
     // ---------- вход ----------
     await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });

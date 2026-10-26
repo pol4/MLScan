@@ -54,4 +54,7 @@ def gate_decision(verdict: str, *, safety_fail: int = 0, pass_rate: float = 1.0,
         return "quarantine", f"verdict={verdict}"
     if pass_rate < block_rate:
         return "quarantine", f"pass_rate {pass_rate} < {block_rate}"
-    return "allow", "ok"
+    if verdict == "Safe":
+        return "allow", "ok"
+    # fail-closed: неизвестный/пустой вердикт не может быть разрешением
+    return "quarantine", f"неизвестный вердикт: {verdict or '—'}"

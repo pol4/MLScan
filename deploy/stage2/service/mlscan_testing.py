@@ -91,6 +91,31 @@ ATTEST_KEY = os.environ.get("ATTEST_KEY", "mlscan-dev-attest")
 DETECTORS_VERSION = os.environ.get("MLSCAN_DETECTORS_VERSION", "det-1")
 # H1: Hugging Face (HF_MOCK=1 — встроенный mock-сервер для hermetic-тестов; иначе реальный HF)
 HF_BASE_URL = os.environ.get("HF_BASE_URL", "https://huggingface.co")
+# Пределы загрузки HF (защита PVC/памяти, docs/14 P0-6/P1-3): неизвестный размер — отказ.
+HF_MAX_FILE_BYTES = int(os.environ.get("HF_MAX_FILE_BYTES", str(8 << 30)))
+HF_MAX_TOTAL_BYTES = int(os.environ.get("HF_MAX_TOTAL_BYTES", str(64 << 30)))
+_HF_SEG_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _sha256_file(path: str) -> str:
+    """sha256 файла потоково (без чтения целиком в память)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for blk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def _hf_key(repo: str, fname: str) -> str:
+    """Безопасный ключ объекта S3 для файла HF (без выхода за префикс hf/<repo>/)."""
+    parts = [p for p in str(repo or "").split("/") if p]
+    name = os.path.basename(str(fname or ""))
+    bad = (not parts or not name
+           or any(not _HF_SEG_RE.fullmatch(p) or p in (".", "..") for p in parts)
+           or not _HF_SEG_RE.fullmatch(name) or name in (".", ".."))
+    if bad:
+        raise RuntimeError(f"unsafe HF object name: {repo!r}/{fname!r}")
+    return "hf/" + "/".join(parts + [name])
 HF_MOCK = os.environ.get("HF_MOCK", "0") == "1"
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 _hf_lock = threading.Lock()
@@ -245,6 +270,12 @@ def _hf_download_worker(dl_id: str) -> None:
                         size = int(hr.headers.get("Content-Length") or 0)
                 except Exception:  # noqa: BLE001
                     size = 0
+            if not size:
+                raise RuntimeError(f"unknown size for {fname}: отказ от неограниченной загрузки")
+            if size > HF_MAX_FILE_BYTES:
+                raise RuntimeError(f"file too large: {fname} {size} > {HF_MAX_FILE_BYTES}")
+            if done + size > HF_MAX_TOTAL_BYTES:
+                raise RuntimeError(f"total download limit exceeded: {done + size} > {HF_MAX_TOTAL_BYTES}")
             dest = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(fname)}")
             os.makedirs(DATA_TMP, exist_ok=True)
             got = 0; attempts = 0; etag = ""
@@ -282,10 +313,10 @@ def _hf_download_worker(dl_id: str) -> None:
                 raise RuntimeError(f"incomplete {fname}: {got}/{size}")
             size = got or size
             if S3_ENABLED and _s3 is not None:
-                sha = hashlib.sha256(open(dest, "rb").read()).hexdigest()
+                sha = _sha256_file(dest)
+                key = _hf_key(repo, fname)
                 with open(dest, "rb") as fh:
-                    _s3.put_stream_multipart(f"hf/{repo}/{fname}", fh, size, sha,
-                                             part_size=1024 * 1024, workers=4)
+                    _s3.put_stream_multipart(key, fh, size, sha, part_size=1024 * 1024, workers=4)
             done += size
             db_exec("UPDATE hf_downloads SET bytes_done=" + str(done) + ", updated=now() WHERE id=" + _lit(dl_id))
         # sha первого/основного файла и bundle (если выбран движок) — §10 D3
@@ -296,11 +327,7 @@ def _hf_download_worker(dl_id: str) -> None:
             if fl:
                 f0 = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(fl[0])}")
                 if os.path.exists(f0):
-                    hh = hashlib.sha256()
-                    with open(f0, "rb") as fh:
-                        for blk in iter(lambda: fh.read(1 << 20), b""):
-                            hh.update(blk)
-                    msha = hh.hexdigest()
+                    msha = _sha256_file(f0)
                     db_exec("UPDATE hf_downloads SET model_sha256=" + _lit(msha) + ", updated=now() WHERE id=" + _lit(dl_id))
                     if eng and v3binding is not None:
                         b = v3binding.make_bundle(image_digest=eng, model_sha256=msha,
@@ -1835,7 +1862,7 @@ class Handler(BaseHTTPRequestHandler):
     def _gate(self, q: dict) -> None:
         """L4: CI-gate по паре (image digest, model sha) — решение + аттестация."""
         image = q.get("image", [""])[0]
-        model = q.get("model", [""])[0]
+        model = (q.get("model", [""])[0] or "").strip().lower()
         if not image or not model:
             return self._json(400, {"error": "нужны image и model"})
         if not DB_ENABLED:
@@ -1845,25 +1872,23 @@ class Handler(BaseHTTPRequestHandler):
         rows = db_query("SELECT bundle_id FROM bundles WHERE " + where
                         + " AND model_sha256=" + _lit(model) + " LIMIT 1")
         if not rows:
-            # bundle нет: решение по вердикту артефакта модели (если модель уже проверялась)
-            rec = None
-            for it in list_scans():
-                if (it.get("sha256") or "") == model:
-                    rec = load_scan(it.get("scan_id") or "")
-                    if rec and rec.get("state") == "done":
-                        break
-            verdict = (rec or {}).get("verdict") or ""
-            if verdict in ("Malicious", "Dangerous"):
-                dec = "block"
-            elif verdict in ("Needs review", "Inconclusive"):
-                dec = "quarantine"
-            elif verdict == "Safe":
-                dec = "allow"
+            # bundle нет: решение по вердикту артефакта модели (если модель уже проверялась).
+            # Поиск по индексу (без перебора всех сканов); загрузка записи — только по найденному id.
+            verdict = ""
+            if DB_ENABLED:
+                try:
+                    vr2 = db_query("SELECT s.verdict FROM scans s JOIN artifacts a ON a.id = s.artifact_id "
+                                   "WHERE a.sha256=" + _lit(model) + " AND s.status='done' "
+                                   "ORDER BY s.created_at DESC LIMIT 1")
+                    verdict = (vr2[0][0] if vr2 else "") or ""
+                except Exception:  # noqa: BLE001
+                    verdict = ""
+            if verdict:
+                dec, why = v3attest.gate_decision(verdict) if v3attest is not None else ("quarantine", "attest недоступен")
             else:
-                dec = "quarantine"
+                dec, why = "quarantine", "нет bundle и вердикта; политика по умолчанию"
             return self._json(200, {"bundle_id": None, "decision": dec, "verdict": verdict or None,
-                                    "reason": ("нет bundle для пары (образ, модель); решение по артефакту модели"
-                                               if verdict else "нет bundle и вердикта; политика по умолчанию")})
+                                    "reason": why})
         bid = rows[0][0]
         vr = db_query("SELECT verdict,action,attestation_digest,signature FROM bundle_verdicts "
                       "WHERE bundle_id=" + _lit(bid))
@@ -2019,9 +2044,10 @@ class Handler(BaseHTTPRequestHandler):
         if v3hf is not None and body.get("quantization"):
             sel = v3hf.select_files(files, quantization=body.get("quantization"))
             files = sel or files
-        elif files:
-            gg = [f for f in files if f.lower().endswith(".gguf")]
-            files = gg or files
+        elif files and v3hf is not None:
+            # канонический выбор (ingest/hf.py::select_files): без квантизации берём лучший один файл
+            ranked = v3hf.select_files(files, quantization="")
+            files = ranked[:1] or files
         if not files:
             files = ["model.gguf"]
         total = sum(int(sizes.get(f, 0)) for f in files)

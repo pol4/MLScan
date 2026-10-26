@@ -86,6 +86,15 @@ if have_ns mlscan-ops; then
 else
   echo "  (egress-политика эксплуатации — уровень 5)"
 fi
+# HF-egress: доступ ТОЛЬКО к Hugging Face и адресам загрузки моделей (TCP/443).
+# Адреса HF/CDN ротируются — при поломке реального HF перегенерировать:
+#   bash deploy/ingress/gen-hf-egress.sh && kubectl apply -f deploy/ingress/33-egress-hf.yaml
+if have_ns mlscan-testing; then
+  kubectl apply -f "$HERE/33-egress-hf.yaml"
+  echo "  HF-egress применён (ns mlscan-testing; обновлять при смене адресов HF)"
+else
+  echo "  (HF-egress — уровень 2)"
+fi
 
 echo "[6/6] Проверка живости сервисов (только развёрнутые уровни)"
 for ns in mlscan-testing mlscan-analytics mlscan-integrations mlscan-ops; do

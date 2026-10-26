@@ -5,32 +5,45 @@
 # globalnetworkpolicies — поле destination.domains отсутствует), поэтому доступ к Hugging Face
 # открывается по IP-адресам его хостов и CDN загрузки (только TCP/443).
 #
-# Запуск: bash deploy/ingress/gen-hf-egress.sh   (резолв хостов — на узле, где есть DNS/интернет)
-# После генерации: kubectl apply -f deploy/ingress/33-egress-hf.yaml
+# Политика узкая: по умолчанию выпускаются ТОЛЬКО /32 найденных адресов. Опция
+# HF_EGRESS_INCLUDE_24=1 дополнительно добавляет /24 подсети (устойчивость к ротации внутри
+# подсети, но шире заявленного «только HF») — включать осознанно.
+#
+# Запуск:  bash deploy/ingress/gen-hf-egress.sh
+# Применение: kubectl apply -f deploy/ingress/33-egress-hf.yaml  (также делает deploy/ingress/apply.sh)
+# Адреса HF/CDN ротируются — при поломке реального HF перегенерировать и применить заново.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/33-egress-hf.yaml"
 NODE="${MLSCAN_NODE_SSH:-col@rtx-cluster}"
+# Аутентификация узла обязательна (host key из known_hosts); доп. опции — через MLSCAN_NODE_SSH_OPTS.
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 ${MLSCAN_NODE_SSH_OPTS:-})
 
-HOSTS="huggingface.co hf.co cdn-lfs.hf.co cdn-lfs-us-1.hf.co cdn.hf.co us.aws.cdn.hf.co
-       cas-bridge.xethub.hf.co cas-server.xethub.hf.co transfer.xethub.hf.co xethub.hf.co"
+HOSTS="huggingface.co hf.co cdn-lfs.hf.co cdn-lfs-us-1.hf.co cdn.hf.co us.aws.cdn.hf.co cas-bridge.xethub.hf.co cas-server.xethub.hf.co transfer.xethub.hf.co xethub.hf.co"
+HOSTS="${HOSTS//$'\n'/ }"   # одна строка: перенос ломает удалённый for-список
 
 echo "[hf-egress] резолв хостов HF/CDN на $NODE…"
-IPS="$(ssh -o StrictHostKeyChecking=no "$NODE" \
+IPS="$(ssh "${SSH_OPTS[@]}" "$NODE" \
   "for h in $HOSTS; do getent ahostsv4 \$h 2>/dev/null | awk '{print \$1}'; done | sort -u" 2>/dev/null | tr '\n' ' ')"
-[ -n "${IPS// /}" ] || { echo "[hf-egress] не удалось получить IP (нужен доступ к узлу/DNS)"; exit 2; }
+[ -n "${IPS// /}" ] || { echo "[hf-egress] не удалось получить IP (нужен доступ к узлу/DNS по known_hosts)"; exit 2; }
 
-python3 - "$OUT" $IPS <<'PY'
-import sys
+INCLUDE_24="${HF_EGRESS_INCLUDE_24:-0}" python3 - "$OUT" $IPS <<'PY'
+import os, sys
 out, ips = sys.argv[1], sorted({x for x in sys.argv[2:] if x})
+include_24 = os.environ.get("HF_EGRESS_INCLUDE_24", "0") == "1"
 cidrs = set()
-for ip in ips:                      # /32 хостов + /24 их подсетей (устойчивость к ротации)
-    cidrs.add(ip + "/32"); cidrs.add(".".join(ip.split(".")[:3]) + ".0/24")
+for ip in ips:
+    cidrs.add(ip + "/32")
+    if include_24:                  # opt-in: подсеть целиком (шире, чем «только HF»)
+        cidrs.add(".".join(ip.split(".")[:3]) + ".0/24")
 to = "\n".join(f"    - ipBlock: {{cidr: {c}}}" for c in sorted(cidrs))
+note = ("# Включены /32 найденных адресов" + (" и /24 их подсетей (HF_EGRESS_INCLUDE_24=1)."
+        if include_24 else " (узко; /24 добавляются только при HF_EGRESS_INCLUDE_24=1)."))
 open(out, "w").write(f"""# HF-egress (docs/15 §10, B3): доступ ТОЛЬКО к Hugging Face и адресам загрузки моделей (TCP/443).
 # FQDN-политики в этом Calico-CRD нет, поэтому allowlist по IP-адресам хостов HF и его CDN:
 #   huggingface.co, *.hf.co (cdn-lfs*, us.aws.cdn.hf.co), cas-bridge/cas-server/transfer.xethub.hf.co
-# Включены /32 найденных адресов и /24 их подсетей. Обновлять при смене адресов:
+{note}
+# Адреса HF/CDN ротируются: при поломке реального HF перегенерировать
 #   bash deploy/ingress/gen-hf-egress.sh && kubectl apply -f deploy/ingress/33-egress-hf.yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -47,5 +60,5 @@ spec:
     to:
 {to}
 """)
-print(f"[hf-egress] {out}: {len(cidrs)} CIDR")
+print(f"[hf-egress] {out}: {len(cidrs)} CIDR" + (" (с /24)" if include_24 else " (только /32)"))
 PY

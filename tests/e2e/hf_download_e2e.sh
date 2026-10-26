@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# E2E U11 (H1): фоновые HF-загрузки с докачкой (mock-HF, без интернета), не зависят от браузера.
-# Требует окружения сервиса: HF_MOCK=1 HF_BASE_URL=http://127.0.0.1:8080/__mockhf HF_FLAKY=1.
+# E2E U11 (H1): фоновые HF-загрузки, не зависят от браузера.
+# Два режима (определяется по ответу /hf/search -> mock):
+#  * HF_MOCK=1 (mock-HF, без интернета): поиск с фильтрами + докачка после обрыва (HF_FLAKY=1);
+#  * HF_MOCK=0 (реальный HF): реальный поиск + реальная загрузка маленького файла (config.json).
 #   bash tests/e2e/hf_download_e2e.sh
 set -uo pipefail
 NS=mlscan-testing
@@ -19,13 +21,27 @@ def api(m, p, pl=None):
                                headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
     return json.loads(op.open(r, timeout=60).read() or b"{}")
 # 1) поиск с фильтрами (тип/квантизация)
-s = api("POST", "/hf/search", {"query": "tinyllama", "type": "text-generation", "quantization": "Q5_K_M"})
-assert s.get("count", 0) >= 1 and any("TinyLlama" in i["id"] for i in s["items"]), s
-print("  [OK]   поиск HF (фильтры type/quantization):", [i["id"] for i in s["items"]])
-# 2) фоновая загрузка с докачкой (HF_FLAKY=1 -> обрыв, затем Range-докачка); процесс серверный
-d = api("POST", "/hf/downloads", {"repo_id": "TheBloke/TinyLlama-1.1B-Chat-GGUF", "quantization": "Q5_K_M"})
+probe = api("POST", "/hf/search", {"query": "tinyllama"})
+mock = bool(probe.get("mock"))
+if mock:
+    s = api("POST", "/hf/search", {"query": "tinyllama", "type": "text-generation", "quantization": "Q5_K_M"})
+    assert s.get("count", 0) >= 1 and any("TinyLlama" in i["id"] for i in s["items"]), s
+    print("  [OK]   поиск HF mock (фильтры type/quantization):", [i["id"] for i in s["items"]])
+    req = {"repo_id": "TheBloke/TinyLlama-1.1B-Chat-GGUF", "quantization": "Q5_K_M"}
+    key_s3 = "hf/TheBloke/TinyLlama-1.1B-Chat-GGUF/tinyllama-1.1b.Q5_K_M.gguf"
+    print("  [i]    режим mock-HF (докачка после обрыва HF_FLAKY=1)")
+else:
+    # реальный HF: поиск реального репозитория + загрузка маленького файла (быстро)
+    s = api("POST", "/hf/search", {"query": "gemma-3-270m-it-GGUF", "type": "text-generation", "quantization": "Q8_0"})
+    assert s.get("count", 0) >= 1, s
+    print("  [OK]   поиск HF (реальный API): результатов", s["count"], "напр.", s["items"][0]["id"])
+    req = {"repo_id": "hf-internal-testing/tiny-random-LlamaForCausalLM", "files": ["config.json"], "kind": "nonllm"}
+    key_s3 = "hf/hf-internal-testing/tiny-random-LlamaForCausalLM/config.json"
+    print("  [i]    режим реального HF (маленький файл config.json)")
+# 2) фоновая загрузка (в mock — с обрывом и Range-докачкой); процесс серверный
+d = api("POST", "/hf/downloads", req)
 st = {}
-for _ in range(40):
+for _ in range(200):
     st = api("GET", "/hf/downloads/" + d["id"])
     if st.get("status") in ("done", "error", "cancelled"):
         break
@@ -34,9 +50,8 @@ assert st.get("status") == "done", st
 assert int(st["bytes_done"]) == int(st["bytes_total"]) and int(st["bytes_done"]) > 0, st
 s3 = S3(os.environ["S3_ENDPOINT"], os.environ["S3_ACCESS_KEY"], os.environ["S3_SECRET_KEY"],
         region="garage", bucket=os.environ["S3_BUCKET"], timeout=60)
-key_s3 = "hf/TheBloke/TinyLlama-1.1B-Chat-GGUF/tinyllama-1.1b.Q5_K_M.gguf"
 assert s3.exists(key_s3), key_s3
-print("  [OK]   фоновая загрузка с докачкой завершена, объект в S3:", key_s3)
+print("  [OK]   фоновая загрузка завершена, объект в S3:", key_s3)
 # 3) список загрузок виден (статус хранится в БД -> не зависит от браузера)
 lst = api("GET", "/hf/downloads")["downloads"]
 assert any(x["id"] == d["id"] for x in lst), lst[:2]

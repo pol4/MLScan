@@ -66,6 +66,14 @@ spec:
         - {name: DIRECT_PART_SIZE, value: "268435456"}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: MLSCAN_LANG, value: "ru"}
+        # Hugging Face: реальный HF (egress-политика ставится deploy/ingress/apply.sh, шаг [5/6]);
+        # HF_MOCK=1 — изолированный mock-режим для тестов без интернета.
+        - {name: HF_MOCK, value: "0"}
+        - {name: HF_BASE_URL, value: "https://huggingface.co"}
+        - {name: HF_FLAKY, value: "0"}
+        # Пределы загрузки HF (защита PVC/памяти): неизвестный размер -> отказ
+        - {name: HF_MAX_FILE_BYTES, value: "8589934592"}
+        - {name: HF_MAX_TOTAL_BYTES, value: "68719476736"}
         - {name: PYTHONUTF8, value: "1"}
         - {name: TMPDIR, value: /tmp}
         - name: MLSCAN_KEYS

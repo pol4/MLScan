@@ -217,6 +217,11 @@ class AttestTest(unittest.TestCase):
     def test_gate_allow(self):
         self.assertEqual(attest.gate_decision("Safe", pass_rate=1.0)[0], "allow")
 
+    def test_gate_unknown_verdict_is_fail_closed(self):
+        # неизвестный/пустой вердикт не может быть разрешением
+        self.assertEqual(attest.gate_decision("")[0], "quarantine")
+        self.assertEqual(attest.gate_decision("Weird")[0], "quarantine")
+
     def test_gate_pass_rate_threshold(self):
         self.assertEqual(attest.gate_decision("Safe", pass_rate=0.5, block_rate=0.8)[0], "quarantine")
 

@@ -173,8 +173,10 @@ kubectl apply -f deploy/stage2/30-service.yaml -f deploy/stage3/30-service.yaml 
 - **Egress к Hugging Face**: реализован точечный allowlist (только TCP/443 к хостам HF и его CDN):
   манифест `33-egress-hf.yaml` (ns `mlscan-testing`), генерируется скриптом
   `deploy/ingress/gen-hf-egress.sh` (резолв `huggingface.co`, `*.hf.co`, `cas-*/transfer.xethub.hf.co`
-  на узле → CIDR `/32`+`/24`). FQDN-политики (`toFQDNs`/`destination.domains`) в этом Calico-CRD
-  **отсутствуют** (проверено), поэтому используется IP-allowlist; обновлять при смене адресов HF.
+  на узле → только `/32`; `/24` подсети добавляются лишь при `HF_EGRESS_INCLUDE_24=1`). FQDN-политики
+  (`toFQDNs`/`destination.domains`) в этом Calico-CRD **отсутствуют** (проверено), поэтому используется
+  IP-allowlist; адреса ротируются — при поломке реального HF перегенерировать и применить заново
+  (шаг `[5/6]` `deploy/ingress/apply.sh` делает это автоматически при наличии ns `mlscan-testing`).
   Это разблокировало **реальные** поиск/загрузку моделей из UI (S2), в т.ч. LFS/CDN (`us.aws.cdn.hf.co`).
 - **Egress**: точечный доступ к внешним фидам threat-intel по такому же принципу; журналирование egress.
 - Отдельный namespace `mlscan-ingress` уже выделен (в нём Gateway).
