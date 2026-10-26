@@ -816,6 +816,33 @@ document.getElementById('f').addEventListener('submit',e=>{
     const st=document.getElementById('hftokenstatus'); if(!d||!st)return;
     if(!d.present){st.textContent='token: не сохранён';return;}
     st.textContent='token: '+(d.usable?d.masked:'не применим — сохраните заново');}).catch(()=>{});
+  const bt=document.getElementById('btbtn');
+  bt&&bt.addEventListener('click',()=>{
+    const st=document.getElementById('btstatus');
+    const sha=(document.getElementById('btsha').value||'').trim();
+    const bid=(document.getElementById('btbundle').value||'').trim();
+    const run=(id)=>{st.textContent='запуск теста…';
+      fetch('/bundles/'+id+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
+        if(!ok){st.textContent='ERR '+(j.error||'');return;}
+        st.textContent='тест запущен: job '+j.job+', вопросов '+j.questions+(j.gpu?', GPU':', CPU');
+        const t=setInterval(()=>{fetch('/bundles/'+id+'/test').then(r=>r.ok?r.json():null).then(d=>{
+          if(!d)return;
+          if(d.status==='done'){clearInterval(t);
+            st.textContent='тест завершён: вердикт '+(d.verdict||'—')+', решение '+(d.action||'—')
+              +', аттестация '+String(d.attestation_digest||'').slice(0,20)+'…';}
+          else if(d.status==='failed'){clearInterval(t);st.textContent='тест не удался: '+(d.error||d.status);}
+        }).catch(()=>{});},5000);
+      }).catch(e=>{st.textContent='ERR '+e;});};
+    if(bid){run(bid);return;}
+    if(!sha){st.textContent='ERR укажите bundle_id или sha256 модели';return;}
+    st.textContent='поиск bundle для модели…';
+    fetch('/bundles?model='+encodeURIComponent(sha)).then(r=>r.ok?r.json():null).then(d=>{
+      const b=(d&&d.bundles)||[];
+      if(!b.length){st.textContent='ERR нет bundle для этой модели';return;}
+      run(b[0].bundle_id);
+    }).catch(()=>{st.textContent='ERR не удалось получить список bundle';});
+  });
   const lb=document.getElementById('locbtn');
   lb&&lb.addEventListener('click',()=>{const f=document.getElementById('locfile').files[0];const eng=document.getElementById('locengine').value;
     const st=document.getElementById('locstatus');
@@ -916,6 +943,9 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
             + "<div class='dl' id='downloads'><div class='tabs'>"
             + f"<button type='button' class='tab' data-tab='tab-models'>{'Модели (кроме LLM)' if lang=='ru' else 'Models (non-LLM)'}</button>"
             + f"<button type='button' class='tab' data-tab='tab-local'>{'Локальные LLM' if lang=='ru' else 'Local LLMs'}</button>"
+            + ("<button type='button' class='tab' data-tab='tab-bundletest'>"
+               + ("Тест bundle" if lang == "ru" else "Bundle test") + "</button>"
+               if "admin" in (roles or []) else "")
             + f"<button type='button' class='tab' data-tab='tab-engines'>{'Движки инференса' if lang=='ru' else 'Inference engines'}</button>"
             + f"<button type='button' class='tab' data-tab='tab-hf'>{'Модель с HF' if lang=='ru' else 'Model from HF'}</button>"
             + "</div><div class='tabpane' id='tab-models'>"
@@ -952,7 +982,16 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
                + "<button id='rbbtn' type='button'>" + ("Сменить движок и перезапустить" if lang == "ru" else "Rebind & re-run") + "</button>"
                + "<div id='rbstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div></div>"
                + "</div>")
-            + ("<div class='tabpane' id='tab-engines' style='display:none'>"
+            + ("<div class='tabpane' id='tab-bundletest' style='display:none'>"
+               + "<div class='upload' style='margin-top:0'>"
+               + "<b>" + ("Тест bundle (инференс на наборе вопросов)" if lang == "ru"
+                          else "Bundle test (inference over prompt set)") + "</b><br><br>"
+               + "<input id='btsha' type='text' placeholder='" + ("sha256 модели (необязательно)"
+                        if lang == "ru" else "model sha256 (optional)") + "' style='width:38%'> "
+               + "<input id='btbundle' type='text' placeholder='bundle_id (опц.)' style='width:22%'> "
+               + "<button id='btbtn' type='button'>" + ("Прогнать тест" if lang == "ru" else "Run test") + "</button>"
+               + "<div id='btstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div></div></div>"
+               + "<div class='tabpane' id='tab-engines' style='display:none'>"
                + "<div class='upload' id='imgs' style='margin-top:0'>"
                + "<b>" + ("Импорт образа движка" if lang == "ru" else "Engine image import") + "</b><br><br>"
                + "<input id='imgref' type='text' placeholder='mlscan-registry/…@sha256:…' style='width:60%'> "
@@ -1295,6 +1334,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/bundles":
             code, body = self._test_request("GET", "/bundles" + (("?" + (u.query or "")) if u.query else ""))
             return self._send(code, body, "application/json; charset=utf-8")
+        if p.startswith("/bundles/") and p.endswith("/test"):
+            code, body = self._test_request("GET", p)
+            return self._send(code, body, "application/json; charset=utf-8")
         if p == "/hf/downloads":
             code, body = self._test_request("GET", "/hf/downloads")
             return self._send(code, body, "application/json; charset=utf-8")
@@ -1482,6 +1524,11 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"
             code, body = self._test_request("POST", "/bundles", data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        if u.path.startswith("/bundles/") and u.path.endswith("/test"):
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", u.path, data)
             return self._send(code, body, "application/json; charset=utf-8")
         if u.path == "/images/import":
             n = int(self.headers.get("Content-Length", "0") or "0")

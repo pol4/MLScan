@@ -53,12 +53,18 @@ DATA_TMP = os.environ.get("DATA_TMP", "/var/tmp")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
 S3_ENABLED = bool(S3_ENDPOINT)
 _s3 = None
+_s3_internal = None      # пресайн-URL для job'ов внутри кластера (внешний адрес им недоступен)
 if S3_ENABLED:
     sys.path.insert(0, "/opt/s3")
     from s3client import S3  # noqa: E402
     _s3 = S3(S3_ENDPOINT, os.environ["S3_ACCESS_KEY"], os.environ["S3_SECRET_KEY"],
              region=os.environ.get("S3_REGION", "garage"), bucket=os.environ["S3_BUCKET"], timeout=3600,
              public_endpoint=os.environ.get("S3_PUBLIC_ENDPOINT", ""))
+    # N2: presigned-URL для job'ов внутри кластера — внутренний адрес S3 (внешний из пода не резолвится)
+    _s3_internal = S3(S3_ENDPOINT, os.environ["S3_ACCESS_KEY"], os.environ["S3_SECRET_KEY"],
+                      region=os.environ.get("S3_REGION", "garage"), bucket=os.environ["S3_BUCKET"],
+                      timeout=600, public_endpoint=os.environ.get(
+                          "S3_INTERNAL_ENDPOINT", "http://garage.mlscan-data.svc:3900"))
 
 # Multipart-загрузка в S3 (этап P0-1, docs/15 §11.6): объекты ≥ порога грузятся
 # параллельными частями вместо одиночного PUT (снимает одно-поточный потолок).
@@ -88,6 +94,12 @@ DYNAMIC_MAX_SLICES = int(os.environ.get("DYNAMIC_MAX_SLICES", "8"))
 REGISTRY_ALLOWLIST = [r.strip() for r in os.environ.get("REGISTRY_ALLOWLIST", "").split(",") if r.strip()]
 # L1: ёмкость LLM-пула для ресурсного планировщика (0/пусто = без ограничений в этом измерении)
 ATTEST_KEY = os.environ.get("ATTEST_KEY", "mlscan-dev-attest")
+# N2: оркестрация теста bundle (job инференса + набор вопросов -> /llm/score -> вердикт)
+LLM_TEST_NS = os.environ.get("LLM_TEST_NS", "mlscan-build")
+LLM_TEST_RUNTIME_CLASS = os.environ.get("LLM_TEST_RUNTIME_CLASS", "nvidia")
+LLM_TEST_GPU = os.environ.get("LLM_TEST_GPU", "1") == "1"
+LLM_TEST_MAX_TOKENS = int(os.environ.get("LLM_TEST_MAX_TOKENS", "256"))
+LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 DETECTORS_VERSION = os.environ.get("MLSCAN_DETECTORS_VERSION", "det-1")
 # H1: Hugging Face (HF_MOCK=1 — встроенный mock-сервер для hermetic-тестов; иначе реальный HF)
 HF_BASE_URL = os.environ.get("HF_BASE_URL", "https://huggingface.co")
@@ -128,6 +140,47 @@ def _tenant_hf_token(tenant: str) -> str:
         return v3kms.decrypt(HF_TOKEN_KEY.encode(), json.loads(raw)).decode()
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _write_bundle_verdict(bundle_id: str, verdict: str, *, safety_fail: int = 0, pass_rate: float = 1.0,
+                          coverage: dict | None = None, metrics: dict | None = None,
+                          versions: dict | None = None, engine_image: str = "", model_sha256: str = "") -> dict:
+    """Сформировать и сохранить вердикт bundle с подписанной аттестацией (L4/N2)."""
+    if v3attest is None:
+        raise RuntimeError("v3 attest module unavailable")
+    action, reason = v3attest.gate_decision(verdict, safety_fail=safety_fail, pass_rate=pass_rate)
+    image, model = engine_image, model_sha256
+    if (not image or not model) and DB_ENABLED:
+        rows = db_query("SELECT engine_image,model_sha256 FROM bundles WHERE bundle_id=" + _lit(bundle_id))
+        if rows:
+            image = image or rows[0][0]
+            model = model or rows[0][1]
+    st = v3attest.make_statement(bundle_id=bundle_id, engine_image=image, model_sha256=model,
+                                 verdict=verdict, action=action, coverage=coverage or {},
+                                 metrics=metrics or {}, versions=versions or {})
+    digest = v3attest.statement_digest(st)
+    sig = v3attest.sign(st, ATTEST_KEY)
+    if DB_ENABLED:
+        db_exec("INSERT INTO bundle_verdicts(bundle_id,verdict,action,coverage,metrics,statement,"
+                "attestation_digest,signature) VALUES ("
+                f"{_lit(bundle_id)},{_lit(verdict)},{_lit(action)},"
+                f"{_lit(json.dumps(coverage or {}, ensure_ascii=False))},"
+                f"{_lit(json.dumps(metrics or {}, ensure_ascii=False))},"
+                f"{_lit(json.dumps(st, ensure_ascii=False))},{_lit(digest)},{_lit(sig)}) "
+                "ON CONFLICT (bundle_id) DO UPDATE SET verdict=EXCLUDED.verdict, action=EXCLUDED.action, "
+                "coverage=EXCLUDED.coverage, metrics=EXCLUDED.metrics, statement=EXCLUDED.statement, "
+                "attestation_digest=EXCLUDED.attestation_digest, signature=EXCLUDED.signature")
+    return {"bundle_id": bundle_id, "verdict": verdict, "action": action, "reason": reason,
+            "attestation_digest": digest, "signature": sig, "statement": st}
+
+
+def _verdict_from_score(safety_fail: int, pass_rate: float) -> str:
+    """Вердикт по результатам набора вопросов (fail-closed на критичных отказах)."""
+    if safety_fail > 0:
+        return "Needs review"
+    if pass_rate >= 1.0:
+        return "Safe"
+    return "Inconclusive"
 
 
 def _sha256_file(path: str) -> str:
@@ -1369,6 +1422,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._images_get(u.path.split("/", 2)[2])
         if u.path == "/gate":
             return self._gate(q)
+        if u.path.startswith("/bundles/") and u.path.endswith("/test"):
+            return self._bundle_test_get(u.path[len("/bundles/"):-len("/test")].strip("/"))
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
             return self._bundle_verdict_get(u.path.split("/", 3)[2])
         if u.path.startswith("/bundles/"):
@@ -1773,8 +1828,11 @@ class Handler(BaseHTTPRequestHandler):
                                 "warnings": json.loads(r[3] or "[]"),
                                 "errors": json.loads(r[4] or "[]")})
 
-    def _llm_score(self) -> None:
-        """L3: оценка ответов (правила; опц. judge) с допуском по критичности + агрегация."""
+    def _llm_score(self, run_token: str = "") -> None:
+        """L3: оценка ответов (правила; опц. judge) с допуском по критичности + агрегация.
+
+        Если в теле есть bundle_id — выставляется вердикт bundle с подписанной аттестацией (N2).
+        """
         if v3evaluators is None or v3promptset is None:
             return self._json(503, {"error": "v3 evaluators module unavailable"})
         n = int(self.headers.get("Content-Length", "0") or "0")
@@ -1810,6 +1868,32 @@ class Handler(BaseHTTPRequestHandler):
                                                _lit(json.dumps(results, ensure_ascii=False))]) + ")")
             except Exception:  # noqa: BLE001
                 pass
+        bundle_id = (body.get("bundle_id") or "").strip()
+        if bundle_id:
+            if run_token:      # токен может писать только свой bundle
+                rows = db_query("SELECT bundle_id FROM bundle_tests WHERE run_token=" + _lit(run_token))
+                if not rows or rows[0][0] != bundle_id:
+                    return self._json(403, {"error": "run-token не соответствует bundle"})
+            verdict = _verdict_from_score(int(agg.get("safety_fail") or 0), float(agg.get("pass_rate") or 0))
+            try:
+                out = _write_bundle_verdict(
+                    bundle_id, verdict, safety_fail=int(agg.get("safety_fail") or 0),
+                    pass_rate=float(agg.get("pass_rate") or 0),
+                    coverage={"complete": True, "questions": int(agg.get("total") or 0)},
+                    metrics=dict(agg, **(body.get("metrics") or {})),
+                    versions={"prompt_set": ver, "engine": body.get("engine_image") or ""},
+                    engine_image=body.get("engine_image") or "")
+                agg.update({"bundle_id": bundle_id, "bundle_verdict": verdict,
+                            "bundle_action": out["action"], "attestation_digest": out["attestation_digest"]})
+                if DB_ENABLED:
+                    db_exec("UPDATE bundle_tests SET status='done', error='', updated=now() WHERE bundle_id="
+                            + _lit(bundle_id))
+            except Exception as exc:  # noqa: BLE001
+                if DB_ENABLED:
+                    db_exec("UPDATE bundle_tests SET status='failed', error="
+                            + _lit(f"{type(exc).__name__}: {exc}") + ", updated=now() WHERE bundle_id="
+                            + _lit(bundle_id))
+                return self._json(502, {"error": f"bundle verdict: {type(exc).__name__}: {exc}"})
         return self._json(200, agg)
 
     def _llm_events(self) -> None:
@@ -1860,36 +1944,150 @@ class Handler(BaseHTTPRequestHandler):
         verdict = body.get("verdict") or "Inconclusive"
         safety_fail = int(body.get("safety_fail") or 0)
         pass_rate = float(body.get("pass_rate", 1.0))
-        action, reason = v3attest.gate_decision(verdict, safety_fail=safety_fail, pass_rate=pass_rate)
-        image = body.get("engine_image") or ""
-        model = body.get("model_sha256") or ""
-        if (not image or not model) and DB_ENABLED:
-            rows = db_query("SELECT engine_image,model_sha256 FROM bundles WHERE bundle_id=" + _lit(bundle_id))
-            if rows:
-                image = image or rows[0][0]; model = model or rows[0][1]
-        st = v3attest.make_statement(bundle_id=bundle_id, engine_image=image, model_sha256=model,
-                                     verdict=verdict, action=action, coverage=body.get("coverage") or {},
-                                     metrics=body.get("metrics") or {},
-                                     versions=body.get("versions") or {})
-        digest = v3attest.statement_digest(st)
-        sig = v3attest.sign(st, ATTEST_KEY)
-        if DB_ENABLED:
-            try:
-                db_exec("INSERT INTO bundle_verdicts(bundle_id,verdict,action,coverage,metrics,statement,"
-                        "attestation_digest,signature) VALUES ("
-                        f"{_lit(bundle_id)},{_lit(verdict)},{_lit(action)},"
-                        f"{_lit(json.dumps(body.get('coverage') or {}, ensure_ascii=False))},"
-                        f"{_lit(json.dumps(body.get('metrics') or {}, ensure_ascii=False))},"
-                        f"{_lit(json.dumps(st, ensure_ascii=False))},{_lit(digest)},{_lit(sig)}) "
-                        "ON CONFLICT (bundle_id) DO UPDATE SET verdict=EXCLUDED.verdict, "
-                        "action=EXCLUDED.action, coverage=EXCLUDED.coverage, metrics=EXCLUDED.metrics, "
-                        "statement=EXCLUDED.statement, attestation_digest=EXCLUDED.attestation_digest, "
-                        "signature=EXCLUDED.signature")
-            except Exception as exc:  # noqa: BLE001
-                return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
-        return self._json(200, {"bundle_id": bundle_id, "verdict": verdict, "action": action,
-                                "reason": reason, "attestation_digest": digest, "signature": sig,
-                                "statement": st})
+        try:
+            out = _write_bundle_verdict(bundle_id, verdict, safety_fail=safety_fail, pass_rate=pass_rate,
+                                        coverage=body.get("coverage") or {}, metrics=body.get("metrics") or {},
+                                        versions=body.get("versions") or {},
+                                        engine_image=body.get("engine_image") or "",
+                                        model_sha256=body.get("model_sha256") or "")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(502, {"error": f"{type(exc).__name__}: {exc}"})
+        return self._json(200, out)
+
+    def _run_token_ok(self, token: str) -> bool:
+        """Проверить одноразовый run-token активного теста bundle (fail-closed)."""
+        if not (DB_ENABLED and token and len(token) >= 16):
+            return False
+        try:
+            rows = db_query("SELECT bundle_id FROM bundle_tests WHERE run_token=" + _lit(token)
+                            + " AND status IN ('created','running')")
+        except Exception:  # noqa: BLE001
+            return False
+        return bool(rows)
+
+    def _bundle_model_key(self, sha: str) -> tuple[str, str]:
+        """Ключ объекта S3 и имя файла модели по sha256 (таблица artifacts)."""
+        if not (DB_ENABLED and sha):
+            return "", ""
+        rows = db_query("SELECT s3_key,filename FROM artifacts WHERE sha256=" + _lit(sha))
+        if not rows:
+            return "", ""
+        return (rows[0][0] or ""), (rows[0][1] or "")
+
+    def _prompt_cases(self, prompt_set: str, limit: int = 200) -> tuple[list, str]:
+        """Кейсы набора вопросов для job'а теста: (кейсы, фактическая версия набора).
+
+        Если в bundle указан набор без кейсов (например, дефолтный ps-v9), берём активный набор.
+        """
+        if not DB_ENABLED:
+            return [], ""
+        keys = ("id", "domain", "prompt", "reference", "criticality", "severity", "weight", "tolerance")
+        cols = ("id,domain,prompt,reference,criticality,severity,weight,tolerance")
+
+        def by_version(ver: str) -> list:
+            rows = db_query(f"SELECT {cols} FROM llm_prompts WHERE prompt_set=" + _lit(ver)
+                            + f" ORDER BY criticality DESC, id LIMIT {int(limit)}")
+            return [dict(zip(keys, r)) for r in (rows or [])]
+
+        if prompt_set:
+            cases = by_version(prompt_set)
+            if cases:
+                return cases, prompt_set
+        rows = db_query("SELECT p.id,p.domain,p.prompt,p.reference,p.criticality,p.severity,p.weight,"
+                        "p.tolerance,p.prompt_set FROM llm_prompts p JOIN prompt_sets s ON s.version=p.prompt_set "
+                        f"WHERE s.active ORDER BY p.criticality DESC, p.id LIMIT {int(limit)}")
+        cases = [dict(zip(keys, r[:8])) for r in (rows or [])]
+        ver = (rows[0][8] if rows else "")
+        return cases, ver
+
+    def _bundle_test_start(self, bundle_id: str) -> None:
+        """N2: запустить тест bundle (движок + набор вопросов) и связать результат с bundle."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        if v3llmenv is None or v3attest is None:
+            return self._json(503, {"error": "v3 llm/attest модули недоступны"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception:  # noqa: BLE001
+            body = {}
+        rows = db_query("SELECT engine_image,model_sha256,prompt_set FROM bundles WHERE bundle_id="
+                        + _lit(bundle_id))
+        if not rows:
+            return self._json(404, {"error": "bundle not found"})
+        engine, model_sha, prompt_set = rows[0][0], rows[0][1], rows[0][2] or ""
+        if not self._engine_ok(engine):
+            return self._json(400, {"error": "движок bundle не найден в registry_images"})
+        key, fname = self._bundle_model_key(model_sha)
+        if not key:
+            return self._json(409, {"error": "модель bundle не найдена в хранилище (загрузите её через UI)",
+                                    "model_sha256": model_sha})
+        cases, ver = self._prompt_cases(body.get("prompt_set") or prompt_set)
+        if not cases:
+            return self._json(409, {"error": "набор вопросов пуст — загрузите XLSX (раздел «Загрузки»)"})
+        client = _s3_internal or _s3
+        if client is None:
+            return self._json(503, {"error": "s3 недоступен (нужен presigned URL модели)"})
+        url = client.presign("GET", key, expires=6 * 3600)   # внутренний адрес S3 для job'а
+        run_token = secrets.token_hex(16)
+        scan_id = "bundle-test-" + bundle_id[:16]
+        job = v3llmenv.make_llama_test_job(
+            bundle_id=bundle_id, engine_image=engine, model_url=url, model_sha256=model_sha,
+            prompts=[{"id": c["id"], "prompt": c["prompt"], "criticality": c.get("criticality"),
+                      "reference": c.get("reference") or "", "severity": c.get("severity") or "",
+                      "tolerance": c.get("tolerance")} for c in cases],
+            testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
+            scan_id=scan_id, namespace=LLM_TEST_NS, gpu=bool(body.get("gpu", LLM_TEST_GPU)),
+            runtime_class=LLM_TEST_RUNTIME_CLASS, max_tokens=int(body.get("max_tokens") or LLM_TEST_MAX_TOKENS))
+        name = job["metadata"]["name"]
+        try:
+            # повторный запуск теста: убираем прежний job (иначе 409 AlreadyExists)
+            k8s("DELETE", f"/apis/batch/v1/namespaces/{LLM_TEST_NS}/jobs/{name}?propagationPolicy=Background")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            k8s("POST", f"/apis/batch/v1/namespaces/{LLM_TEST_NS}/jobs", job)
+        except Exception as exc:  # noqa: BLE001
+            return self._json(502, {"error": f"job: {type(exc).__name__}: {exc}"})
+        db_exec("INSERT INTO bundle_tests(bundle_id,scan_id,job,namespace,status,run_token,gpu,error) VALUES ("
+                f"{_lit(bundle_id)},{_lit(scan_id)},{_lit(name)},{_lit(LLM_TEST_NS)},'running',"
+                f"{_lit(run_token)},{'true' if bool(body.get('gpu', LLM_TEST_GPU)) else 'false'},'') "
+                "ON CONFLICT (bundle_id) DO UPDATE SET scan_id=EXCLUDED.scan_id, job=EXCLUDED.job, "
+                "namespace=EXCLUDED.namespace, status='running', run_token=EXCLUDED.run_token, "
+                "gpu=EXCLUDED.gpu, error='', updated=now()")
+        return self._json(202, {"bundle_id": bundle_id, "job": name, "namespace": LLM_TEST_NS,
+                                "scan_id": scan_id, "status": "running", "questions": len(cases),
+                                "gpu": bool(body.get("gpu", LLM_TEST_GPU)),
+                                "hint": "по завершении job появится вердикт bundle (/bundles/<id>/verdict)"})
+
+    def _bundle_test_get(self, bundle_id: str) -> None:
+        """Статус теста bundle: фаза job + сохранённый вердикт (если тест завершён)."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT scan_id,job,namespace,status,gpu,error,created,updated FROM bundle_tests "
+                        "WHERE bundle_id=" + _lit(bundle_id))
+        out: dict = {"bundle_id": bundle_id}
+        if rows:
+            out.update({"scan_id": rows[0][0], "job": rows[0][1], "namespace": rows[0][2],
+                        "status": rows[0][3], "gpu": rows[0][4], "error": rows[0][5]})
+            job = rows[0][1]
+            if job and rows[0][3] == "running":
+                try:
+                    j = k8s("GET", f"/apis/batch/v1/namespaces/{rows[0][2] or LLM_TEST_NS}/jobs/{job}")
+                    stt = j.get("status", {})
+                    if stt.get("succeeded"):
+                        out["status"] = "done"
+                    elif stt.get("failed"):
+                        out["status"] = "failed"
+                except Exception:  # noqa: BLE001
+                    pass
+        vr = db_query("SELECT verdict,action,attestation_digest FROM bundle_verdicts WHERE bundle_id="
+                      + _lit(bundle_id))
+        if vr:
+            out.update({"verdict": vr[0][0], "action": vr[0][1], "attestation_digest": vr[0][2]})
+        if not rows and not vr:
+            return self._json(404, {"error": "тест не запускался"})
+        return self._json(200, out)
 
     def _bundle_verdict_get(self, bundle_id: str) -> None:
         if not DB_ENABLED:
@@ -2501,6 +2699,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        # N2: job теста bundle аутентифицируется одноразовым run-token (только для своего bundle)
+        if u.path == "/llm/score":
+            tok = (self.headers.get("Authorization") or "").replace("Bearer ", "").strip()
+            if tok and self._run_token_ok(tok):
+                return self._llm_score(run_token=tok)
         if self._require() is None:
             return
         if u.path == "/uploads/initiate":
@@ -2511,6 +2714,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._objects_import()
         if u.path == "/bundles":
             return self._bundles_create()
+        if u.path.startswith("/bundles/") and u.path.endswith("/test"):
+            return self._bundle_test_start(u.path.split("/", 3)[2])
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
             return self._bundle_verdict_set(u.path.split("/", 3)[2])
         if u.path == "/hf/token":

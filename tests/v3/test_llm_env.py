@@ -95,6 +95,60 @@ class GpuEnvTest(unittest.TestCase):
                                     model_key="t/m.bin", runtime_class="bogus")
         self.assertFalse(llm_env.validate_job(job)[0])
 
+    # --- N2: job теста bundle (реальный движок + вопросы) ---
+    def _llm_job(self, gpu=True, runtime_class="nvidia"):
+        return llm_env.make_llama_test_job(
+            bundle_id="b-test123", engine_image="reg/llama@sha256:" + "a" * 64,
+            model_url="https://s3/presigned", model_sha256="b" * 64,
+            prompts=[{"id": "q1", "prompt": "привет"}, {"id": "q2", "prompt": "2+2"}],
+            testing_url="http://mlscan-testing.mlscan-testing.svc.cluster.local:8080",
+            api_key="runtoken", prompt_set="ps-test", gpu=gpu, runtime_class=runtime_class)
+
+    def test_llm_test_job_requires_digest(self):
+        with self.assertRaises(ValueError):
+            llm_env.make_llama_test_job(bundle_id="b", engine_image="reg/x:tag", model_url="https://u",
+                                        model_sha256="c" * 64, prompts=[], testing_url="http://t", api_key="k")
+
+    def test_llm_test_job_requires_model_url(self):
+        with self.assertRaises(ValueError):
+            llm_env.make_llama_test_job(bundle_id="b", engine_image="reg/x@sha256:" + "a" * 64,
+                                        model_url="", model_sha256="c" * 64, prompts=[],
+                                        testing_url="http://t", api_key="k")
+
+    def test_llm_test_job_containers_and_gpu(self):
+        job = self._llm_job(gpu=True)
+        spec = job["spec"]["template"]["spec"]
+        names = [c["name"] for c in spec["containers"]]
+        self.assertEqual(names, ["engine", "probe"])
+        self.assertEqual([c["name"] for c in spec["initContainers"]], ["model-fetcher"])
+        engine = spec["containers"][0]
+        self.assertEqual(engine["image"], "reg/llama@sha256:" + "a" * 64)
+        self.assertEqual(engine["resources"]["limits"]["nvidia.com/gpu"], 1)
+        self.assertIn("99", engine["args"])
+        self.assertEqual(spec["runtimeClassName"], "nvidia")
+        self.assertEqual(spec["volumes"][1]["hostPath"]["path"], "/dev")
+        self.assertFalse(spec["automountServiceAccountToken"])
+
+    def test_llm_test_job_cpu_mode(self):
+        spec = self._llm_job(gpu=False, runtime_class="kata")["spec"]["template"]["spec"]
+        limits = spec["containers"][0]["resources"]["limits"]
+        self.assertNotIn("nvidia.com/gpu", limits)
+        self.assertIn("0", spec["containers"][0]["args"])
+        self.assertEqual(len(spec["volumes"]), 1)          # без /dev
+        self.assertEqual(spec["runtimeClassName"], "kata")
+
+    def test_llm_test_job_probe_payload(self):
+        spec = self._llm_job()["spec"]["template"]["spec"]
+        probe = spec["containers"][1]
+        env = {e["name"]: e["value"] for e in probe["env"]}
+        self.assertIn('"q1"', env["PROMPTS_JSON"])
+        self.assertEqual(env["BUNDLE_ID"], "b-test123")
+        self.assertEqual(env["MLSCAN_KEY"], "runtoken")
+        src = probe["command"][2]
+        self.assertIn("/llm/score", src)
+        fetch = spec["initContainers"][0]["command"][2]
+        self.assertIn("SHA_MISMATCH", fetch)               # проверка sha модели
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

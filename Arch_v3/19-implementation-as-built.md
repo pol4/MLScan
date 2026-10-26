@@ -113,6 +113,22 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
 `tests/ui/operator_browser_e2e.js` больше не содержит admin-ключа: он берётся из `MLSCAN_API_KEY`
 (в `run_ui_tests.sh` при `MLSCAN_E2E=1` — из Secret `mlscan-keys`).
 
+**N2: тест bundle запускается из интерфейса (реальный инференс).** `POST /bundles/<id>/test` собирает
+Job (`deploy/v3/llm/llm_env.py::make_llama_test_job`): init `model-fetcher` (модель по **внутреннему**
+presigned-URL из S3 + проверка sha256) → `engine` (образ движка строго по digest) → `probe` (прогон
+набора вопросов против OpenAI API движка и POST ответов в `/llm/score`). Набор вопросов берётся из БД
+(`llm_prompts`; если у bundle дефолтный `ps-v9` без кейсов — активный набор). Результат связан с bundle:
+`/llm/score` с `bundle_id` вычисляет вердикт (`_verdict_from_score`: критичные отказы → `Needs review`,
+иначе `Safe`/`Inconclusive`), сохраняет **вердикт bundle с подписанной аттестацией** и статус теста;
+`GET /bundles/<id>/test` отдаёт прогресс (фаза job + вердикт). Job аутентифицируется **одноразовым
+run-token** (не API-ключом): токен принимается только для своего bundle. Повторный запуск удаляет
+прежний Job (идемпотентность). Неуспешный init/движок → `status=failed` с ошибкой.
+Панель «Тест bundle» в разделе «Загрузки» (admin) запускает тест по bundle_id или по sha модели и
+показывает статус/вердикт/аттестацию. Проверка: `tests/e2e/bundle_test_e2e.sh` (auth run-token →
+запуск → ожидание вердикта → `/gate` = решение) и `tests/ui/bundle_test_ui_test.js`.
+Факт: реальный прогон на GPU (`llama.cpp:server-cuda`, gemma-3-270m Q8_0) → `verdict=Needs review`,
+`action=block`, аттестация `sha256:72a9f465…`, CI-gate `block`.
+
 **HF-токен per-tenant — обратимый (P6 KMS).** Токен больше не хэшируется: сохраняется в `hf_tokens`
 зашифрованным per-tenant ключом (`v3/security/kms.py`, мастер-ключ из Secret `mlscan-keys` →
 env `MLSCAN_TOKEN_KEY`) и **применяется** в `/hf/search` и в воркере загрузки (`_tenant_hf_token(tenant)`

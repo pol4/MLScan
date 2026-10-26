@@ -158,3 +158,17 @@ CREATE TABLE IF NOT EXISTS hf_tokens (tenant TEXT PRIMARY KEY, token_enc TEXT, u
 ALTER TABLE hf_downloads ADD COLUMN IF NOT EXISTS engine_image TEXT;
 ALTER TABLE hf_downloads ADD COLUMN IF NOT EXISTS bundle_id TEXT;
 ALTER TABLE hf_downloads ADD COLUMN IF NOT EXISTS model_sha256 TEXT;
+
+-- N2: запуски теста bundle (оркестрация инференса: job -> набор вопросов -> /llm/score -> вердикт)
+CREATE TABLE IF NOT EXISTS bundle_tests (
+  bundle_id TEXT PRIMARY KEY,
+  scan_id TEXT DEFAULT '',
+  job TEXT DEFAULT '',
+  namespace TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'created',
+  run_token TEXT DEFAULT '',
+  gpu BOOLEAN DEFAULT true,
+  error TEXT DEFAULT '',
+  created TIMESTAMPTZ DEFAULT now(),
+  updated TIMESTAMPTZ DEFAULT now()
+);
