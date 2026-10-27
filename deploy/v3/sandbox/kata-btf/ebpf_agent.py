@@ -44,6 +44,9 @@ DUMP_NR = int(os.environ.get("EBPF_DUMP_NR", "-1"))
 EXTRA = os.environ.get("EBPF_EXTRA", "1") == "1"   # хуки mmap/mprotect/module/openat (LLM-B-03/04/05)
 # honeypot-подсказки — те же, что в правиле LLM-B-03 (deploy/v3/llm/tetragon.py); прочие openat не шлём
 HONEYPOT_HINTS = ("/.aws/", "/.ssh/", "/.kube/", "/etc/shadow", "/etc/passwd")
+# TODO(B1+): BPF-side фильтр honeypot по префиксу пути требует корректного построителя меток
+# (текущая попытка не проходила верификатор: недостижимые инструкции / неверные смещения).
+# Пока фильтр выполняется в агенте, а кольцо из RING_SLOTS слотов + частое чтение (250 мс) снижают потери.
 KEY_SIZE = 4
 VALUE_SIZE = 96                      # {u64 count; u32 pid; u32 pad; u64 argptr; u64 rv; u8 buf[64]}
 
@@ -54,6 +57,9 @@ OP = {
     "jeq_imm": 0x15, "jne_imm": 0x55, "jgt_imm": 0x25, "call": 0x85, "exit": 0x95,
     "jsl_imm": 0xC5,   # BPF_JMP | BPF_JSLT | BPF_K
     "and_imm": 0x57,   # BPF_ALU64 | BPF_AND | BPF_K
+    "jle_imm": 0xB5,   # BPF_JMP | BPF_JLE | BPF_K
+    "jeq_reg": 0x1D,   # BPF_JMP | BPF_JEQ | BPF_X
+    "ja": 0x05,        # BPF_JMP | BPF_JA
 }
 # Номера syscall (x86_64)
 NR_EXECVE, NR_CONNECT, NR_OPENAT = 59, 42, 257
@@ -142,11 +148,27 @@ class Asm:
     def jeq_imm(self, dst, imm, off):
         self._i(OP["jeq_imm"], dst=dst, imm=imm, off=off)
 
+    def jgt_imm(self, dst, imm, off):
+        self._i(OP["jgt_imm"], dst=dst, imm=imm, off=off)
+
+    def jle_imm(self, dst, imm, off):
+        self._i(OP["jle_imm"], dst=dst, imm=imm, off=off)
+
     def jsl_imm(self, dst, imm, off):
         self._i(OP["jsl_imm"], dst=dst, imm=imm, off=off)
 
     def and_imm(self, dst, imm):
         self._i(OP["and_imm"], dst=dst, imm=imm)
+
+    def ld_imm64(self, dst, value):
+        self._i(OP["ld_imm64"], dst=dst, imm=value & 0xFFFFFFFF)   # src=0 -> обычная 64-битная константа
+        self._i(0, imm=(value >> 32) & 0xFFFFFFFF)
+
+    def jeq_reg(self, dst, src, off):
+        self._i(OP["jeq_reg"], dst=dst, src=src, off=off)
+
+    def ja(self, off):
+        self._i(OP["ja"], off=off)
 
     def call(self, helper):
         self._i(OP["call"], imm=helper)
@@ -272,13 +294,115 @@ def load_hook(nr: int, arg_off: int, map_fd: int, need_mask: int = 0, read_str: 
     return tp
 
 
+RING_SLOTS = 15      # число слотов путей; слот RING_SLOTS — курсор кольца
+CURSOR_KEY = RING_SLOTS
+
+
+def create_paths_map() -> int:
+    """Карта путей openat: RING_SLOTS слотов (56 байт пути) + слот-курсор (кольцо)."""
+    attr = MapCreate(map_type=BPF_MAP_TYPE_ARRAY, key_size=KEY_SIZE, value_size=72,
+                     max_entries=RING_SLOTS + 1)
+    fd, err = _bpf(attr, BPF_MAP_CREATE)
+    if fd < 0:
+        raise RuntimeError(f"BPF_MAP_CREATE(paths): errno={err}")
+    return fd
+
+
+def _load_and_attach(prog: bytes, label: str) -> int:
+    """Загрузить программу и привязать к raw-tracepoint sys_enter. Возвращает fd линка."""
+    buf = C.create_string_buffer(prog)
+    lic = C.create_string_buffer(b"GPL")
+    log = C.create_string_buffer(LOG_SIZE)
+    attr = ProgLoad(prog_type=BPF_PROG_TYPE_RAW_TRACEPOINT, insn_cnt=len(prog) // 8,
+                    insns=C.addressof(buf), license=C.addressof(lic), log_level=1, log_size=LOG_SIZE,
+                    log_buf=C.addressof(log))
+    fd, err = _bpf(attr, BPF_PROG_LOAD)
+    if fd < 0:
+        raise RuntimeError(f"BPF_PROG_LOAD {label}: errno={err} ...{log.value.decode()[-700:]}")
+    name = C.create_string_buffer(b"sys_enter")
+    attr2 = RawTpOpen(name=C.addressof(name), prog_fd=fd)
+    tp, err2 = _bpf(attr2, BPF_RAW_TRACEPOINT_OPEN)
+    if tp < 0:
+        raise RuntimeError(f"attach sys_enter ({label}): errno={err2}")
+    return tp
+
+
 def create_map() -> int:
+    """Основная карта событий (по слоту на syscall)."""
     attr = MapCreate(map_type=BPF_MAP_TYPE_ARRAY, key_size=KEY_SIZE, value_size=VALUE_SIZE,
                      max_entries=8)
     fd, err = _bpf(attr, BPF_MAP_CREATE)
     if fd < 0:
         raise RuntimeError(f"BPF_MAP_CREATE: errno={err}")
     return fd
+
+
+def load_openat_hook(paths_fd: int, skip_pid: int = 0) -> int:
+    """Хук openat: путь (user-read) кладётся в кольцо из 7 слотов -> honeypot не теряется.
+
+    Слот 7 карты хранит курсор кольца (0..6); переполнение — перезапись по кругу.
+    """
+    a = Asm()
+    a.ldx_dw(6, 1, 0)                                     # r6 = pt_regs
+    a.mov_reg(1, 10); a.add_imm(1, -72); a.mov_imm(2, 8)
+    a.mov_reg(3, 6); a.add_imm(3, OFF_ORIG_AX)
+    a.call(113)
+    a.ldx_dw(7, 10, -72)
+    j_nr = len(a.ins); a.jne_imm(7, NR_OPENAT, 0)          # не openat -> выход
+    a.mov_reg(1, 10); a.add_imm(1, -80); a.mov_imm(2, 8)   # значение si (указатель на путь)
+    a.mov_reg(3, 6); a.add_imm(3, OFF_ARG1)
+    a.call(113)
+    a.ldx_dw(3, 10, -80)
+    a.mov_reg(1, 10); a.add_imm(1, -64); a.mov_imm(2, 64)
+    a.call(45)                                             # bpf_probe_read_user_str -> r10-64
+    if skip_pid:                                           # не пишем открытия самого агента (шум)
+        a.call(14)                                          # r0 = pid_tgid
+        a.mov_reg(1, 0); a.and_imm(1, 0xFFFFFFFF)           # низкие 32 бита = pid
+        j_self = len(a.ins); a.jeq_imm(1, skip_pid & 0xFFFFFFFF, 0)   # наш pid -> выход
+    if skip_pid:                                           # не пишем открытия самого агента (шум)
+        a.call(14)                                          # r0 = pid_tgid
+        a.mov_reg(1, 0); a.and_imm(1, 0xFFFFFFFF)           # низкие 32 бита = pid
+        j_self = len(a.ins); a.jeq_imm(1, skip_pid & 0xFFFFFFFF, 0)   # наш pid -> выход
+    body_pos = len(a.ins)                                  # начало тела кольца
+    a.mov_reg(1, 10); a.add_imm(1, -84); a.mov_imm(2, CURSOR_KEY); a.stx_w(1, 2, 0)
+    a.ld_map(1, paths_fd); a.mov_reg(2, 10); a.add_imm(2, -84)
+    a.call(1)
+    j_c0 = len(a.ins); a.jeq_imm(0, 0, 0)
+    a.mov_reg(8, 0)
+    a.ldx_dw(9, 8, 0)                                      # r9 = курсор
+    a.jle_imm(9, RING_SLOTS - 1, 1)                        # курсор <= MAX -> оставляем
+    a.mov_imm(9, 0)                                        # курсор > MAX -> сброс в 0
+    a.mov_reg(2, 9); a.add_imm(2, 1); a.stx_dw(8, 2, 0)    # сохраняем следующий индекс
+    a.mov_reg(1, 10); a.add_imm(1, -84); a.stx_w(1, 9, 0)  # key = текущий индекс
+    a.ld_map(1, paths_fd); a.mov_reg(2, 10); a.add_imm(2, -84)
+    a.call(1)
+    j_c1 = len(a.ins); a.jeq_imm(0, 0, 0)
+    a.mov_reg(8, 0)
+    a.call(14)                                             # pid
+    a.stx_w(8, 0, 8)
+    for i in range(7):                                     # 56 байт пути -> value+16
+        a.ldx_dw(1, 10, -64 + i * 8)
+        a.stx_dw(8, 1, 16 + i * 8)
+    pos_exit = len(a.ins)
+    a.mov_imm(0, 0); a.exit()
+    if j_self is not None:
+        a.ins[j_self] = struct.pack("<BBhI", OP["jeq_imm"], 1, pos_exit - j_self - 1,
+                                    skip_pid & 0xFFFFFFFF)
+    a.ins[j_nr] = struct.pack("<BBhI", OP["jne_imm"], 7, pos_exit - j_nr - 1, NR_OPENAT)
+    a.ins[j_c0] = struct.pack("<BBhI", OP["jeq_imm"], 0, pos_exit - j_c0 - 1, 0)
+    a.ins[j_c1] = struct.pack("<BBhI", OP["jeq_imm"], 0, pos_exit - j_c1 - 1, 0)
+    return _load_and_attach(a.bytes(), f"openat({NR_OPENAT})")
+
+
+def read_path_entry(paths_fd: int, idx: int) -> str:
+    """Путь из кольца (слот idx): pid@8, путь@16..72."""
+    key = C.c_uint32(idx)
+    val = C.create_string_buffer(72)
+    attr = MapElem(map_fd=paths_fd, key=C.addressof(key), value=C.addressof(val))
+    ret, _err = _bpf(attr, BPF_MAP_LOOKUP_ELEM)
+    if ret != 0:
+        return ""
+    return val.raw[16:72].split(b"\x00", 1)[0].decode("utf-8", "replace")
 
 
 def read_map(map_fd: int, idx: int) -> dict:
@@ -405,6 +529,7 @@ def main() -> int:
         return 1
 
     m = create_map()
+    mp = create_paths_map() if EXTRA else 0
     load_hook(NR_EXECVE, OFF_ARG0, m)        # слот 0 -> process_exec (бинарник из comm)
     load_hook(NR_CONNECT, OFF_ARG1, m)       # слот 1 -> network (адрес из /proc/net/tcp)
     if EXTRA:                                # LLM-B-04 (exec-память) и LLM-B-05 (загрузка модуля)
@@ -412,13 +537,14 @@ def main() -> int:
         load_hook(NR_MPROTECT, OFF_ARG_MPROTECT_PROT, m, need_mask=0x4)  # EXEC
         load_hook(NR_INIT_MODULE, OFF_ARG0, m)          # слот 4 -> module
         load_hook(NR_FINIT_MODULE, OFF_ARG1, m)         # слот 5 -> module
-        load_hook(NR_OPENAT, OFF_ARG1, m, read_str=True)  # слот 6 -> file (путь через user-read)
+        load_openat_hook(mp, skip_pid=os.getpid())      # пути openat -> кольцо (LLM-B-03)
     print(f"[ebpf-agent] bpf активен (BTF {os.path.getsize('/sys/kernel/btf/vmlinux')} байт), "
           f"хуки: execve+connect (2 слота карты)", flush=True)
 
     if args.trigger_shell:      # самопроверка сенсора (в проде это делает сам движок/агент модели)
         subprocess.run(["/bin/sh", "-c", "true"], check=False)
     PROT_EXEC = 0x4
+    net_deadline = 0.0                     # окно повторных чтений /proc после connect (LLM-B-02)
     events: list[dict] = []
     pending: list[dict] = []
     t_end = time.time() + max(args.duration, 5)
@@ -426,6 +552,7 @@ def main() -> int:
     seen = set()
     def drain() -> None:
         """Считать карту и добавить новые события (вызывается в цикле и один раз после него)."""
+        nonlocal net_deadline
         ex, cn = read_map(m, 0), read_map(m, 1)
         if DUMP_NR >= 0 and ex.get("count"):
             print("[ebpf-agent] pt_regs[80..144] hex (слот %d):" % SLOT.get(DUMP_NR, 0),
@@ -442,17 +569,19 @@ def main() -> int:
                       "nonce": args.nonce, "ts": time.time()}
                 events.append(ev); pending.append(ev)
         if EXTRA:
-            rf = read_map(m, 6)
-            if rf.get("count"):
-                path = (rf.get("buf") or "").strip()
+            for i in range(RING_SLOTS):             # кольцо путей openat (LLM-B-03)
+                path = read_path_entry(mp, i).strip()
+                if not path or not any(h in path for h in HONEYPOT_HINTS):
+                    continue
                 key = ("file", path)
-                if path and any(h in path for h in HONEYPOT_HINTS) and key not in seen:
-                    seen.add(key)
-                    ev = {"type": "file", "phase": args.phase, "probe_id": "ebpf-agent",
-                          "process": {"binary": "", "args": [], "pid": rf.get("pid")},
-                          "file": {"path": path}, "details": f"openat path={path} pid={rf.get('pid')}",
-                          "nonce": args.nonce, "ts": time.time()}
-                    events.append(ev); pending.append(ev)
+                if key in seen:
+                    continue
+                seen.add(key)
+                ev = {"type": "file", "phase": args.phase, "probe_id": "ebpf-agent",
+                      "process": {"binary": "", "args": [], "pid": 0},
+                      "file": {"path": path}, "details": f"openat path={path}",
+                      "nonce": args.nonce, "ts": time.time()}
+                events.append(ev); pending.append(ev)
             for slot, desc in ((2, "mmap"), (3, "mprotect"), (4, "init_module"), (5, "finit_module")):
                 r = read_map(m, slot)
                 if not r.get("count"):
@@ -484,20 +613,23 @@ def main() -> int:
                           "nonce": args.nonce, "ts": time.time()}
                 events.append(ev); pending.append(ev)
         if cn.get("count"):
+            net_deadline = time.time() + 8.0   # соединение может быть ещё в SYN_SENT -> читаем /proc ещё раз
+        if net_deadline and time.time() < net_deadline:
             peers = external_peers()          # LLM-B-02: внешние адреса из kernel-состояния
-            ip = peers[0]["ip"] if peers else ""
-            port = peers[0]["port"] if peers else 0
-            key = ("network", ip)
-            if key not in seen:
-                seen.add(key)
-                ev = {"type": "network", "phase": args.phase, "probe_id": "ebpf-agent",
-                      "dst": {"ip": ip, "port": port} if ip else {},
-                      "details": f"comm={cn.get('buf', '').strip()} peers={[p_['ip'] for p_ in peers]}",
-                      "nonce": args.nonce, "ts": time.time()}
-                events.append(ev); pending.append(ev)
+            if peers:
+                ip = peers[0]["ip"]; port = peers[0]["port"]
+                key = ("network", ip)
+                if key not in seen:
+                    seen.add(key)
+                    ev = {"type": "network", "phase": args.phase, "probe_id": "ebpf-agent",
+                          "dst": {"ip": ip, "port": port},
+                          "details": f"comm={cn.get('buf', '').strip()} peers={[p_['ip'] for p_ in peers]}",
+                          "nonce": args.nonce, "ts": time.time()}
+                    events.append(ev); pending.append(ev)
+                net_deadline = 0.0
 
     while time.time() < t_end:
-        time.sleep(1.0)
+        time.sleep(0.25)          # кольцо путей быстро «проворачивается» -> читаем чаще
         drain()
         if args.post and pending and (last_post == 0.0 or (time.time() - last_post) >= 3.0):
             _post_events(args, pending); pending = []; last_post = time.time()
@@ -506,8 +638,12 @@ def main() -> int:
             break
     drain()                                    # финальный дренаж (важно на очень коротких сканах)
 
+    if os.environ.get("EBPF_DUMP_RINGS") == "1" and EXTRA:
+        print("[ebpf-agent] ring cursor:", read_path_entry(mp, CURSOR_KEY), flush=True)
+        for i in range(RING_SLOTS):
+            print(f"[ebpf-agent] ring[{i}]: {read_path_entry(mp, i)!r}", flush=True)
     if os.environ.get("EBPF_DUMP_SLOTS") == "1":
-        for i in range(6):
+        for i in range(8):
             r = read_map(m, i)
             print(f"[ebpf-agent] slot {i}: count={r.get('count')} pid={r.get('pid')} argval=0x{int(r.get('argptr') or 0):x}",
                   flush=True)
