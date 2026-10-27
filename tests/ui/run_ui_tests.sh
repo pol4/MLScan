@@ -46,8 +46,21 @@ if [ "${MLSCAN_E2E:-0}" = "1" ] && [ -e "$HERE/operator_browser_e2e.js" ]; then
     [ -n "${MLSCAN_API_KEY:-}" ] && echo "[ui] MLSCAN_API_KEY получен из Secret mlscan-keys"
   fi
   export MLSCAN_API_KEY="${MLSCAN_API_KEY:-}"
+  # свой port-forward к сервису тестирования (не зависим от внешнего и от рестартов подов)
+  PF_PID=""
+  if [ -z "${MLSCAN_TESTING_URL:-}" ] || [ "${MLSCAN_TESTING_URL#http://localhost:18080}" != "$MLSCAN_TESTING_URL" ]; then
+    export MLSCAN_TESTING_URL="${MLSCAN_TESTING_URL:-http://localhost:18080}"
+    kubectl -n mlscan-testing port-forward svc/mlscan-testing 18080:8080 >/dev/null 2>&1 &
+    PF_PID=$!
+    for _ in $(seq 1 30); do
+      curl -s -m 2 --noproxy '*' -o /dev/null "$MLSCAN_TESTING_URL/healthz" && break
+      sleep 1
+    done
+    echo "[ui] port-forward к сервису тестирования готов (pid $PF_PID)"
+  fi
   echo "[ui] === operator_browser_e2e.js (реальные модели) ==="
   node "$HERE/operator_browser_e2e.js" || rc=1
+  [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null
 fi
 # cleanup: завершённые/висящие job'ы теста bundle держат GPU — убираем после прогона UI-тестов
 if command -v kubectl >/dev/null 2>&1; then
