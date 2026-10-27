@@ -113,6 +113,23 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
 `tests/ui/operator_browser_e2e.js` больше не содержит admin-ключа: он берётся из `MLSCAN_API_KEY`
 (в `run_ui_tests.sh` при `MLSCAN_E2E=1` — из Secret `mlscan-keys`).
 
+**B1 (частично): BTF-ядро Kata и in-guest eBPF — разблокировано без правок containerd.** Ранее B1
+считался требующим host-level правок (containerd + kata config + рестарт демона). Фактически:
+- Kata 3.32 и конфиг `/opt/kata/share/defaults/kata-containers/configuration.toml` (симлинк на `…-qemu.toml`)
+  читаются при создании каждой микро-ВМ, поэтому **достаточно переключить `kernel` на BTF-вариант**
+  (`vmlinux-debug.container`, `CONFIG_DEBUG_INFO_BTF=y`, `.BTF` в ELF) — без рестарта containerd/kata;
+  скрипт `deploy/v3/sandbox/kata-btf/install.sh` (идемпотентно, бэкап в `/var/backups/mlscan/`, откат
+  документирован). Все kata-нагрузки стенда — только `mlscan-sandbox`.
+- Per-pod аннотация `io.katacontainers.config.hypervisor.kernel` игнорируется (проверено: qemu всё равно
+  берёт стандартное ядро), поэтому выбран путь «ядро в конфиге», а не отдельный runtime handler с
+  `ConfigPath` (он потребовал бы правки `containerd-template.toml` и рестарта демона).
+- **Проверено в госте**: `/sys/kernel/btf/vmlinux` доступен (5.5 МБ); `BPF_PROG_LOAD` и attach
+  raw-tracepoint работают — `deploy/v3/sandbox/kata-btf/ebpf_smoke.py` (stdlib+ctypes) печатает
+  «eBPF в госте РАБОТАЕТ».
+- Tetragon как агент упирается в отсутствие `bpffs` в госте (pinning карт в `/sys/fs/bpf`); принято
+  решение использовать **собственный минимальный in-guest агент** (развитие smoke-скрипта), который
+  пишет события в общий том пода → probe-runner → `/llm/events` → `LLM-B-*`. Это следующий шаг B1.
+
 **N6: JWT для API/CI и rate-limit на входе.** В `v2/auth/authz.py` добавлены:
 - **JWT (HS256, stdlib)** с обязательной проверкой `alg=HS256`, подписи, `exp`/`nbf`, `aud`, `iss`
   (ключ — `MLSCAN_JWT_KEY`, общий для сервисов; JWT-ключ берётся из Secret `mlscan-keys` →

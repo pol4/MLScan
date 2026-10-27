@@ -452,6 +452,16 @@ containerd-runtime-хендлеров; разные RuntimeClass → разны�
   (`runtime_type=io.containerd.kata.v2`, `BinaryName=kata-runtime`).
 - В кластере есть только RuntimeClass `kata` (handler `kata`).
 
+> **Статус B1 (факт, 2026-10-27):** реализовано проще, чем в плане ниже, — **без правки
+> `containerd-template.toml` и без рестарта демонов**: достаточно переключить `kernel` в активном
+> конфиге Kata на BTF-вариант (`deploy/v3/sandbox/kata-btf/install.sh`; бэкап/откат документированы) —
+> конфиг читается при создании каждой микро-ВМ, действует только `mlscan-sandbox`. Проверено в госте:
+> `/sys/kernel/btf/vmlinux` есть (5.5 МБ), `BPF_PROG_LOAD` + attach raw-tracepoint работают
+> (`deploy/v3/sandbox/kata-btf/ebpf_smoke.py` → «eBPF в госте РАБОТАЕТ»). Per-pod аннотация
+> `io.katacontainers.config.hypervisor.kernel` в этой сборке **игнорируется** — отклонена. Tetragon как
+> агент упирается в отсутствие `bpffs` в госте; принят путь **собственного минимального in-guest агента**
+> (развитие smoke-скрипта) → события в общий том → probe-runner → `/llm/events` → `LLM-B-*`.
+
 **Дизайн (два класса сосуществуют).**
 1. Новый файл конфигурации Kata `configuration-qemu-btf.toml` = копия `configuration-qemu.toml` с
    `kernel = "/opt/kata/share/kata-containers/vmlinuz-debug.container"` (BTF=1; при необходимости — собственный

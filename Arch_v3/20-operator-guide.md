@@ -120,6 +120,17 @@
 - Ответ: `decision ∈ {allow, block, quarantine}` + `bundle_id` + аттестация. Пайплайн
   блокируется на `block` и помечается на `quarantine`.
 
+### BTF-ядро Kata для in-guest eBPF (B1)
+
+```bash
+MLSCAN_NODE_SSH=user@node bash deploy/v3/sandbox/kata-btf/install.sh
+```
+
+Переключает ядро Kata-песочницы на BTF-вариант (`vmlinux-debug.container`) — **без рестарта**
+containerd/kata; бэкап конфига в `/var/backups/mlscan/`, откат оттуда же. Проверка в госте: Job с
+`runtimeClassName: kata` и запуском `deploy/v3/sandbox/kata-btf/ebpf_smoke.py`
+(ожидается «eBPF в госте РАБОТАЕТ»; в выводе — размер BTF и успешный attach raw-tracepoint).
+
 ### Токены для CI и ограничение частоты (N6)
 
 ```bash
