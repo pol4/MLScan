@@ -178,8 +178,12 @@ def _write_bundle_verdict(bundle_id: str, verdict: str, *, safety_fail: int = 0,
                 "ON CONFLICT (bundle_id) DO UPDATE SET verdict=EXCLUDED.verdict, action=EXCLUDED.action, "
                 "coverage=EXCLUDED.coverage, metrics=EXCLUDED.metrics, statement=EXCLUDED.statement, "
                 "attestation_digest=EXCLUDED.attestation_digest, signature=EXCLUDED.signature")
+    chain = _chain_append(bundle_id, verdict, action,
+                          json.dumps({"attestation_digest": digest, "action": action, "verdict": verdict},
+                                     ensure_ascii=False, sort_keys=True))
     return {"bundle_id": bundle_id, "verdict": verdict, "action": action, "reason": reason,
-            "attestation_digest": digest, "signature": sig, "statement": st}
+            "attestation_digest": digest, "signature": sig, "statement": st,
+            "chain_digest": chain}
 
 
 def _image_sig(digest: str, ref: str = "") -> str:
@@ -202,6 +206,42 @@ def _engine_signed(engine_image: str) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return bool(rows and (rows[0][0] or "").strip())
+
+
+def _chain_digest(prev: str, payload: str) -> str:
+    """B5-lite: звено hash-цепочки вердиктов (sha256(prev || payload))."""
+    return hashlib.sha256((prev + "|" + payload).encode()).hexdigest()
+
+
+def _chain_append(bundle_id: str, verdict: str, action: str, payload: str) -> str:
+    """Добавить вердикт в append-only цепочку; возвращает digest звена."""
+    if not DB_ENABLED:
+        return ""
+    try:
+        rows = db_query("SELECT chain_digest FROM bundle_verdict_chain ORDER BY id DESC LIMIT 1")
+        prev = (rows[0][0] if rows else "")
+        dg = _chain_digest(prev, payload)
+        db_exec("INSERT INTO bundle_verdict_chain(bundle_id,verdict,action,payload,prev_digest,chain_digest) "
+                "VALUES (" + _lit(bundle_id) + "," + _lit(verdict) + "," + _lit(action) + ","
+                + _lit(payload) + "," + _lit(prev) + "," + _lit(dg) + ")")
+        return dg
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] verdict chain: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return ""
+
+
+def _chain_verify() -> dict:
+    """Проверка целостности цепочки вердиктов: пересчёт всех звеньев."""
+    if not DB_ENABLED:
+        return {"ok": False, "reason": "db disabled"}
+    rows = db_query("SELECT id,prev_digest,chain_digest,payload FROM bundle_verdict_chain ORDER BY id") or []
+    prev = ""
+    for i, r in enumerate(rows):
+        exp = _chain_digest(prev, r[3] or "")
+        if r[1] != prev or r[2] != exp:
+            return {"ok": False, "count": len(rows), "broken_at": r[0], "reason": "цепочка нарушена"}
+        prev = r[2]
+    return {"ok": True, "count": len(rows), "head": prev}
 
 
 def _bump_sensor_events(body: dict) -> None:
@@ -1642,6 +1682,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._images_get(u.path.split("/", 2)[2])
         if u.path == "/gate":
             return self._gate(q)
+        if u.path == "/v3/evidence/verify":
+            return self._evidence_verify()
         if u.path == "/gate/decisions":
             return self._gate_decisions_get(q)
         if u.path == "/rate-limit":
@@ -2503,6 +2545,10 @@ class Handler(BaseHTTPRequestHandler):
         if rps < 0 or burst < 1:
             return self._json(400, {"error": "rps>=0, burst>=1"})
         return self._json(200, authz.set_rate_limit(rps, burst))
+
+    def _evidence_verify(self) -> None:
+        """B5-lite: проверка неизменяемой цепочки вердиктов bundle (append-only hash-chain)."""
+        return self._json(200, _chain_verify())
 
     def _gate_decisions_get(self, q: dict) -> None:
         """N3: журнал решений gate (append-only) — для аудита и разбора инцидентов."""

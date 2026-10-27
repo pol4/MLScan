@@ -89,8 +89,21 @@ print("  [OK]   воспроизводимость: тот же attestation_dige
 st6, got = api("GET", f"/bundles/{bid}/verdict")
 assert st6 == 200 and got["action"] == "block", (st6, got)
 print("  [OK]   чтение вердикта bundle")
+
+# B5-lite: неизменяемая цепочка вердиктов — проверка целостности
+st8, ch = api("GET", "/v3/evidence/verify")
+assert st8 == 200 and ch.get("ok") and ch.get("count", 0) >= 1, (st8, ch)
+print("  [OK]   цепочка вердиктов: ok, звеньев=%d, head=%s…" % (ch["count"], str(ch.get("head"))[:16]))
 PY
 RC=$?; [ "$RC" = "0" ] || { echo "[FAIL] gate/attest e2e"; exit 1; }
+# append-only: изменение звена цепочки вердиктов должно отклоняться триггером (B5-lite)
+OUTB="$(kubectl -n mlscan-data exec postgres-0 -- psql -U mlscan -d mlscan -tAc \
+        "UPDATE bundle_verdict_chain SET verdict='Safe' WHERE id=(SELECT max(id) FROM bundle_verdict_chain)" 2>&1 || true)"
+case "$OUTB" in
+  *append-only*) echo "  [OK]   цепочка вердиктов append-only (UPDATE отклонён триггером)" ;;
+  *) echo "[FAIL] цепочка вердиктов допускает изменение: $OUTB"; exit 1 ;;
+esac
+
 # append-only: изменение решения в журнале должно отклоняться триггером
 # NB: pipefail делает статус пайплайна ненулевым из-за kubectl — смотрим сам вывод
 OUT="$(kubectl -n mlscan-data exec postgres-0 -- psql -U mlscan -d mlscan -tAc \

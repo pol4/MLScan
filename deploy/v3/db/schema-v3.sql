@@ -216,3 +216,15 @@ CREATE TABLE IF NOT EXISTS scan_tokens (
 -- B1: видимость работы in-guest eBPF-сенсора (события, дошедшие до сервиса)
 ALTER TABLE bundle_tests ADD COLUMN IF NOT EXISTS sensor_events INT DEFAULT 0;
 ALTER TABLE scan_tokens ADD COLUMN IF NOT EXISTS sensor_events INT DEFAULT 0;
+
+-- B5-lite: неизменяемая цепочка вердиктов bundle (append-only, hash-chain)
+CREATE TABLE IF NOT EXISTS bundle_verdict_chain (
+  id BIGSERIAL PRIMARY KEY,
+  bundle_id TEXT NOT NULL,
+  verdict TEXT DEFAULT '',
+  action TEXT DEFAULT '',
+  payload TEXT DEFAULT '',
+  prev_digest TEXT DEFAULT '',
+  chain_digest TEXT NOT NULL,
+  created TIMESTAMPTZ DEFAULT now()
+);

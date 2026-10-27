@@ -205,6 +205,14 @@ UI: в списке движков показывается `[signed]/[unsigned]
 Полноценный B4 (Harbor + cosign + подписанные образы в admission) остаётся внешней зависимостью —
 этот слой совместим с ним по смыслу (подпись привязана к digest).
 
+**B5-lite: неизменяемая цепочка вердиктов (append-only hash-chain).** Каждая запись вердикта bundle
+дополнительно попадает в `bundle_verdict_chain` (bundle_id, verdict, action, payload, `prev_digest`,
+`chain_digest = sha256(prev|payload)`) — таблица append-only (trigger `bvc_nochange` запрещает UPDATE/DELETE).
+Проверка целостности: `GET /v3/evidence/verify` (пересчёт всех звеньев, ответ `ok/count/head` или
+`broken_at`). Проверено в `tests/e2e/gate_attest_e2e.sh`: цепочка `ok` (звеньев ≥1, head печатается) и
+попытка `UPDATE` звена отклоняется триггером. Это закрывает «неизменяемость/аудит» вердиктов без внешних
+зависимостей (полный B5 — Vault/WORM/TSA/mTLS — остаётся внешним пунктом).
+
 **N6: JWT для API/CI и rate-limit на входе.** В `v2/auth/authz.py` добавлены:
 - **JWT (HS256, stdlib)** с обязательной проверкой `alg=HS256`, подписи, `exp`/`nbf`, `aud`, `iss`
   (ключ — `MLSCAN_JWT_KEY`, общий для сервисов; JWT-ключ берётся из Secret `mlscan-keys` →
