@@ -1458,6 +1458,31 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _rate_limited(self) -> bool:
+        """N6: rate-limit per subject/IP (429 + Retry-After). /healthz всегда доступен."""
+        if authz is None:
+            return False
+        u = urllib.parse.urlparse(self.path)
+        if u.path in ("/healthz", "/rate-limit"):     # health и управление лимитом не ограничиваем
+            return False
+        try:
+            key_ent = getattr(self, "_subject", "") or authz.rate_limit_key(
+                self.headers, self.client_address[0] if self.client_address else "")
+            ok, retry = authz.rate_limit(key_ent)
+        except Exception:  # noqa: BLE001
+            return False
+        if ok:
+            return False
+        self.send_response(429)
+        self.send_header("Retry-After", str(max(1, int(retry + 0.999))))
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        body = json.dumps({"error": "rate limit exceeded", "retry_after": round(retry, 2)},
+                          ensure_ascii=False).encode()
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
@@ -1471,6 +1496,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "actual_digest": INTEGRITY_DIGEST,
                                     "sandbox_image_pinned": "@sha256:" in (SANDBOX_IMAGE or "")})
         if self._require() is None:
+            return
+        if self._rate_limited():
             return
         lang = self._lang(q)
         if u.path == "/scans":
@@ -1511,6 +1538,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._gate(q)
         if u.path == "/gate/decisions":
             return self._gate_decisions_get(q)
+        if u.path == "/rate-limit":
+            return self._rate_limit_get()
         if u.path == "/hf/quota":
             return self._hf_quota_get()
         if u.path == "/hf/egress":
@@ -2308,6 +2337,52 @@ class Handler(BaseHTTPRequestHandler):
         keys = ("id", "tenant", "repo", "file", "host", "bytes", "status", "error", "created")
         return self._json(200, {"count": len(rows), "entries": [dict(zip(keys, r)) for r in rows]})
 
+    def _auth_token_issue(self) -> None:
+        """N6: выдать короткоживущий JWT для CI/API (admin). Роли — из запроса (подмножество своих)."""
+        if authz is None:
+            return self._json(503, {"error": "auth module unavailable"})
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        subject = (body.get("subject") or "ci").strip()
+        roles = body.get("roles") or ["ci"]
+        if not isinstance(roles, list):
+            return self._json(400, {"error": "roles должен быть списком"})
+        ttl = int(body.get("ttl") or 3600)
+        if ttl < 1 or ttl > 7 * 24 * 3600:
+            return self._json(400, {"error": "ttl вне диапазона 1..604800"})
+        tok = authz.make_jwt(subject, roles, ttl=ttl)
+        if not tok:
+            return self._json(503, {"error": "JWT-ключ не сконфигурирован (MLSCAN_JWT_KEY/SESSION_SECRET)"})
+        return self._json(201, {"token": tok, "type": "Bearer", "subject": subject, "roles": roles,
+                                "expires_in": ttl, "aud": authz.JWT_AUD, "iss": authz.JWT_ISS})
+
+    def _rate_limit_get(self) -> None:
+        if authz is None:
+            return self._json(503, {"error": "auth module unavailable"})
+        return self._json(200, authz.rate_limit_state())
+
+    def _rate_limit_set(self) -> None:
+        """N6: изменить rate-limit на лету (admin): rps=0 — выключить."""
+        if authz is None:
+            return self._json(503, {"error": "auth module unavailable"})
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        rps = float(body.get("rps", 0) or 0)
+        burst = int(body.get("burst", 1) or 1)
+        if rps < 0 or burst < 1:
+            return self._json(400, {"error": "rps>=0, burst>=1"})
+        return self._json(200, authz.set_rate_limit(rps, burst))
+
     def _gate_decisions_get(self, q: dict) -> None:
         """N3: журнал решений gate (append-only) — для аудита и разбора инцидентов."""
         if not DB_ENABLED:
@@ -2897,6 +2972,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._llm_score(run_token=tok)
         if self._require() is None:
             return
+        if self._rate_limited():
+            return
         if u.path == "/uploads/initiate":
             return self._uploads_initiate()
         if u.path == "/scans/complete":
@@ -2911,6 +2988,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._bundle_verdict_set(u.path.split("/", 3)[2])
         if u.path == "/hf/token":
             return self._hf_token_set()
+        if u.path == "/auth/token":
+            return self._auth_token_issue()
+        if u.path == "/rate-limit":
+            return self._rate_limit_set()
         if u.path == "/hf/quota":
             return self._hf_quota_set()
         if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):

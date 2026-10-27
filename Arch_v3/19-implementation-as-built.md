@@ -113,6 +113,26 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
 `tests/ui/operator_browser_e2e.js` больше не содержит admin-ключа: он берётся из `MLSCAN_API_KEY`
 (в `run_ui_tests.sh` при `MLSCAN_E2E=1` — из Secret `mlscan-keys`).
 
+**N6: JWT для API/CI и rate-limit на входе.** В `v2/auth/authz.py` добавлены:
+- **JWT (HS256, stdlib)** с обязательной проверкой `alg=HS256`, подписи, `exp`/`nbf`, `aud`, `iss`
+  (ключ — `MLSCAN_JWT_KEY`, общий для сервисов; JWT-ключ берётся из Secret `mlscan-keys` →
+  `MLSCAN_EVIDENCE_KEY`); `authenticate()` принимает JWT наряду с API-ключом. Выдача токенов —
+  `POST /auth/token` (только admin: `subject`, `roles`, `ttl` 1..604800; токен короткоживущий,
+  подпись HS256; повреждённый/чужой → 401). Это закрывает «machine-to-machine» доступ без раздачи
+  долгоживущих API-ключей.
+- **Rate-limit (token bucket)** per subject/IP: `RATE_LIMIT_RPS`/`RATE_LIMIT_BURST` (тестирование
+  50/100, аналитика 30/60), 429 + `Retry-After`; `/healthz` и управление лимитом не ограничиваются;
+  для UI ключ лимита — пользователь сессии (cookie), а не общий IP. Управление на лету:
+  `GET /rate-limit`, `POST /rate-limit {rps,burst}` (admin).
+Проверка: `tests/e2e/auth_jwt_ratelimit_e2e.sh` (выдача/использование JWT, отказ при подделке,
+403 для не-admin, 429 после burst с `Retry-After`, исключение `/healthz`, возврат лимита) и
+`tests/v3/test_authz.py` (подпись/exp/aud/iss/alg=none/чужой ключ; burst/refill/переключение лимита).
+**Реальные DNS-записи** для ingress остаются внешней зависимостью (нужна зона/DNS-провайдер или
+ExternalDNS) — в репозитории зафиксировано как инфраструктурный пункт; на стенде используются
+`*.mlscan.local` (hosts) и NodePort/TLS.
+Дополнительно: `deploy/stage2/sync-code.sh` — синхронизация кода сервиса (configmap'ы + digest
+целостности + пиннинг `SANDBOX_IMAGE` + rollout/healthz) без применения прочих манифестов.
+
 **N5: тесты устойчивости и режим-агностик UI-тестов.** Пределы загрузки HF вынесены в каноническую
 функцию `ingest/hf.py::check_limits(size, done, max_file, max_total)` (неизвестный/отрицательный размер
 → отказ; `size > max_file`; `done+size > max_total`; ровно лимит — разрешено) — воркер вызывает её,

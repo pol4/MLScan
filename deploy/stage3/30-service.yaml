@@ -32,6 +32,11 @@ spec:
         - {name: POLICY_PATH, value: /etc/mlscan/policy.json}
         - {name: PORT, value: "8080"}
         - {name: POLL_INTERVAL, value: "3600"}
+        # N6: rate-limit (UI/API) + общий ключ JWT (токены, выданные сервисом тестирования)
+        - {name: RATE_LIMIT_RPS, value: "30"}
+        - {name: RATE_LIMIT_BURST, value: "60"}
+        - name: MLSCAN_JWT_KEY
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_EVIDENCE_KEY}}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: MLSCAN_LANG, value: "ru"}
         - {name: PYTHONUTF8, value: "1"}

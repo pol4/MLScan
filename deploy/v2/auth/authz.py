@@ -11,11 +11,14 @@
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import threading
 import json
 import os
 import sys
+import time
 import uuid
 
 _Pg = None
@@ -156,6 +159,9 @@ def authenticate(headers):
         return None
     ent = KEYS.get(key)
     if not ent:
+        # N6: JWT (HS256) — короткоживущий токен CI/API (проверяется строго: alg/exp/aud/iss)
+        if key.count(".") == 2:
+            return verify_jwt(key)
         return None
     # Срок жизни API-ключа (docs/14, P1-4): expires_at — ISO-8601 или unix-время.
     # Истёкший или нечитаемый срок = ключ недействителен (fail-closed).
@@ -229,3 +235,138 @@ def audit(subject: str, action: str, object_type: str, object_id: str,
         pass
     finally:
         c.close()
+
+# ---------------------------------------------------------------------------
+# N6: JWT (HS256) для API/CI — короткоживущие токены с exp/aud/iss, без внешнего IdP.
+# Ключ: MLSCAN_JWT_KEY (или MLSCAN_SESSION_SECRET). Проверка строгая: только HS256.
+# ---------------------------------------------------------------------------
+JWT_KEY = os.environ.get("MLSCAN_JWT_KEY", "") or SESSION_SECRET
+JWT_ISS = os.environ.get("MLSCAN_JWT_ISS", "mlscan")
+JWT_AUD = os.environ.get("MLSCAN_JWT_AUD", "mlscan-api")
+
+
+def _b64u_enc(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _b64u_dec(txt: str) -> bytes:
+    pad = "=" * (-len(txt) % 4)
+    return base64.urlsafe_b64decode(txt + pad)
+
+
+def make_jwt(subject: str, roles, ttl: int = 3600, aud: str = "", iss: str = "", key: str = "") -> str | None:
+    """Собрать HS256-JWT. None, если ключ не сконфигурирован (fail-closed)."""
+    k = (key or JWT_KEY).encode()
+    if not k:
+        return None
+    now = int(time.time())
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {"sub": subject, "roles": list(roles or []), "iat": now,
+               "exp": now + int(ttl), "aud": aud or JWT_AUD, "iss": iss or JWT_ISS}
+    signing = _b64u_enc(json.dumps(header, separators=(",", ":")).encode()) + "." + \
+        _b64u_enc(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+    sig = _b64u_enc(hmac.new(k, signing.encode(), hashlib.sha256).digest())
+    return signing + "." + sig
+
+
+def verify_jwt(token: str, aud: str = "", iss: str = "", key: str = ""):
+    """Проверить HS256-JWT. Возвращает dict(subject, roles) или None (fail-closed)."""
+    k = (key or JWT_KEY).encode()
+    if not k or not token or token.count(".") != 2:
+        return None
+    head_b, pay_b, sig_b = token.split(".")
+    try:
+        header = json.loads(_b64u_dec(head_b))
+    except Exception:  # noqa: BLE001
+        return None
+    if header.get("alg") != "HS256" or header.get("typ", "JWT") != "JWT":
+        return None
+    want = _b64u_enc(hmac.new(k, f"{head_b}.{pay_b}".encode(), hashlib.sha256).digest())
+    if not hmac.compare_digest(want, sig_b):
+        return None
+    try:
+        d = json.loads(_b64u_dec(pay_b))
+    except Exception:  # noqa: BLE001
+        return None
+    now = int(time.time())
+    if int(d.get("exp", 0)) < now:
+        return None
+    if int(d.get("nbf", 0)) > now:
+        return None
+    if (aud or JWT_AUD) and d.get("aud") != (aud or JWT_AUD):
+        return None
+    if d.get("iss") != (iss or JWT_ISS):
+        return None
+    if not d.get("sub"):
+        return None
+    return {"subject": d["sub"], "roles": list(d.get("roles") or []), "via": "jwt"}
+
+
+# ---------------------------------------------------------------------------
+# N6: rate-limit (token bucket, per subject/IP). 0 rps = выключено.
+# ---------------------------------------------------------------------------
+RATE_RPS = float(os.environ.get("RATE_LIMIT_RPS", "0") or 0)
+RATE_BURST = int(os.environ.get("RATE_LIMIT_BURST", "0") or 0)
+
+
+class RateLimiter:
+    """Простой token bucket: ok, пока есть токены; иначе retry_after (сек)."""
+
+    def __init__(self, rps: float, burst: int, max_keys: int = 4096):
+        self.rps = float(rps or 0)
+        self.burst = max(1, int(burst or 1))
+        self.max_keys = max_keys
+        self._state: dict = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str) -> tuple[bool, float]:
+        if self.rps <= 0:
+            return True, 0.0
+        now = time.monotonic()
+        with self._lock:
+            tokens, ts = self._state.get(key, (float(self.burst), now))
+            tokens = min(float(self.burst), tokens + (now - ts) * self.rps)
+            if tokens >= 1.0:
+                self._state[key] = (tokens - 1.0, now)
+                ok, retry = True, 0.0
+            else:
+                self._state[key] = (tokens, now)
+                ok, retry = False, max(0.0, (1.0 - tokens) / self.rps)
+            if len(self._state) > self.max_keys:      # защита от роста словаря
+                for k in sorted(self._state, key=lambda x: self._state[x][1])[: self.max_keys // 4]:
+                    self._state.pop(k, None)
+        return ok, retry
+
+
+_limiter = RateLimiter(RATE_RPS, max(RATE_BURST, 1))
+
+
+def rate_limit_key(headers, ip: str = "") -> str:
+    """Ключ лимита: API-ключ/JWT, иначе IP (для неавторизованных запросов)."""
+    auth = (headers.get("Authorization") or "")
+    tok = auth[7:].strip() if auth.lower().startswith("bearer ") else (headers.get("X-API-Key") or "")
+    if tok:
+        return tok[:24]
+    try:                                   # UI: лимит по пользователю сессии, а не по общему IP
+        ent = from_cookie(headers)
+        if ent and ent.get("subject"):
+            return "user:" + str(ent["subject"])[:40]
+    except Exception:  # noqa: BLE001
+        pass
+    return "ip:" + (ip or "?")
+
+
+def rate_limit(key: str) -> tuple[bool, float]:
+    return _limiter.allow(key)
+
+
+def set_rate_limit(rps: float, burst: int) -> dict:
+    """Изменить лимит на лету (эксплуатация/тесты). Возвращает действующие значения."""
+    global _limiter
+    with _limiter._lock:  # noqa: SLF001 — согласованная подмена состояния
+        _limiter = RateLimiter(rps, max(int(burst or 1), 1))
+    return {"rps": float(rps or 0), "burst": max(int(burst or 1), 1)}
+
+
+def rate_limit_state() -> dict:
+    return {"rps": _limiter.rps, "burst": _limiter.burst}

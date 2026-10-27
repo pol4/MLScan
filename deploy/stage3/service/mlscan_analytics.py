@@ -1178,6 +1178,31 @@ class Handler(BaseHTTPRequestHandler):
         accept = self.headers.get("Accept") or ""
         return "text/html" in accept and not self.headers.get("Authorization")
 
+    def _rate_limited(self) -> bool:
+        """N6: rate-limit per subject/IP (429 + Retry-After). /healthz всегда доступен."""
+        if authz is None:
+            return False
+        u = urllib.parse.urlparse(self.path)
+        if u.path == "/healthz":
+            return False
+        try:
+            key_ent = getattr(self, "_subject", "") or authz.rate_limit_key(
+                self.headers, self.client_address[0] if self.client_address else "")
+            ok, retry = authz.rate_limit(key_ent)
+        except Exception:  # noqa: BLE001
+            return False
+        if ok:
+            return False
+        self.send_response(429)
+        self.send_header("Retry-After", str(max(1, int(retry + 0.999))))
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        body = json.dumps({"error": "rate limit exceeded", "retry_after": round(retry, 2)},
+                          ensure_ascii=False).encode()
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def _require(self):
         """Аутентификация на входе: API-ключ из заголовка или cookie (после /login)."""
         if authz is None:
@@ -1309,6 +1334,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "startup_language": i18n.startup_lang() if i18n else "ru",
                                     "languages": list(i18n.SUPPORTED) if i18n else ["ru"],
                                     "request_language": lang})
+        if self._rate_limited():
+            return
         if p == "/lang":
             # переключатель языка UI: cookie на год, затем возврат на исходную страницу
             code = (q.get("set", ["ru"])[0] or "ru").lower()
@@ -1413,6 +1440,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        if self._rate_limited():
+            return
         lang = self._lang(q)
         if u.path == "/settings/language":
             ent = self._require()

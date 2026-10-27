@@ -120,6 +120,23 @@
 - Ответ: `decision ∈ {allow, block, quarantine}` + `bundle_id` + аттестация. Пайплайн
   блокируется на `block` и помечается на `quarantine`.
 
+### Токены для CI и ограничение частоты (N6)
+
+```bash
+# короткоживущий JWT для CI (только admin): ttl в секундах
+curl -sX POST -H "X-API-Key: <adm>" -H 'Content-Type: application/json' \
+     -d '{"subject":"ci-pipeline","roles":["ci"],"ttl":1800}' http://<testing>/auth/token
+# далее: Authorization: Bearer <token> (проверяются подпись HS256, exp, aud, iss)
+# текущий rate-limit и его изменение (admin; rps=0 — выключить)
+curl -sH "X-API-Key: <adm>" http://<testing>/rate-limit
+curl -sX POST -H "X-API-Key: <adm>" -H 'Content-Type: application/json' \
+     -d '{"rps":50,"burst":100}' http://<testing>/rate-limit
+```
+
+При превышении лимита — `429` с `Retry-After`; `/healthz` не ограничивается, для UI лимит считается
+на пользователя сессии. Синхронизация кода сервиса без применения манифестов:
+`bash deploy/stage2/sync-code.sh` (configmap'ы + digest целостности + пиннинг образа песочницы).
+
 ### Подготовка данных для полного E2E (N5)
 
 ```bash

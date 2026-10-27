@@ -68,6 +68,12 @@ spec:
         - {name: S3_PART_SIZE, value: "67108864"}
         - {name: S3_PART_WORKERS, value: "16"}
         - {name: DIRECT_PART_SIZE, value: "268435456"}
+        # N6: rate-limit и ключ JWT для API/CI (JWT выдаётся POST /auth/token, admin)
+        - {name: RATE_LIMIT_RPS, value: "50"}
+        - {name: RATE_LIMIT_BURST, value: "100"}
+        # JWT-ключ общий для сервисов: используем MLSCAN_EVIDENCE_KEY (есть во всех namespace)
+        - name: MLSCAN_JWT_KEY
+          valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_EVIDENCE_KEY}}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: MLSCAN_LANG, value: "ru"}
         # Hugging Face: реальный HF (egress-политика ставится deploy/ingress/apply.sh, шаг [5/6]);
