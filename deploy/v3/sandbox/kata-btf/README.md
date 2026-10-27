@@ -70,10 +70,17 @@ kubectl -n mlscan-build create configmap kata-btf-ebpf --from-file=ebpf_smoke.py
 | Реальные findings | ✅ `tests/e2e/llm_ebpf_e2e.sh`: in-guest event → `/llm/events` → **`LLM-B-01` (high)** |
 | Антиподмена (чужой nonce) | ✅ отклоняется (`rejected=1`) |
 
+Покрытие правил:
+- `LLM-B-01` (запуск shell/интерпретатора) — из хука `execve` + `bpf_get_current_comm` ✅ проверено;
+- `LLM-B-02` (внешний egress) — факт `connect()` даёт eBPF, а адрес назначения агент берёт из
+  kernel-состояния `/proc/net/tcp{,6}` (netns пода общий для контейнеров; loopback отфильтровывается) ✅
+  проверено (`dst=1.1.1.1:80` → `LLM-B-02` high).
 Ограничения (осознанные):
-- `bpf_probe_read_user` в этом госте даёт `EFAULT` → строки из user-памяти (пути, `sockaddr`) не читаются;
-  атрибуция процесса — через `bpf_get_current_comm` (имя процесса), поэтому `LLM-B-01` работает,
-  а `LLM-B-02` (внешний egress) требует отдельного источника адреса (kprobe по `tcp_connect`/CO-RE).
+- `bpf_probe_read_user` в этом госте даёт `EFAULT` → строки из user-памяти (пути файлов, `sockaddr`
+  напрямую) не читаются; поэтому атрибуция процесса — `bpf_get_current_comm`, а адрес — из kernel-состояния.
+  Апгрейд до «чистого» eBPF для путей/адресов: kprobe (`tcp_connect`, `security_file_open`) + CO-RE по BTF
+  либо file-capabilities-образ сенсора, чтобы вернуть не-root запуск;
+- `LLM-B-03` (honeypot-файлы) ждёт file-open хука с путём.
 - Tetragon не используется: ему нужен `bpffs` в госте (pinning карт) — заменён своим агентом.
 
 Осталось для «продакшн»-включения в песочницу:

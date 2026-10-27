@@ -24,9 +24,13 @@ kubectl --context "$CTX" -n mlscan-build create configmap kata-btf-ebpf \
   --from-file=ebpf_agent.py=deploy/v3/sandbox/kata-btf/ebpf_agent.py \
   --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
 cat > /tmp/ebpf-trigger.py <<'PY'
-import subprocess, time
+import socket, subprocess, time
 time.sleep(2)
 subprocess.run(["/bin/sh", "-c", "true"], check=False)     # execve shell -> LLM-B-01
+try:                                                        # внешний connect -> LLM-B-02
+    s = socket.socket(); s.settimeout(2); s.connect(("1.1.1.1", 80))
+except Exception:
+    pass
 subprocess.run(["/bin/cat", "/etc/hostname"], check=False)
 PY
 kubectl --context "$CTX" -n mlscan-build create configmap ebpf-trigger \
@@ -85,9 +89,11 @@ def api(method, path, payload=None):
 
 st, got = api("GET", "/llm/events/" + scan)
 assert st == 200, (st, got)
-ids = [f["check_id"] for f in got.get("findings", [])]
+ids = {f["check_id"] for f in got.get("findings", [])}
 assert "LLM-B-01" in ids, ("нет LLM-B-01 (shell/интерпретатор) в findings", got)
-print("  [OK]   in-guest eBPF -> findings:", sorted(set(ids)), "severity=", got["findings"][0]["severity"])
+assert "LLM-B-02" in ids, ("нет LLM-B-02 (внешний egress) в findings", got)
+sev = {f["check_id"]: f["severity"] for f in got["findings"]}
+print("  [OK]   in-guest eBPF -> findings:", sorted(ids), "severity:", sev)
 
 # событие с чужим nonce должно быть отброшено
 # ожидаемый nonce — один, а в событии — чужой: должно быть отброшено

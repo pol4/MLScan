@@ -270,6 +270,64 @@ def ips_from_sockaddr(raw: bytes) -> str:
     return ""
 
 
+
+def _hex_ip4(h: str) -> str:
+    """IPv4 из /proc/net/tcp (hex, little-endian по байтам)."""
+    try:
+        b = bytes.fromhex(h)
+        return ".".join(str(x) for x in reversed(b))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _hex_ip6(h: str) -> str:
+    """IPv6 из /proc/net/tcp6 (4 little-endian 32-битных слова)."""
+    try:
+        words = [bytes.fromhex(h[i:i + 8])[::-1] for i in range(0, 32, 8)]
+        raw = b"".join(words)
+        parts = [raw[i:i + 2].hex() for i in range(0, 16, 2)]
+        return ":".join(parts)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def external_peers() -> list:
+    """Не-loopback адреса активных соединений пода (netns общий для контейнеров).
+
+    Адрес берём из kernel-состояния (/proc/net/tcp{,6}), сам факт connect() — из eBPF.
+    (Прямое чтение sockaddr из user-памяти в этом госте даёт EFAULT; см. README.)
+    """
+    out = []
+    for path, conv, loop in (("/proc/net/tcp", _hex_ip4, "127."), ("/proc/net/tcp6", _hex_ip6, "::1")):
+        try:
+            with open(path) as fh:
+                next(fh, None)
+                for line in fh:
+                    f = line.split()
+                    if len(f) < 4:
+                        continue
+                    rem = f[2]
+                    if ":" not in rem:
+                        continue
+                    iph, _, ph = rem.partition(":")
+                    ip = conv(iph)
+                    if not ip or ip.startswith(loop) or ip.startswith("0.0.0.0") or ip.startswith("::"):
+                        continue
+                    try:
+                        port = int(ph, 16)
+                    except ValueError:
+                        port = 0
+                    out.append({"ip": ip, "port": port})
+        except Exception:  # noqa: BLE001
+            continue
+    uniq, seen = [], set()
+    for p_ in out:
+        k = (p_["ip"], p_["port"])
+        if k not in seen:
+            seen.add(k); uniq.append(p_)
+    return uniq
+
+
 def _post_events(args, batch: list) -> None:
     """Отправить пакет событий в /llm/events (инкрементально, чтобы findings появились сразу)."""
     if not batch:
@@ -342,13 +400,16 @@ def main() -> int:
         if args.post and pending and (time.time() - last_post) >= 3.0:
             _post_events(args, pending); pending = []; last_post = time.time()
         if cn.get("count"):
-            ip = ""      # sockaddr — user-память (в этом госте недоступна хелперу); см. README
+            peers = external_peers()          # LLM-B-02: внешние адреса из kernel-состояния
+            ip = peers[0]["ip"] if peers else ""
+            port = peers[0]["port"] if peers else 0
             key = ("network", ip)
             if key not in seen:
                 seen.add(key)
                 ev = {"type": "network", "phase": args.phase, "probe_id": "ebpf-agent",
-                       "dst": {"ip": ip}, "details": cn["buf"], "nonce": args.nonce,
-                       "ts": time.time()}
+                       "dst": {"ip": ip, "port": port} if ip else {},
+                       "details": f"comm={cn.get('buf', '').strip()} peers={[p_['ip'] for p_ in peers]}",
+                       "nonce": args.nonce, "ts": time.time()}
                 events.append(ev); pending.append(ev)
 
     if args.out:
