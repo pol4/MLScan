@@ -157,6 +157,20 @@ EPERM), поэтому агент — root в контейнере, движок
 в `/llm/events`, вердикт bundle и аттестация — как прежде; E2E агента `llm_ebpf_e2e.sh` — OK;
 `binding_e2e`/`bundle_test_e2e`/`gate_attest_e2e`/`llm_events_e2e` — OK; tests/v3 192 passed.
 
+**B1 — завершено (скан-путь, сенсор в песочнице).** Согласовано: root у `ebpf-agent` приемлем.
+`mlscan-sandbox` переведён в PodSecurity `privileged` (проверено: `restricted` запрещает добавление
+capabilities вообще, `baseline` — именно `BPF/PERFMON`), поэтому **все ограничения перенесены в Kyverno**:
+`mlscan-sandbox-jobs` (digest-образ; non-root для всех кроме агента; drop ALL, RO-FS, seccomp,
+no-priv-escalation; без SA-токена) и `mlscan-ebpf-agent-guard` (агенту — только `BPF/PERFMON`;
+в namespace запрещены `privileged`/`hostNetwork`/`hostPID`/`hostPath` и опасные capabilities).
+Скан-джоб получает контейнер `ebpf-agent` при `SANDBOX_EBPF=1` (образ песочницы по digest, скрипт из
+ConfigMap, root-в-госте, caps `BPF/PERFMON`), окно наблюдения — время скана (`wait_job` ориентируется на
+завершение основного контейнера; удалённый извне job — `failed`, а не исключение). Публикация событий —
+по **одноразовому скан-токену** (`scan_tokens`), который закрывается по завершении скана (повторная
+запись отклоняется). NetworkPolicy песочницы расширена доступом к API 8080 (авторизация обязательна).
+Проверено: `tests/e2e/sandbox_ebpf_e2e.sh` → скан в песочнице → **`LLM-B-01`** в `/llm/events/<scan_id>`,
+скан-токен после скана отвергнут (401).
+
 **N6: JWT для API/CI и rate-limit на входе.** В `v2/auth/authz.py` добавлены:
 - **JWT (HS256, stdlib)** с обязательной проверкой `alg=HS256`, подписи, `exp`/`nbf`, `aud`, `iss`
   (ключ — `MLSCAN_JWT_KEY`, общий для сервисов; JWT-ключ берётся из Secret `mlscan-keys` →

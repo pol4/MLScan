@@ -101,6 +101,9 @@ LLM_TEST_GPU = os.environ.get("LLM_TEST_GPU", "1") == "1"
 LLM_TEST_MAX_TOKENS = int(os.environ.get("LLM_TEST_MAX_TOKENS", "256"))
 LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 LLM_TEST_EBPF = os.environ.get("LLM_TEST_EBPF", "0") == "1"      # B1: in-guest eBPF-агент в job'е теста
+SANDBOX_EBPF = os.environ.get("SANDBOX_EBPF", "0") == "1"        # B1: in-guest eBPF-агент в скан-джобах
+SANDBOX_EBPF_TRIGGER = os.environ.get("SANDBOX_EBPF_TRIGGER", "0") == "1"
+EBPF_AGENT_CM = os.environ.get("EBPF_AGENT_CM", "mlscan-ebpf-agent")
 DETECTORS_VERSION = os.environ.get("MLSCAN_DETECTORS_VERSION", "det-1")
 # H1: Hugging Face (HF_MOCK=1 — встроенный mock-сервер для hermetic-тестов; иначе реальный HF)
 HF_BASE_URL = os.environ.get("HF_BASE_URL", "https://huggingface.co")
@@ -1011,7 +1014,8 @@ def stats() -> dict:
 # ----------------------------------------------------------------------------
 # Песочница
 # ----------------------------------------------------------------------------
-def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: str, fmt: str, nonce: str = "") -> dict:
+def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: str, fmt: str,
+                         nonce: str = "", run_token: str = "") -> dict:
     cmd = ('python -c "import urllib.request,sys;urllib.request.urlretrieve(sys.argv[1],sys.argv[2])" '
            '"$ARTIFACT_URL" "/tmp/$MODEL_NAME" '
            '&& exec python /opt/mlscan/harness.py "$MODEL_FMT" "$MODEL_NAME" < "/tmp/$MODEL_NAME"')
@@ -1027,9 +1031,10 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                     "runtimeClassName": "kata",
                     "automountServiceAccountToken": False,
                     "restartPolicy": "Never",
-                    "securityContext": {"runAsNonRoot": True, "runAsUser": 65532,
-                                        "runAsGroup": 65532, "fsGroup": 65532,
-                                        "seccompProfile": {"type": "RuntimeDefault"}},
+                    "securityContext": ({"fsGroup": 65532, "seccompProfile": {"type": "RuntimeDefault"}}
+                                        if (SANDBOX_EBPF and run_token) else
+                                        {"runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
+                                         "fsGroup": 65532, "seccompProfile": {"type": "RuntimeDefault"}}),
                     "containers": [{
                         "name": "sandbox",
                         "image": SANDBOX_IMAGE, "imagePullPolicy": "IfNotPresent",
@@ -1042,9 +1047,11 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                                 {"name": "PYTHONUTF8", "value": "1"},
                                 {"name": "TMPDIR", "value": "/tmp"},
                                 {"name": "MLSCAN_NONCE", "value": nonce}],
-                        "securityContext": {"allowPrivilegeEscalation": False,
+                        "securityContext": {"runAsNonRoot": True, "runAsUser": 65532,
+                                            "allowPrivilegeEscalation": False,
                                             "readOnlyRootFilesystem": True,
-                                            "capabilities": {"drop": ["ALL"]}},
+                                            "capabilities": {"drop": ["ALL"]},
+                                            "seccompProfile": {"type": "RuntimeDefault"}},
                         "resources": {"requests": {"cpu": "100m", "memory": "128Mi"},
                                       "limits": {"cpu": "1", "memory": JOB_MEMORY,
                                                  "ephemeral-storage": JOB_EPHEMERAL}},
@@ -1052,12 +1059,29 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                             {"name": "harness", "mountPath": "/opt/mlscan", "readOnly": True},
                             {"name": "deception", "mountPath": "/deception", "readOnly": True},
                             {"name": "tmp", "mountPath": "/tmp"}],
-                    }],
-                    "volumes": [
-                        {"name": "harness", "configMap": {"name": HARNESS_CM}},
-                        {"name": "deception", "configMap": {"name": "mlscan-deception"}},
-                        {"name": "tmp", "emptyDir": {"sizeLimit": TMP_SIZE}},
-                    ],
+                    }] + ([{
+                        "name": "ebpf-agent",
+                        "image": SANDBOX_IMAGE, "imagePullPolicy": "IfNotPresent",
+                        "command": (["python", "/opt/ebpf/ebpf_agent.py",
+                                     "--duration", str(int(JOB_TIMEOUT) + 60),
+                                     "--post", LLM_TEST_URL, "--key", run_token,
+                                     "--scan-id", scan_id, "--nonce", nonce]
+                                    + (["--trigger-shell"] if SANDBOX_EBPF_TRIGGER else [])),
+                        # сенсор мониторинга: root-в-госте (иначе eBPF недоступен: non-root -> CapEff=0 -> EPERM)
+                        "securityContext": {"runAsNonRoot": False, "runAsUser": 0,
+                                            "allowPrivilegeEscalation": False,
+                                            "readOnlyRootFilesystem": True,
+                                            "capabilities": {"drop": ["ALL"], "add": ["BPF", "PERFMON"]},
+                                            "seccompProfile": {"type": "RuntimeDefault"}},
+                        "resources": {"limits": {"cpu": "1", "memory": "512Mi"}},
+                        "volumeMounts": [{"name": "ebpf", "mountPath": "/opt/ebpf", "readOnly": True}],
+                    }] if (SANDBOX_EBPF and run_token) else []),
+                    "volumes": (
+                        [{"name": "harness", "configMap": {"name": HARNESS_CM}},
+                         {"name": "deception", "configMap": {"name": "mlscan-deception"}},
+                         {"name": "tmp", "emptyDir": {"sizeLimit": TMP_SIZE}}]
+                        + ([{"name": "ebpf", "configMap": {"name": EBPF_AGENT_CM}}]
+                           if (SANDBOX_EBPF and run_token) else [])),
                 },
             },
         },
@@ -1074,12 +1098,29 @@ def pod_for_job(job_name: str) -> str | None:
 def wait_job(scan_id: str, job_name: str, timeout: int) -> tuple[str, bool]:
     t0 = time.time()
     while time.time() - t0 < timeout:
-        j = k8s("GET", f"/apis/batch/v1/namespaces/{SANDBOX_NS}/jobs/{job_name}")
+        try:
+            j = k8s("GET", f"/apis/batch/v1/namespaces/{SANDBOX_NS}/jobs/{job_name}")
+        except Exception as exc:  # noqa: BLE001
+            if "404" in str(exc):      # job удалён извне (TTL/оператор) — не считаем успехом
+                return "failed", False
+            raise
         st = j.get("status", {})
         if st.get("succeeded"):
             return "succeeded", False
         if st.get("failed"):
             return "failed", False
+        # B1: контейнер-сенсор eBPF живёт дольше скана -> смотрим на завершение основного контейнера
+        pod = pod_for_job(job_name)
+        if pod:
+            try:
+                pj = k8s("GET", f"/api/v1/namespaces/{SANDBOX_NS}/pods/{pod}")
+                for cs in (pj.get("status", {}) or {}).get("containerStatuses", []) or []:
+                    if cs.get("name") in ("sandbox", "harness"):
+                        term = (cs.get("state", {}) or {}).get("terminated")
+                        if term:
+                            return ("succeeded" if int(term.get("exitCode") or 0) == 0 else "failed"), False
+            except Exception:  # noqa: BLE001
+                pass
         el = int(time.time() - t0)
         update(scan_id, stage="running", progress=min(85, 40 + el))
         time.sleep(2)
@@ -1091,9 +1132,23 @@ def run_sandbox(scan_id: str, name: str, fmt: str, artifact_url: str) -> dict:
     # (payload не может подделать «чистый» результат, напечатав свою строку — см. docs/14, P0-1).
     nonce = secrets.token_hex(8)
     job = f"mlscan-scan-{scan_id[:20]}"
+    run_token = ""
+    if SANDBOX_EBPF and DB_ENABLED:      # B1: токен для in-guest сенсора (API-ключ в под не даём)
+        run_token = secrets.token_hex(16)
+        try:
+            db_exec("INSERT INTO scan_tokens(scan_id,token,status) VALUES ("
+                    + _lit(scan_id) + "," + _lit(run_token) + ",'running') "
+                    "ON CONFLICT (scan_id) DO UPDATE SET token=EXCLUDED.token, status='running', updated=now()")
+        except Exception:  # noqa: BLE001
+            run_token = ""
     k8s("POST", f"/apis/batch/v1/namespaces/{SANDBOX_NS}/jobs",
-        sandbox_job_manifest(job, scan_id, artifact_url, name, fmt, nonce))
+        sandbox_job_manifest(job, scan_id, artifact_url, name, fmt, nonce, run_token))
     status, timed_out = wait_job(scan_id, job, JOB_TIMEOUT)
+    if run_token and DB_ENABLED:        # B1: сенсор больше не должен писать события
+        try:
+            db_exec("UPDATE scan_tokens SET status='done', updated=now() WHERE scan_id=" + _lit(scan_id))
+        except Exception:  # noqa: BLE001
+            pass
     result: dict = {"status": status, "timed_out": timed_out}
     pod = pod_for_job(job)
     if pod:
@@ -2083,6 +2138,10 @@ class Handler(BaseHTTPRequestHandler):
             return False
         try:
             rows = db_query("SELECT bundle_id FROM bundle_tests WHERE run_token=" + _lit(token)
+                            + " AND status IN ('created','running')")
+            if rows:
+                return True
+            rows = db_query("SELECT scan_id FROM scan_tokens WHERE token=" + _lit(token)
                             + " AND status IN ('created','running')")
         except Exception:  # noqa: BLE001
             return False

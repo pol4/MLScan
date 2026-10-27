@@ -118,3 +118,22 @@ nonce скана) и E2E «прогон в песочнице → реальны
 Проверка: `tests/e2e/llm_ebpf_inference_e2e.sh` → «B1 llm ebpf inference: OK»: реальный прогон
 инференса (llama.cpp CPU, Kata+BTF) → агент → `/llm/events` → **LLM-B-01 (high)**; вердикт bundle
 (`Needs review` → `block`) и подписанная аттестация формируются как раньше.
+
+## Итог: сенсор включён и в песочницу (скан-джобы)
+
+Согласовано: **root у `ebpf-agent` приемлем**. Что сделано:
+- `mlscan-sandbox` переведён в PodSecurity `privileged` (проверено: `restricted` запрещает add capabilities
+  вообще, `baseline` — запрещает именно `BPF/PERFMON`; иначе сенсор не запускается). Поскольку PodSecurity
+  больше не барьер, **все ограничения перенесены в наши Kyverno-политики**:
+  * `mlscan-sandbox-jobs` — образ песочницы по digest; все контейнеры кроме `ebpf-agent` — non-root;
+    у всех: drop ALL, no-priv-escalation, RO-FS, seccomp; pod — без service-account токена;
+  * `mlscan-ebpf-agent-guard` — `ebpf-agent` может добавлять только `BPF`/`PERFMON`; в namespace запрещены
+    `privileged`, `hostNetwork`, `hostPID`, `hostPath` и опасные capabilities (SYS_ADMIN/SYS_PTRACE/NET_ADMIN/…).
+- Скан-джоб получает контейнер `ebpf-agent` (образ песочницы по digest, скрипт из ConfigMap
+  `mlscan-ebpf-agent`, root-в-госте, caps BPF/PERFMON) при `SANDBOX_EBPF=1`;
+  окно наблюдения — время скана (`wait_job` ориентируется на завершение основного контейнера).
+- Публикация событий — в `/llm/events` по **одноразовому скан-токену** (`scan_tokens`): токен закрывается
+  по завершении скана и больше не принимается (проверено: 401). NetworkPolicy песочницы расширена
+  доступо́м к API 8080 (авторизация обязательна).
+- Проверено: `tests/e2e/sandbox_ebpf_e2e.sh` → сканирование модели в песочнице → **`LLM-B-01`** в
+  `/llm/events/<scan_id>`; скан-токен после завершения отвергнут.

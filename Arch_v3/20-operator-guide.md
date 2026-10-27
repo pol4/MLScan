@@ -120,6 +120,23 @@
 - Ответ: `decision ∈ {allow, block, quarantine}` + `bundle_id` + аттестация. Пайплайн
   блокируется на `block` и помечается на `quarantine`.
 
+### BTF-ядро Kata и in-guest eBPF-сенсор (B1)
+
+```bash
+MLSCAN_NODE_SSH=user@node bash deploy/v3/sandbox/kata-btf/install.sh          # BTF-ядро (обратимо)
+kubectl apply -f deploy/v3/sandbox/kata-btf/30-allow-ebpf-agent.yaml           # политики (privileged+guard)
+kubectl -n mlscan-testing set env deploy/mlscan-testing SANDBOX_EBPF=1 LLM_TEST_EBPF=1
+kubectl -n mlscan-sandbox create configmap mlscan-ebpf-agent \
+  --from-file=ebpf_agent.py=deploy/v3/sandbox/kata-btf/ebpf_agent.py
+```
+
+ВНИМАНИЕ (осознанное решение): namespace `mlscan-sandbox` работает в PodSecurity `privileged`
+(`restricted`/`baseline` не позволяют добавить `BPF`/`PERFMON`), поэтому безопасность namespace
+обеспечивают только Kyverno-политики (digest-образ, non-root кроме `ebpf-agent`, drop ALL, RO-FS,
+seccomp, запрет `privileged`/`host*`/опасных caps). Сенсор `ebpf-agent` — root **внутри гостевой ВМ**
+Kata (non-root не может загрузить eBPF: `CapEff=0` → EPERM). Проверка: `tests/e2e/sandbox_ebpf_e2e.sh`
+(скан → `LLM-B-01` в `/llm/events`), `tests/e2e/llm_ebpf_inference_e2e.sh` (инференс → `LLM-B-01`).
+
 ### BTF-ядро Kata для in-guest eBPF (B1)
 
 ```bash

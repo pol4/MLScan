@@ -1,10 +1,11 @@
 # B1: разрешение контейнера-агента in-guest eBPF в mlscan-sandbox.
 #
 # ВНИМАНИЕ: это ослабление политики безопасности namespace (требует согласования!).
-# Причина: eBPF-агенту нужны capabilities BPF/PERFMON, которые PodSecurity-профиль
-# "restricted" запрещает добавлять. Переводим namespace в профиль "baseline" —
-# он допускает добавление capabilities, сохраняя требования non-root/RO-FS/seccomp
-# (их отдельно требует наша Kyverno-политика mlscan-sandbox-jobs).
+# Причина: eBPF-агенту нужны capabilities BPF/PERFMON. Проверено: "restricted" запрещает добавление
+# capabilities вообще, а "baseline" разрешает лишь небольшой набор (BPF/PERFMON в него НЕ входят),
+# поэтому namespace переводится в "privileged" — единственным контролем остаются наши Kyverno-политики
+# (mlscan-sandbox-jobs + mlscan-ebpf-agent-guard), которые ниже усилены: запрещены privileged/host*/ 
+# опасные caps, требуются digest-образ, drop ALL, RO-FS, seccomp, non-root для всех кроме ebpf-agent.
 #
 # СОГЛАСОВАНО (вариант C, 2026-10-27): применяется, песочница mlscan-sandbox переводится в baseline.
 #   kubectl apply -f deploy/v3/sandbox/kata-btf/30-allow-ebpf-agent.yaml
@@ -15,14 +16,16 @@ kind: Namespace
 metadata:
   name: mlscan-sandbox
   labels:
-    # было: restricted (не допускает add capabilities) -> baseline (допускает BPF/PERFMON у агента)
-    pod-security.kubernetes.io/enforce: baseline
+    # было: restricted -> baseline -> privileged (baseline тоже запрещает add BPF/PERFMON — проверено)
+    pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
     app.kubernetes.io/part-of: mlscan
 ---
-# Guard-правила Kyverno: (1) контейнеру ebpf-agent разрешены только BPF/PERFMON;
-# (2) в namespace запрещены опасные capabilities (даже при профиле baseline).
+# Guard-правила Kyverno (единственный барьер в privileged-namespace):
+#  1) ebpf-agent — только caps BPF/PERFMON (root-в-госте разрешён осознанно);
+#  2) никаких privileged/hostNetwork/hostPID/hostPath и опасных capabilities;
+#  3) у всех контейнеров: drop ALL, no-priv-escalation, RO-FS, seccomp; pod — без SA-токена.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -43,16 +46,29 @@ spec:
           - key: "{{ request.object.spec.template.spec.containers[?name=='ebpf-agent'].securityContext.capabilities.add[] | [?@ != 'BPF' && @ != 'PERFMON'] | length(@) }}"
             operator: GreaterThan
             value: 0
-  - name: no-dangerous-caps
+  - name: no-dangerous-caps-or-privileged
     match:
       any:
       - resources: {kinds: [Job], namespaces: [mlscan-sandbox]}
     validate:
-      message: "в mlscan-sandbox запрещены опасные capabilities (SYS_ADMIN/SYS_PTRACE/NET_ADMIN/...)"
+      message: "в mlscan-sandbox запрещены privileged/host*/опасные capabilities"
       deny:
         conditions:
           any:
           - key: "{{ request.object.spec.template.spec.containers[].securityContext.capabilities.add[] }}"
             operator: AnyIn
-            value: ["SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "NET_ADMIN", "DAC_OVERRIDE", "NET_RAW",
-                    "SYS_CHROOT", "MKNOD", "AUDIT_CONTROL", "SYS_TIME"]
+            value: ["SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "NET_ADMIN", "NET_RAW", "DAC_OVERRIDE",
+                    "SYS_CHROOT", "MKNOD", "AUDIT_CONTROL", "SYS_TIME", "SETUID", "SETGID", "SYSLOG",
+                    "MAC_ADMIN", "MAC_OVERRIDE", "SYS_BOOT", "SYS_RAWIO"]
+          - key: "{{ request.object.spec.template.spec.containers[].securityContext.privileged }}"
+            operator: AnyIn
+            value: [true, "true", "True", 1, "1"]
+          - key: "{{ request.object.spec.template.spec.hostNetwork || `false` }}"
+            operator: Equals
+            value: true
+          - key: "{{ request.object.spec.template.spec.hostPID || `false` }}"
+            operator: Equals
+            value: true
+          - key: "{{ request.object.spec.template.spec.volumes[].hostPath | length(@) }}"
+            operator: GreaterThan
+            value: 0

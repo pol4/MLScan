@@ -204,3 +204,11 @@ CREATE TABLE IF NOT EXISTS hf_egress_log (
   error TEXT DEFAULT '',
   created TIMESTAMPTZ DEFAULT now()
 );
+
+-- B1: одноразовые run-token для скан-джобов песочницы (in-guest eBPF-агент отправляет события)
+CREATE TABLE IF NOT EXISTS scan_tokens (
+  scan_id TEXT PRIMARY KEY,
+  token TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  updated TIMESTAMPTZ DEFAULT now()
+);

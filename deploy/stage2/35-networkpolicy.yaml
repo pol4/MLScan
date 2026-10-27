@@ -15,3 +15,7 @@ spec:
       podSelector: {matchLabels: {app: mlscan-testing}}
     ports:
     - {protocol: TCP, port: 8090}
+    # B1: in-guest eBPF-сенсор публикует события в /llm/events (API 8080).
+    # Доступ есть у всего пода скана (NetworkPolicy не умеет выбирать контейнеры),
+    # но API требует аутентификации (одноразовый run-token) — без токена запрос отклоняется.
+    - {protocol: TCP, port: 8080}

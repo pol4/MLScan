@@ -29,6 +29,9 @@ spec:
               runtimeClassName: kata
               containers:
               - image: "*mlscan-sandbox@sha256:*"
+  # Ужесточённый securityContext. Исключение по согласованию: контейнер `ebpf-agent`
+  # (наш сенсор мониторинга) запускается root-в-госте с caps BPF/PERFMON — иначе в этой
+  # Kata-сборке eBPF недоступен (у non-root CapEff=0 -> EPERM). Остальные контейнеры — строго non-root.
   - name: require-hardened-security-context
     match:
       any:
@@ -36,17 +39,34 @@ spec:
           kinds: [Job]
           namespaces: [mlscan-sandbox]
     validate:
-      message: "Job в mlscan-sandbox должен задавать безопасный securityContext (non-root, drop ALL, RO-FS, seccomp, no privilege escalation)"
-      pattern:
-        spec:
-          template:
-            spec:
-              automountServiceAccountToken: false
-              securityContext:
-                runAsNonRoot: true
-                seccompProfile: {type: RuntimeDefault}
-              containers:
-              - securityContext:
-                  allowPrivilegeEscalation: false
-                  readOnlyRootFilesystem: true
-                  capabilities: {drop: ["ALL"]}
+      message: >-
+        Job в mlscan-sandbox: все контейнеры кроме `ebpf-agent` должны быть non-root;
+        у всех — drop ALL, no-priv-escalation, RO-FS, seccomp; pod — без service account токена
+      deny:
+        conditions:
+          all:
+          # 1) нельзя добавлять capabilities никому, кроме ebpf-agent (BPF/PERFMON проверяет guard-политика)
+          - key: "{{ request.object.spec.template.spec.containers[?name!='ebpf-agent'].securityContext.capabilities.add[] | length(@) }}"
+            operator: GreaterThan
+            value: 0
+          # 2) никто кроме ebpf-agent не может быть root
+          - key: "{{ request.object.spec.template.spec.containers[?name!='ebpf-agent'].securityContext.runAsNonRoot | [?@ != `true`] | length(@) }}"
+            operator: GreaterThan
+            value: 0
+          # 3) у всех контейнеров: no-priv-escalation, RO-FS, drop ALL
+          - key: "{{ request.object.spec.template.spec.containers[?securityContext.allowPrivilegeEscalation!='false'].securityContext.allowPrivilegeEscalation }}"
+            operator: AnyIn
+            value: ["true", "True", 1, "1"]
+          - key: "{{ request.object.spec.template.spec.containers[?securityContext.readOnlyRootFilesystem!='true'].securityContext.readOnlyRootFilesystem }}"
+            operator: AnyIn
+            value: ["false", "False", 0, "0"]
+          - key: "{{ request.object.spec.template.spec.containers[].securityContext.capabilities.drop[] | [?@ != 'ALL'] | length(@) }}"
+            operator: GreaterThan
+            value: 0
+          # 4) pod: без service account токена и seccomp=RuntimeDefault
+          - key: "{{ request.object.spec.template.spec.automountServiceAccountToken }}"
+            operator: AnyIn
+            value: [true, "true", "True", 1, "1"]
+          - key: "{{ request.object.spec.template.spec.securityContext.seccompProfile.type }}"
+            operator: NotEquals
+            value: "RuntimeDefault"
