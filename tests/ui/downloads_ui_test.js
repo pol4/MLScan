@@ -23,15 +23,13 @@ function chrome(){ if(process.env.CHROME_PATH&&fs.existsSync(process.env.CHROME_
     await page.type('input[name=username]',USER); await page.type('input[name=password]',PASS);
     await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded',timeout:30000}),page.click('button[type=submit]')]);
     await page.waitForSelector('#downloads',{timeout:15000});
-    // HF_MOCK=0 (реальный HF): эти проверки рассчитаны на mock-HF с фиктивными размерами.
-    // Чтобы не тянуть реальные многогигабайтные модели, тест пропускается (MLSCAN_UI_HF_MOCK=1 — форсировать).
-    if (process.env.MLSCAN_UI_HF_MOCK !== '1') {
-      const m = await page.evaluate(async () => {
-        try { const r = await fetch('/hf/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-          const j = await r.json(); return j.mock === true; } catch (e) { return false; }
-      });
-      if (!m) { console.log('[ui-hf] SKIP: HF_MOCK=0 (реальный HF) — тест рассчитан на mock-HF'); await browser.close(); process.exit(0); }
-    }
+    // Режим HF: mock (фиктивные размеры) или реальный. Проверки подзакладок/гейтинга/токена
+    // выполняются в обоих режимах; старт загрузки — только в mock (реальная модель может быть многогигабайтной).
+    const mock = process.env.MLSCAN_UI_HF_MOCK === '1' || await page.evaluate(async () => {
+      try { const r = await fetch('/hf/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const j = await r.json(); return j.mock === true; } catch (e) { return false; }
+    });
+    console.log('[ui-downloads] режим HF: ' + (mock ? 'mock' : 'реальный'));
     // подзакладки
     const tabs=await page.$$eval('#downloads .tab', els=>els.map(e=>e.dataset.tab));
     for(const t of ['tab-models','tab-local','tab-engines','tab-hf'])
@@ -54,13 +52,17 @@ function chrome(){ if(process.env.CHROME_PATH&&fs.existsSync(process.env.CHROME_
     const btn=await page.$('#hfresults button[data-repo]'); await btn.click();
     await page.waitForFunction(()=>/ERR/.test((document.getElementById('hfstatus')||{}).textContent||''),{timeout:15000})
       .catch(()=>fails.push('нет отказа при загрузке без движка'));
-    // с движком — старт загрузки
-    const val=await page.$eval('#englist',e=>e.options[1]&&e.options[1].value);
-    await page.select('#hfengine', val);
-    await page.$eval('#hfengine',e=>e.dispatchEvent(new Event('change',{bubbles:true})));
-    const btn2=await page.$('#hfresults button[data-repo]'); await btn2.click();
-    await page.waitForFunction(()=>/queued|download/.test((document.getElementById('hfstatus')||{}).textContent||''),{timeout:20000})
-      .catch(()=>fails.push('загрузка с движком не стартовала'));
+    if (!mock) {
+      console.log('[ui-downloads] реальный HF: старт загрузки не выполняется (объём модели)');
+    } else {
+      // с движком — старт загрузки (mock: фиктивные размеры)
+      const val=await page.$eval('#englist',e=>e.options[1]&&e.options[1].value);
+      await page.select('#hfengine', val);
+      await page.$eval('#hfengine',e=>e.dispatchEvent(new Event('change',{bubbles:true})));
+      const btn2=await page.$('#hfresults button[data-repo]'); await btn2.click();
+      await page.waitForFunction(()=>/queued|download/.test((document.getElementById('hfstatus')||{}).textContent||''),{timeout:20000})
+        .catch(()=>fails.push('загрузка с движком не стартовала'));
+    }
     // токен
     await page.type('#hftoken','hf_test_token_1234');
     await page.click('#hftokensave');

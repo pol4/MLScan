@@ -433,16 +433,19 @@ def _hf_download_worker(dl_id: str) -> None:
                         size = int(hr.headers.get("Content-Length") or 0)
                 except Exception:  # noqa: BLE001
                     size = 0
-            if not size:
-                raise RuntimeError(f"unknown size for {fname}: отказ от неограниченной загрузки")
+            # пределы загрузки: каноническая проверка (ingest/hf.py); неизвестный размер = отказ
+            if v3hf is not None:
+                ok_l, why_l = v3hf.check_limits(size, done, max_file=HF_MAX_FILE_BYTES,
+                                                max_total=HF_MAX_TOTAL_BYTES)
+            else:                      # модуль недоступен — сохраняем прежнее поведение (fail-closed)
+                ok_l, why_l = (size > 0, "" if size > 0 else "unknown size: отказ от загрузки")
+            if not ok_l:
+                _hf_egress_log(tenant, repo, fname, url, size, "denied", why_l)
+                raise RuntimeError(f"{why_l}: {fname}")
             ok_q, why_q, _lim = _hf_quota_check(tenant, size)      # N4: суточная квота тенанта
             if not ok_q:
                 _hf_egress_log(tenant, repo, fname, url, size, "denied", why_q)
                 raise RuntimeError(why_q)
-            if size > HF_MAX_FILE_BYTES:
-                raise RuntimeError(f"file too large: {fname} {size} > {HF_MAX_FILE_BYTES}")
-            if done + size > HF_MAX_TOTAL_BYTES:
-                raise RuntimeError(f"total download limit exceeded: {done + size} > {HF_MAX_TOTAL_BYTES}")
             dest = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(fname)}")
             os.makedirs(DATA_TMP, exist_ok=True)
             got = 0; attempts = 0; etag = ""

@@ -120,6 +120,16 @@
 - Ответ: `decision ∈ {allow, block, quarantine}` + `bundle_id` + аттестация. Пайплайн
   блокируется на `block` и помечается на `quarantine`.
 
+### Подготовка данных для полного E2E (N5)
+
+```bash
+bash tests/e2e/make_fixtures.sh    # safetensors + архив (zip c вложенным zip/pickle) + GGUF из PVC
+```
+
+Скрипт идемпотентен; UI-runner вызывает его сам при `MLSCAN_E2E=1`. UI-тесты HF выполняются и при
+mock-HF, и при реальном HF (шаг «дождаться завершения загрузки» — только для mock; полный реальный
+путь — `operator_browser_e2e.js`).
+
 ### Квоты и журнал скачивания с HF (N4)
 
 ```bash

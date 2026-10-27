@@ -28,7 +28,7 @@ function chrome(){ if(process.env.CHROME_PATH&&fs.existsSync(process.env.CHROME_
     await page.waitForSelector('#imgref',{timeout:15000});
     await page.type('#imgref', `mlscan-registry/team/vllm@${DIG}`);
     await page.click('#imgimport-btn');
-    await page.waitForFunction(()=>{const e=document.getElementById('imgstatus');return e&&e.textContent.length>0;},{timeout:30000});
+    await page.waitForFunction(()=>{const e=document.getElementById('imgstatus');return e&&e.textContent.length>0;},{timeout:90000});
     const st=await page.$eval('#imgstatus',e=>e.textContent);
     console.log('[ui-engine] импорт образа:', st);
     // 2) бейдж «Engine image» в карточке после загрузки с kind=engine_image

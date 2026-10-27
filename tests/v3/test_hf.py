@@ -57,6 +57,30 @@ class HfTest(unittest.TestCase):
         p3 = hf.resume_plan(1000, 1000)
         self.assertTrue(p3["done"])
 
+    # --- N5: пределы загрузки (отказ от неизвестного размера, лимиты файла/суммы) ---
+    def test_check_limits_unknown_size_refused(self):
+        ok, why = hf.check_limits(0, 0, max_file=1024, max_total=4096)
+        self.assertFalse(ok)
+        self.assertIn("unknown size", why)
+
+    def test_check_limits_file_cap(self):
+        self.assertTrue(hf.check_limits(1024, 0, max_file=1024)[0])
+        ok, why = hf.check_limits(1025, 0, max_file=1024)
+        self.assertFalse(ok)
+        self.assertIn("file too large", why)
+
+    def test_check_limits_total_cap(self):
+        # 3 файла по 1 КиБ при лимите 4 КиБ: третий упирается в суммарный лимит
+        self.assertTrue(hf.check_limits(1024, 2048, max_total=4096)[0])
+        self.assertTrue(hf.check_limits(1024, 3072, max_total=4096)[0])   # ровно лимит — можно
+        ok, why = hf.check_limits(1025, 3072, max_total=4096)              # 4097 > 4096 — отказ
+        self.assertFalse(ok)
+        self.assertIn("total limit exceeded", why)
+
+    def test_check_limits_no_limits(self):
+        self.assertTrue(hf.check_limits(10 ** 12, 0)[0])        # 0 = без лимита
+        self.assertFalse(hf.check_limits(-5, 0)[0])             # отрицательный размер = неизвестен
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

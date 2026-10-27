@@ -64,3 +64,20 @@ def resume_plan(total_bytes: int, done_bytes: int, etag: str = "", served_etag: 
     return {"offset": done, "range_header": f"bytes={done}-" if done > 0 else "",
             "remaining": max(total - done, 0), "restart": restart,
             "if_range": etag and not restart, "done": restart is False and done >= total and total > 0}
+
+
+def check_limits(size: int, done_bytes: int = 0, *, max_file: int = 0, max_total: int = 0) -> tuple[bool, str]:
+    """Проверка пределов загрузки HF (fail-closed для неизвестного размера).
+
+    size: размер файла (0 = неизвестен -> отказ); done_bytes: уже скачано в этой загрузке.
+    Возвращает (ok, reason); reason пуст, если всё в порядке.
+    """
+    size = int(size or 0)
+    done = int(done_bytes or 0)
+    if size <= 0:
+        return False, "unknown size: отказ от неограниченной загрузки"
+    if max_file and size > int(max_file):
+        return False, f"file too large: {size} > {int(max_file)}"
+    if max_total and done + size > int(max_total):
+        return False, f"total limit exceeded: {done + size} > {int(max_total)}"
+    return True, ""

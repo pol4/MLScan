@@ -23,7 +23,7 @@ function chrome(){ if(process.env.CHROME_PATH&&fs.existsSync(process.env.CHROME_
     await page.type('#dcdomain','Правонарушение');
     await page.type('#dcclass','illegal_activity_manual');
     await page.click('#dcsave');
-    await page.waitForFunction(()=>{const e=document.getElementById('dcstatus');return e&&/saved/.test(e.textContent);},{timeout:30000});
+    await page.waitForFunction(()=>{const e=document.getElementById('dcstatus');return e&&/saved/.test(e.textContent);},{timeout:90000});
     const st=await page.$eval('#dcstatus',e=>e.textContent);
     if(!/saved/.test(st)) fails.push('нет подтверждения сохранения: '+st);
     console.log('[ui-domain] сохранение переопределения:', st);

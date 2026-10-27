@@ -36,6 +36,8 @@ done
 # Полный операторский E2E с РЕАЛЬНЫМИ моделями (LMSCAN_E2E=1): требует HF-egress, реальные
 # файлы в /tmp (см. шапку скрипта) и доступ к сервису тестирования (MLSCAN_TESTING_URL).
 if [ "${MLSCAN_E2E:-0}" = "1" ] && [ -e "$HERE/operator_browser_e2e.js" ]; then
+  # реальные фикстуры (safetensors/архив/GGUF) — идемпотентно подготовить
+  [ -x "$HERE/../e2e/make_fixtures.sh" ] && bash "$HERE/../e2e/make_fixtures.sh" >/dev/null 2>&1
   # Ключ не хранится в репозитории: берём админ-ключ из Secret кластера (или из MLSCAN_API_KEY).
   if [ -z "${MLSCAN_API_KEY:-}" ] && command -v kubectl >/dev/null 2>&1; then
     MLSCAN_API_KEY="$(kubectl -n mlscan-testing get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' 2>/dev/null \
