@@ -64,7 +64,12 @@ if [ "${MLSCAN_E2E:-0}" = "1" ] && [ -e "$HERE/operator_browser_e2e.js" ]; then
     echo "[ui] port-forward к сервису тестирования готов (pid $PF_PID)"
   fi
   echo "[ui] === operator_browser_e2e.js (реальные модели) ==="
-  node "$HERE/operator_browser_e2e.js" || rc=1
+  # один повтор: операторский сценарий тоже чувствителен к холодному старту/рестарту сервисов
+  if ! node "$HERE/operator_browser_e2e.js"; then
+    echo "[ui] повтор после сбоя: operator_browser_e2e.js"
+    sleep 5
+    node "$HERE/operator_browser_e2e.js" || rc=1
+  fi
   [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null
 fi
 # cleanup: завершённые/висящие job'ы теста bundle держат GPU — убираем после прогона UI-тестов

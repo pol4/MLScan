@@ -798,7 +798,8 @@ document.getElementById('f').addEventListener('submit',e=>{
     tabs.forEach(b=>b.classList.toggle('active',b.dataset.tab===id));};
   tabs.forEach(b=>b.addEventListener('click',()=>show(b.dataset.tab))); show('tab-models');
   const loadEngines=()=>fetch('/images/list').then(r=>r.ok?r.json():null).then(d=>{
-    const opts=((d&&d.images)||[]).map(i=>`<option value="${i.digest}">${(i.ref||i.digest).slice(0,48)}</option>`).join('');
+    // B4-lite: помечаем состояние подписи/SBOM образа движка прямо в списке
+    const opts=((d&&d.images)||[]).map(i=>`<option value="${i.digest}">${(i.ref||i.digest).slice(0,44)} ${i.signed?'[signed]':'[unsigned]'}${i.sbom?' [sbom]':''}</option>`).join('');
     ['englist','hfengine','locengine','rbengine'].forEach(id=>{const el=document.getElementById(id);
       if(el) el.innerHTML='<option value="">engine: (выберите скачанный)</option>'+opts;});}).catch(()=>{});
   loadEngines(); const er=document.getElementById('engrefresh'); er&&er.addEventListener('click',loadEngines);
@@ -896,6 +897,15 @@ document.getElementById('f').addEventListener('submit',e=>{
       body:JSON.stringify({domain:domain,policy_class:cls})})
       .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>load().then(()=>show(ok?('saved '+j.domain+'→'+j.policy_class):('ERR '+(j.error||'bad')))) )
       .catch(()=>show('ERR'));});})();
+(function(){const sb=document.getElementById('imgsign-btn');
+  sb&&sb.addEventListener('click',()=>{
+    const st=document.getElementById('imgstatus');
+    const ref=(document.getElementById('imgref').value||'').trim();
+    const dig=ref.includes('@sha256:')?('sha256:'+ref.split('@sha256:')[1]):ref;
+    if(!dig){st.textContent='ERR: укажите образ (ref@sha256:…)';return;}
+    fetch('/images/'+encodeURIComponent(dig)+'/sign',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
+        st.textContent=ok?('подписан '+String(j.signature||'').slice(0,26)+'…'):('ERR '+(j.error||''));});});})();
 (function(){const b=document.getElementById('imgimport-btn');if(!b)return;
   const st=document.getElementById('imgstatus');
   b.addEventListener('click',()=>{const ref=document.getElementById('imgref').value.trim();
@@ -996,6 +1006,7 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
                + "<b>" + ("Импорт образа движка" if lang == "ru" else "Engine image import") + "</b><br><br>"
                + "<input id='imgref' type='text' placeholder='mlscan-registry/…@sha256:…' style='width:60%'> "
                + "<input id='imgtarkey' type='text' placeholder='oci_tar_key (опц.)' style='width:20%'> "
+               + "<button id='imgsign-btn' type='button'>" + ("Подписать" if lang == "ru" else "Sign") + "</button> "
                + "<button id='imgimport-btn' type='button'>" + ("Импорт" if lang == "ru" else "Import") + "</button>"
                + "<div id='imgstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div>"
                + "<div style='margin-top:6px;font-size:12px'>" + ("Скачанные движки:" if lang == "ru" else "Downloaded engines:")
@@ -1183,7 +1194,11 @@ class Handler(BaseHTTPRequestHandler):
         if authz is None:
             return False
         u = urllib.parse.urlparse(self.path)
-        if u.path == "/healthz":
+        if u.path in ("/healthz", "/rate-limit"):
+            return False
+        # мультичастовая загрузка идёт сотнями запросов part -> лимит не применяем
+        # (сессии/квоты/дедлайны загрузки уже контролируются отдельно)
+        if u.path.startswith("/uploads/") or u.path.startswith("/api/progress/"):
             return False
         try:
             key_ent = getattr(self, "_subject", "") or authz.rate_limit_key(
@@ -1202,6 +1217,28 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         return True
+
+    def _rate_limit_get(self) -> None:
+        if authz is None:
+            return self._json(503, {"error": "auth module unavailable"})
+        return self._json(200, authz.rate_limit_state())
+
+    def _rate_limit_set(self) -> None:
+        """N6: настройка rate-limit UI/API на лету (admin; rps=0 — выключить)."""
+        if authz is None:
+            return self._json(503, {"error": "auth module unavailable"})
+        if "admin" not in (getattr(self, "_roles", []) or []):
+            return self._json(403, {"error": "требуются права admin"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        rps = float(body.get("rps", 0) or 0)
+        burst = int(body.get("burst", 1) or 1)
+        if rps < 0 or burst < 1:
+            return self._json(400, {"error": "rps>=0, burst>=1"})
+        return self._json(200, authz.set_rate_limit(rps, burst))
 
     def _require(self):
         """Аутентификация на входе: API-ключ из заголовка или cookie (после /login)."""
@@ -1440,6 +1477,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        if u.path == "/rate-limit":
+            ent = self._require()
+            if ent is None:
+                return
+            if self.command == "POST":
+                return self._rate_limit_set()
+            return self._rate_limit_get()
         if self._rate_limited():
             return
         lang = self._lang(q)
@@ -1555,6 +1599,11 @@ class Handler(BaseHTTPRequestHandler):
             code, body = self._test_request("POST", "/bundles", data)
             return self._send(code, body, "application/json; charset=utf-8")
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", u.path, data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        if u.path.startswith("/images/") and (u.path.endswith("/sign") or u.path.endswith("/sbom")):
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"
             code, body = self._test_request("POST", u.path, data)

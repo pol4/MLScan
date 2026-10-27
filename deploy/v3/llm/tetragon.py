@@ -12,6 +12,18 @@ SHELL_BINARIES = {"sh", "bash", "dash", "zsh", "python", "python3", "perl", "rub
 HONEYPOT_HINTS = ("/.aws/", "/.ssh/", "/.kube/", "/etc/shadow", "/etc/passwd")
 ALLOWED_NET = ("127.0.0.1", "::1", "localhost")
 
+def _is_public(ip: str) -> bool:
+    """True, если адрес публичный (вне loopback/private/link-local) — то есть реальный egress наружу.
+
+    Трафик платформы (ClusterIP 10.152/10.1, node 192.168.x, loopback) не считается внешним.
+    """
+    import ipaddress
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return not (a.is_loopback or a.is_private or a.is_link_local or a.is_multicast or a.is_unspecified)
+
 # правила: (check_id, тип события, предикат, severity, confidence, title)
 RULES = [
     ("LLM-B-01", "process_exec", lambda e: _is_shell(e), "high", 0.8,
@@ -44,7 +56,7 @@ def _is_external(e: dict) -> bool:
     ip = str(dst.get("ip") or dst.get("addr") or "")
     if not ip:
         return False
-    return not any(ip.startswith(a) for a in ALLOWED_NET)
+    return _is_public(ip)
 
 
 def _is_honeypot(e: dict) -> bool:

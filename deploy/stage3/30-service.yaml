@@ -33,8 +33,9 @@ spec:
         - {name: PORT, value: "8080"}
         - {name: POLL_INTERVAL, value: "3600"}
         # N6: rate-limit (UI/API) + общий ключ JWT (токены, выданные сервисом тестирования)
-        - {name: RATE_LIMIT_RPS, value: "30"}
-        - {name: RATE_LIMIT_BURST, value: "60"}
+        # лимиты UI/API: 100 rps / 300 burst (теснее мешает браузеру и UI-тестам; настраивается POST /rate-limit)
+        - {name: RATE_LIMIT_RPS, value: "100"}
+        - {name: RATE_LIMIT_BURST, value: "300"}
         - name: MLSCAN_JWT_KEY
           valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_EVIDENCE_KEY}}
         - {name: PYTHONDONTWRITEBYTECODE, value: "1"}

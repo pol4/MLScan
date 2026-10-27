@@ -361,6 +361,7 @@ def main() -> int:
     ap.add_argument("--scan-id", default="")
     ap.add_argument("--nonce", default="")
     ap.add_argument("--phase", default="probe")
+    ap.add_argument("--stop-file", default="", help="выйти, когда появится файл (скан завершён)")
     ap.add_argument("--trigger-shell", action="store_true",
                     help="самопроверка: выполнить 'sh -c true' (execve shell внутри гостя)")
     args = ap.parse_args()
@@ -391,26 +392,24 @@ def main() -> int:
     t_end = time.time() + max(args.duration, 5)
     last_post = 0.0
     seen = set()
-    while time.time() < t_end:
-        time.sleep(1.0)
+    def drain() -> None:
+        """Считать карту и добавить новые события (вызывается в цикле и один раз после него)."""
         ex, cn = read_map(m, 0), read_map(m, 1)
         if DUMP_NR >= 0 and ex.get("count"):
             print("[ebpf-agent] pt_regs[80..144] hex (слот %d):" % SLOT.get(DUMP_NR, 0),
                   (read_map(m, SLOT.get(DUMP_NR, 0)).get("buf_hex") or ""), flush=True)
         if ex.get("count"):
-            path = (ex["buf"] or "?")
+            path = ex["buf"] or "?"
             key = ("process_exec", path)
             if key not in seen:
                 seen.add(key)
                 ev = {"type": "process_exec", "phase": args.phase, "probe_id": "ebpf-agent",
-                               "process": {"binary": path.strip(), "exe": path.strip(),
-                                           "args": [], "pid": ex.get("pid")},
-                       "details": f"comm={path.strip()} syscall=execve pid={ex.get('pid')}",
-                       "nonce": args.nonce, "ts": time.time()}
+                      "process": {"binary": path.strip(), "exe": path.strip(),
+                                  "args": [], "pid": ex.get("pid")},
+                      "details": f"comm={path.strip()} syscall=execve pid={ex.get('pid')}",
+                      "nonce": args.nonce, "ts": time.time()}
                 events.append(ev); pending.append(ev)
-        # NB: memory/module хуки сняты до верификации регистров (см. TODO выше)
-        if args.post and pending and (last_post == 0.0 or (time.time() - last_post) >= 3.0):
-            _post_events(args, pending); pending = []; last_post = time.time()
+        # NB: memory/module хуки сняты до верификации регистров (см. TODO в build_hook)
         if cn.get("count"):
             peers = external_peers()          # LLM-B-02: внешние адреса из kernel-состояния
             ip = peers[0]["ip"] if peers else ""
@@ -419,10 +418,20 @@ def main() -> int:
             if key not in seen:
                 seen.add(key)
                 ev = {"type": "network", "phase": args.phase, "probe_id": "ebpf-agent",
-                       "dst": {"ip": ip, "port": port} if ip else {},
-                       "details": f"comm={cn.get('buf', '').strip()} peers={[p_['ip'] for p_ in peers]}",
-                       "nonce": args.nonce, "ts": time.time()}
+                      "dst": {"ip": ip, "port": port} if ip else {},
+                      "details": f"comm={cn.get('buf', '').strip()} peers={[p_['ip'] for p_ in peers]}",
+                      "nonce": args.nonce, "ts": time.time()}
                 events.append(ev); pending.append(ev)
+
+    while time.time() < t_end:
+        time.sleep(1.0)
+        drain()
+        if args.post and pending and (last_post == 0.0 or (time.time() - last_post) >= 3.0):
+            _post_events(args, pending); pending = []; last_post = time.time()
+        if args.stop_file and os.path.exists(args.stop_file):
+            print("[ebpf-agent] стоп-файл найден — завершаю наблюдение", flush=True)
+            break
+    drain()                                    # финальный дренаж (важно на очень коротких сканах)
 
     if os.environ.get("EBPF_DUMP_SLOTS") == "1":
         for i in range(6):

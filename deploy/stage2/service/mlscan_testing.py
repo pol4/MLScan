@@ -23,6 +23,7 @@ Artifact-сервер (8090):
 from __future__ import annotations
 
 import hashlib
+import hmac
 import http.client
 import base64
 import json
@@ -100,6 +101,7 @@ LLM_TEST_RUNTIME_CLASS = os.environ.get("LLM_TEST_RUNTIME_CLASS", "nvidia")
 LLM_TEST_GPU = os.environ.get("LLM_TEST_GPU", "1") == "1"
 LLM_TEST_MAX_TOKENS = int(os.environ.get("LLM_TEST_MAX_TOKENS", "256"))
 LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
+IMAGES_REQUIRE_SIGNED = os.environ.get("IMAGES_REQUIRE_SIGNED", "0") == "1"   # B4-lite: политика подписи
 LLM_TEST_EBPF = os.environ.get("LLM_TEST_EBPF", "0") == "1"      # B1: in-guest eBPF-агент в job'е теста
 SANDBOX_EBPF = os.environ.get("SANDBOX_EBPF", "0") == "1"        # B1: in-guest eBPF-агент в скан-джобах
 SANDBOX_EBPF_TRIGGER = os.environ.get("SANDBOX_EBPF_TRIGGER", "0") == "1"
@@ -178,6 +180,28 @@ def _write_bundle_verdict(bundle_id: str, verdict: str, *, safety_fail: int = 0,
                 "attestation_digest=EXCLUDED.attestation_digest, signature=EXCLUDED.signature")
     return {"bundle_id": bundle_id, "verdict": verdict, "action": action, "reason": reason,
             "attestation_digest": digest, "signature": sig, "statement": st}
+
+
+def _image_sig(digest: str, ref: str = "") -> str:
+    """B4-lite: платформенная подпись образа движка (HMAC по digest|ref ключом аттестации).
+
+    Interim до cosign/Harbor (см. план B4): проверяет, что digest образа подтверждён платформой.
+    """
+    return "hmac-sha256:" + hmac.new(ATTEST_KEY.encode(), f"{digest}|{ref}".encode(),
+                                     hashlib.sha256).hexdigest()
+
+
+def _engine_signed(engine_image: str) -> bool:
+    """Есть ли сохранённая подпись для digest движка."""
+    if not DB_ENABLED:
+        return False
+    digest = "sha256:" + engine_image.split("@sha256:")[-1] if "@sha256:" in (engine_image or "") \
+        else (engine_image or "")
+    try:
+        rows = db_query("SELECT signature FROM registry_images WHERE digest=" + _lit(digest))
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(rows and (rows[0][0] or "").strip())
 
 
 def _gate_log(source: str, *, image: str = "", model_sha256: str = "", verdict: str = "",
@@ -1018,7 +1042,8 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                          nonce: str = "", run_token: str = "") -> dict:
     cmd = ('python -c "import urllib.request,sys;urllib.request.urlretrieve(sys.argv[1],sys.argv[2])" '
            '"$ARTIFACT_URL" "/tmp/$MODEL_NAME" '
-           '&& exec python /opt/mlscan/harness.py "$MODEL_FMT" "$MODEL_NAME" < "/tmp/$MODEL_NAME"')
+           '&& python /opt/mlscan/harness.py "$MODEL_FMT" "$MODEL_NAME" < "/tmp/$MODEL_NAME"; '
+           'touch /tmp/sensor-stop')   # B1: сигнал сенсору, что скан закончился
     return {
         "apiVersion": "batch/v1", "kind": "Job",
         "metadata": {"name": job_name, "namespace": SANDBOX_NS,
@@ -1065,7 +1090,8 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                         "command": (["python", "/opt/ebpf/ebpf_agent.py",
                                      "--duration", str(int(JOB_TIMEOUT) + 60),
                                      "--post", LLM_TEST_URL, "--key", run_token,
-                                     "--scan-id", scan_id, "--nonce", nonce]
+                                     "--scan-id", scan_id, "--nonce", nonce,
+                                     "--stop-file", "/tmp/sensor-stop"]
                                     + (["--trigger-shell"] if SANDBOX_EBPF_TRIGGER else [])),
                         # сенсор мониторинга: root-в-госте (иначе eBPF недоступен: non-root -> CapEff=0 -> EPERM)
                         "securityContext": {"runAsNonRoot": False, "runAsUser": 0,
@@ -1074,7 +1100,8 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                                             "capabilities": {"drop": ["ALL"], "add": ["BPF", "PERFMON"]},
                                             "seccompProfile": {"type": "RuntimeDefault"}},
                         "resources": {"limits": {"cpu": "1", "memory": "512Mi"}},
-                        "volumeMounts": [{"name": "ebpf", "mountPath": "/opt/ebpf", "readOnly": True}],
+                        "volumeMounts": [{"name": "ebpf", "mountPath": "/opt/ebpf", "readOnly": True},
+                                         {"name": "tmp", "mountPath": "/tmp"}],
                     }] if (SANDBOX_EBPF and run_token) else []),
                     "volumes": (
                         [{"name": "harness", "configMap": {"name": HARNESS_CM}},
@@ -2144,8 +2171,10 @@ class Handler(BaseHTTPRequestHandler):
                             + " AND status IN ('created','running')")
             if rows:
                 return True
+            # события сенсора могут прийти чуть позже завершения скана (окно дозвона 2 минуты)
             rows = db_query("SELECT scan_id FROM scan_tokens WHERE token=" + _lit(token)
-                            + " AND status IN ('created','running')")
+                            + " AND (status IN ('created','running')"
+                            + " OR (status='done' AND updated > now() - interval '2 minutes'))")
         except Exception:  # noqa: BLE001
             return False
         return bool(rows)
@@ -2461,12 +2490,53 @@ class Handler(BaseHTTPRequestHandler):
         keys = ("id", "source", "image", "model_sha256", "verdict", "decision", "attestation_digest", "created")
         return self._json(200, {"count": len(rows), "decisions": [dict(zip(keys, r)) for r in rows]})
 
+    def _images_sign(self, digest: str) -> None:
+        """B4-lite: подписать digest образа движка платформенным ключом (admin)."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        digest = digest if digest.startswith("sha256:") else "sha256:" + digest
+        rows = db_query("SELECT ref FROM registry_images WHERE digest=" + _lit(digest))
+        if not rows:
+            return self._json(404, {"error": "образ не зарегистрирован"})
+        ref = rows[0][0] or ""
+        sig = _image_sig(digest, ref)
+        db_exec("UPDATE registry_images SET signature=" + _lit(sig) + " WHERE digest=" + _lit(digest))
+        return self._json(200, {"digest": digest, "ref": ref, "signature": sig,
+                                "hint": "подпись платформы (interim к cosign/Harbor)"})
+
+    def _images_sbom(self, digest: str) -> None:
+        """B4-lite: сохранить SBOM образа движка (admin, до 64 КиБ)."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        sbom = body.get("sbom") or ""
+        if not isinstance(sbom, str) or not sbom.strip():
+            return self._json(400, {"error": "нужен непустой sbom (строка JSON/SPDX)"})
+        if len(sbom) > 65536:
+            return self._json(400, {"error": "sbom слишком большой (>64 КиБ)"})
+        digest = digest if digest.startswith("sha256:") else "sha256:" + digest
+        rows = db_query("SELECT 1 FROM registry_images WHERE digest=" + _lit(digest))
+        if not rows:
+            return self._json(404, {"error": "образ не зарегистрирован"})
+        db_exec("UPDATE registry_images SET sbom=" + _lit(sbom) + " WHERE digest=" + _lit(digest))
+        return self._json(200, {"digest": digest, "sbom_bytes": len(sbom)})
+
     def _images_list(self) -> None:
         if not DB_ENABLED:
             return self._json(503, {"error": "db disabled"})
-        rows = db_query("SELECT digest,ref,source,size,status FROM registry_images ORDER BY created DESC") or []
-        return self._json(200, {"images": [{"digest": r[0], "ref": r[1], "source": r[2],
-                                            "size": r[3], "status": r[4]} for r in rows]})
+        rows = db_query("SELECT digest,ref,source,size,status,"
+                        "COALESCE(signature,''),COALESCE(sbom,'') FROM registry_images ORDER BY created DESC") or []
+        return self._json(200, {"images": [{"digest": r[0], "ref": r[1], "source": r[2], "size": r[3],
+                                            "status": r[4], "signed": bool((r[5] or "").strip()),
+                                            "sbom": bool((r[6] or "").strip())} for r in rows]})
 
     @staticmethod
     def _to_digest(engine_image: str) -> str:
@@ -2534,6 +2604,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             return self._json(400, {"error": f"bad json: {exc}"})
         new_engine = _norm_engine(body.get("engine_image") or "")
+        if IMAGES_REQUIRE_SIGNED and self._engine_ok(new_engine) and not _engine_signed(new_engine):
+            return self._json(400, {"error": "IMAGES_REQUIRE_SIGNED=1: образ движка не подписан "
+                                             "(POST /images/<digest>/sign, admin)"})
         if not self._engine_ok(new_engine):
             return self._json(400, {"error": "engine_image должен быть из уже скачанных (registry_images)"})
         rows = db_query("SELECT engine_image,model_sha256,engine_manifest,prompt_set,detectors,policy,tenant "
@@ -2600,6 +2673,10 @@ class Handler(BaseHTTPRequestHandler):
         # §10 D3: LLM-модель требует выбранный движок из уже скачанных
         kind = (body.get("kind") or "llm").lower()
         engine_image = _norm_engine(body.get("engine_image") or "")
+        if IMAGES_REQUIRE_SIGNED and not HF_MOCK and self._engine_ok(engine_image) \
+                and not _engine_signed(engine_image):
+            return self._json(400, {"error": "IMAGES_REQUIRE_SIGNED=1: образ движка не подписан "
+                                             "(POST /images/<digest>/sign, admin)"})
         if kind != "nonllm" and not self._engine_ok(engine_image):
             return self._json(400, {"error": "для LLM-модели обязателен engine_image из уже скачанных "
                                              "(registry_images); скачайте движок в подзакладке «Движки инференса»"})
@@ -2904,7 +2981,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": "image not found"})
         r = rows[0]
         return self._json(200, {"digest": r[0], "ref": r[1], "source": r[2], "size": r[3],
-                                "signature": r[4], "sbom": r[5], "stored_key": r[6], "status": r[7]})
+                                "signature": r[4] or "", "signed": bool((r[4] or "").strip()),
+                                "sbom": r[5] or "", "sbom_present": bool((r[5] or "").strip()),
+                                "stored_key": r[6], "status": r[7]})
 
     def _images_verify(self, ref: str) -> None:
         if v3images is None:
@@ -2921,8 +3000,12 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
         except Exception as exc:  # noqa: BLE001
             return self._json(400, {"error": f"bad json: {exc}"})
+        eng = _norm_engine(body.get("engine_image") or "")
+        if IMAGES_REQUIRE_SIGNED and self._engine_ok(eng) and not _engine_signed(eng):
+            return self._json(400, {"error": "IMAGES_REQUIRE_SIGNED=1: образ движка не подписан "
+                                             "(POST /images/<digest>/sign, admin)"})
         b = v3binding.make_bundle(
-            image_digest=_norm_engine(body.get("engine_image") or ""),
+            image_digest=eng,
             model_sha256=(body.get("model_sha256") or "").lower(),
             engine_manifest=body.get("engine_manifest") or {},
             prompt_set=body.get("prompt_set", ""), detectors=body.get("detectors", ""),
@@ -3063,6 +3146,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._hf_quota_set()
         if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):
             return self._bundle_rebind(u.path.split("/", 3)[2])
+        if u.path.startswith("/images/") and u.path.endswith("/sign"):
+            return self._images_sign(u.path[len("/images/"):-len("/sign")].strip("/"))
+        if u.path.startswith("/images/") and u.path.endswith("/sbom"):
+            return self._images_sbom(u.path[len("/images/"):-len("/sbom")].strip("/"))
         if u.path == "/images/import":
             return self._images_import()
         if u.path == "/domain-class":

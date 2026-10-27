@@ -148,6 +148,22 @@ containerd/kata; бэкап конфига в `/var/backups/mlscan/`, откат
 `runtimeClassName: kata` и запуском `deploy/v3/sandbox/kata-btf/ebpf_smoke.py`
 (ожидается «eBPF в госте РАБОТАЕТ»; в выводе — размер BTF и успешный attach raw-tracepoint).
 
+### Подпись и SBOM образов движков (B4-lite)
+
+```bash
+# зарегистрировать образ (по digest), подписать платформенным ключом, сохранить SBOM
+curl -sX POST -H "X-API-Key: <adm>" -H 'Content-Type: application/json' \
+  -d '{"ref":"registry/team/engine@sha256:<64hex>","source":"import"}' http://<testing>/images/import
+curl -sX POST -H "X-API-Key: <adm>" http://<testing>/images/sha256:<64hex>/sign
+curl -sX POST -H "X-API-Key: <adm>" -H 'Content-Type: application/json' \
+  -d '{"sbom":"{\"spdxVersion\":\"SPDX-2.3\"}"}' http://<testing>/images/sha256:<64hex>/sbom
+curl -sH "X-API-Key: <adm>" http://<testing>/images/sha256:<64hex>     # signed / sbom_present
+```
+
+Политика (env сервиса тестирования): `IMAGES_REQUIRE_SIGNED=1` — создание bundle/перепривязка/HF-загрузка
+требуют подписанный движок. В интерфейсе: список движков помечает `[signed]`/`[unsigned]`/`[sbom]`,
+кнопка «Подписать» в панели «Движки». Это interim-слой до cosign/Harbor (B4 полностью).
+
 ### Токены для CI и ограничение частоты (N6)
 
 ```bash

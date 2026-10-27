@@ -66,16 +66,32 @@ rows = m.db_query("SELECT token,status FROM scan_tokens WHERE scan_id=" + m._lit
 assert rows, "нет записи scan_tokens"
 tok, status = rows[0][0], rows[0][1]
 assert status == "done", ("токен не закрыт после скана", status)
+# окно дозвона: сразу после скана токен ещё принимается (события сенсора успевают дойти)
+st_ok, _ = api("POST", "/llm/events", {"scan_id": sid, "nonce": "", "events": []},
+               timeout=15) if False else (None, None)
+# эмулируем истечение окна: сдвигаем updated на 5 минут назад -> токен больше не принимается
+m.db_exec("UPDATE scan_tokens SET updated = now() - interval '5 minutes' WHERE scan_id=" + m._lit(sid))
 req = urllib.request.Request("http://127.0.0.1:8080/llm/events",
                              data=json.dumps({"scan_id": sid, "nonce": "", "events": []}).encode(),
                              method="POST",
                              headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"})
 try:
     op.open(req, timeout=15)
-    raise AssertionError("токен завершённого скана принят")
+    raise AssertionError("истёкший скан-токен принят")
 except urllib.error.HTTPError as e:
     assert e.code == 401, e.code
-print("  [OK]   скан-токен закрыт после скана и больше не принимается (401)")
+# посторонний токен — тоже 401
+req2 = urllib.request.Request("http://127.0.0.1:8080/llm/events",
+                              data=json.dumps({"scan_id": sid, "nonce": "", "events": []}).encode(),
+                              method="POST",
+                              headers={"Authorization": "Bearer deadbeefdeadbeefdeadbeefdeadbeef",
+                                       "Content-Type": "application/json"})
+try:
+    op.open(req2, timeout=15)
+    raise AssertionError("посторонний токен принят")
+except urllib.error.HTTPError as e:
+    assert e.code == 401, e.code
+print("  [OK]   скан-токен: истёк после окна дозвона (401) и посторонний токен отклонён")
 PY
 RC=$?; [ "$RC" = "0" ] || { echo "[FAIL] sandbox ebpf e2e"; exit 1; }
 echo "B1 sandbox ebpf: OK"
