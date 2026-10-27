@@ -172,3 +172,17 @@ CREATE TABLE IF NOT EXISTS bundle_tests (
   created TIMESTAMPTZ DEFAULT now(),
   updated TIMESTAMPTZ DEFAULT now()
 );
+
+-- N3: append-only журнал решений gate (аудит: что решили, по какой модели/образу, с какой аттестацией)
+CREATE TABLE IF NOT EXISTS gate_decisions (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT NOT NULL,
+  image TEXT DEFAULT '',
+  model_sha256 TEXT DEFAULT '',
+  verdict TEXT DEFAULT '',
+  decision TEXT NOT NULL,
+  attestation_digest TEXT DEFAULT '',
+  signature TEXT DEFAULT '',
+  payload TEXT DEFAULT '',
+  created TIMESTAMPTZ DEFAULT now()
+);

@@ -113,6 +113,18 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
 `tests/ui/operator_browser_e2e.js` больше не содержит admin-ключа: он берётся из `MLSCAN_API_KEY`
 (в `run_ui_tests.sh` при `MLSCAN_E2E=1` — из Secret `mlscan-keys`).
 
+**N3: подписанные решения gate и append-only журнал (аудит).** Решение по паре (образ, модель) —
+как по вердикту bundle, так и **без bundle** — теперь всегда подписано: `attest.make_artifact_statement`
+(тип `mlscan.artifact-verdict/v1`, subject: модель (+ образ), predicate: verdict/action/`source`)
+возвращается в `/gate` вместе с `attestation_digest`, `signature` и `source`
+(`bundle-verdict` | `bundle-no-verdict` | `artifact-verdict` | `policy-default`). Все решения пишутся в
+**append-only** журнал `gate_decisions` (trigger `gate_dec_nochange` отклоняет UPDATE/DELETE) с
+`safety`-ссылкой на аттестацию; выборка — `GET /gate/decisions?model=<sha>&limit=N`. Интеграции
+(`/gate` в `mlscan-integrations`) прокидывают `source`/`attestation_digest`/`signature` в ответ и в свой
+журнал событий — сквозная ссылка от решения CI до подписанного утверждения. Проверка:
+`tests/e2e/gate_attest_e2e.sh` (подпись артефактного решения, ветка `artifact-verdict`, журнал,
+неизменяемость) и `tests/e2e/integrations_gate_e2e.sh` (проксирование ссылки на аттестацию).
+
 **N2: тест bundle запускается из интерфейса (реальный инференс).** `POST /bundles/<id>/test` собирает
 Job (`deploy/v3/llm/llm_env.py::make_llama_test_job`): init `model-fetcher` (модель по **внутреннему**
 presigned-URL из S3 + проверка sha256) → `engine` (образ движка строго по digest) → `probe` (прогон

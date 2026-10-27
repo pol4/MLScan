@@ -174,6 +174,22 @@ def _write_bundle_verdict(bundle_id: str, verdict: str, *, safety_fail: int = 0,
             "attestation_digest": digest, "signature": sig, "statement": st}
 
 
+def _gate_log(source: str, *, image: str = "", model_sha256: str = "", verdict: str = "",
+              decision: str = "", attestation_digest: str = "", signature: str = "",
+              payload: dict | None = None) -> None:
+    """N3: append-only журнал решений gate (аудит). Best-effort: сбой журнала не ломает решение."""
+    if not DB_ENABLED:
+        return
+    try:
+        db_exec("INSERT INTO gate_decisions(source,image,model_sha256,verdict,decision,"
+                "attestation_digest,signature,payload) VALUES ("
+                f"{_lit(source)},{_lit(image)},{_lit(model_sha256)},{_lit(verdict)},{_lit(decision)},"
+                f"{_lit(attestation_digest)},{_lit(signature)},"
+                f"{_lit(json.dumps(payload or {}, ensure_ascii=False))})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] gate_decisions: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
 def _verdict_from_score(safety_fail: int, pass_rate: float) -> str:
     """Вердикт по результатам набора вопросов (fail-closed на критичных отказах)."""
     if safety_fail > 0:
@@ -1422,6 +1438,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._images_get(u.path.split("/", 2)[2])
         if u.path == "/gate":
             return self._gate(q)
+        if u.path == "/gate/decisions":
+            return self._gate_decisions_get(q)
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
             return self._bundle_test_get(u.path[len("/bundles/"):-len("/test")].strip("/"))
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
@@ -2127,19 +2145,58 @@ class Handler(BaseHTTPRequestHandler):
                     verdict = ""
             if verdict:
                 dec, why = v3attest.gate_decision(verdict) if v3attest is not None else ("quarantine", "attest недоступен")
+                source = "artifact-verdict"
             else:
                 dec, why = "quarantine", "нет bundle и вердикта; политика по умолчанию"
-            return self._json(200, {"bundle_id": None, "decision": dec, "verdict": verdict or None,
-                                    "reason": why})
+                source = "policy-default"
+            # N3: решение по артефакту тоже подписывается (аттестация) и попадает в журнал
+            digest = sig = ""
+            statement = None
+            if v3attest is not None:
+                try:
+                    statement = v3attest.make_artifact_statement(
+                        model_sha256=model, verdict=verdict, action=dec, source=source,
+                        coverage={"complete": source == "artifact-verdict"}, engine_image=image)
+                    digest = v3attest.statement_digest(statement)
+                    sig = v3attest.sign(statement, ATTEST_KEY)
+                except Exception:  # noqa: BLE001
+                    statement = None
+            _gate_log(source, image=image, model_sha256=model, verdict=verdict, decision=dec,
+                      attestation_digest=digest, signature=sig,
+                      payload={"reason": why, "bundle_id": None})
+            out = {"bundle_id": None, "decision": dec, "verdict": verdict or None, "reason": why,
+                   "source": source, "attestation_digest": digest, "signature": sig}
+            if statement is not None:
+                out["statement"] = statement
+            return self._json(200, out)
         bid = rows[0][0]
         vr = db_query("SELECT verdict,action,attestation_digest,signature FROM bundle_verdicts "
                       "WHERE bundle_id=" + _lit(bid))
         if not vr:
             # fail-closed: bundle без вердикта (тест не прогнан) — не allow
-            return self._json(200, {"bundle_id": bid, "decision": "quarantine",
+            _gate_log("bundle-no-verdict", image=image, model_sha256=model, decision="quarantine",
+                      payload={"reason": "нет вердикта bundle", "bundle_id": bid})
+            return self._json(200, {"bundle_id": bid, "decision": "quarantine", "source": "bundle-no-verdict",
                                     "reason": "нет вердикта bundle: тест (инференс/набор вопросов) не прогнан"})
+        _gate_log("bundle-verdict", image=image, model_sha256=model, verdict=vr[0][0], decision=vr[0][1],
+                  attestation_digest=vr[0][2] or "", signature=vr[0][3] or "",
+                  payload={"reason": "вердикт bundle", "bundle_id": bid})
         return self._json(200, {"bundle_id": bid, "decision": vr[0][1], "verdict": vr[0][0],
+                                "source": "bundle-verdict",
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
+
+    def _gate_decisions_get(self, q: dict) -> None:
+        """N3: журнал решений gate (append-only) — для аудита и разбора инцидентов."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        model = (q.get("model", [""])[0] or "").strip().lower()
+        limit = max(1, min(200, int((q.get("limit", ["50"])[0] or 50))))
+        where = (" WHERE model_sha256=" + _lit(model)) if model else ""
+        rows = db_query("SELECT id,source,image,model_sha256,verdict,decision,attestation_digest,"
+                        "to_char(created,'YYYY-MM-DD\"T\"HH24:MI:SS') FROM gate_decisions"
+                        + where + f" ORDER BY id DESC LIMIT {limit}") or []
+        keys = ("id", "source", "image", "model_sha256", "verdict", "decision", "attestation_digest", "created")
+        return self._json(200, {"count": len(rows), "decisions": [dict(zip(keys, r)) for r in rows]})
 
     def _images_list(self) -> None:
         if not DB_ENABLED:

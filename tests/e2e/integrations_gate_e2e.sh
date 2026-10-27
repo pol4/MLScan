@@ -29,7 +29,11 @@ u="http://127.0.0.1:8080/gate?image="+up.quote(img)+"&model="+sha
 d=json.loads(op.open(urllib.request.Request(u,headers={"Authorization":"Bearer "+key}),timeout=30).read())
 assert d.get("decision")=="block", d
 assert d.get("bundle_id"), d
-print("  [OK]   integrations /gate decision=block bundle=", d["bundle_id"][:16])
+# N3: прокси передаёт ссылку на подписанное решение (аттестацию) и её источник
+assert d.get("attestation_digest"), d
+assert d.get("source") in ("bundle-verdict", "artifact-verdict", "policy-default"), d
+print("  [OK]   integrations /gate decision=block bundle=", d["bundle_id"][:16],
+      "| source=", d.get("source"), "| attestation=", d["attestation_digest"][:20])
 PY
 RC=$?; [ "$RC" = "0" ] || { echo "[FAIL] integrations gate e2e"; exit 1; }
 echo "P0..L4 integrations gate: OK"

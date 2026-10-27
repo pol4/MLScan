@@ -358,9 +358,12 @@ class Handler(BaseHTTPRequestHandler):
                        "verdict": res.get("verdict", ""),
                        "attestation_digest": res.get("attestation_digest", ""),
                        "signature": res.get("signature", ""),
+                       "source": res.get("source", ""),
                        "image": img, "model": mdl}
+                # N3: в журнал интеграций пишем ссылку на подписанное решение (аттестацию)
                 _log_event({"kind": "gate", "image": img, "model": mdl,
-                            "decision": dec["decision"], "bundle_id": dec["bundle_id"]})
+                            "decision": dec["decision"], "bundle_id": dec["bundle_id"],
+                            "source": dec["source"], "attestation_digest": dec["attestation_digest"]})
                 code = 200 if dec["decision"] in ("allow", "block", "quarantine") else 404
                 return self._json(code, dec)
             if "sha256" in q:
@@ -374,7 +377,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 return self._json(400, {"error": T("msg.need_sha_or_name", lang)})
             dec = gate_decision(e, lang)
-            _log_event({"kind": "gate", **e, "decision": dec["decision"], "reason": dec["reason"]})
+            # N3: ссылку на аттестацию (если решение принималось по паре образ+модель) — в журнал
+            _log_event({"kind": "gate", **e, "decision": dec["decision"], "reason": dec["reason"],
+                        "source": e.get("source", ""), "attestation_digest": e.get("attestation_digest", "")})
             return self._json(dec["http"], {**e, **dec})
         return self._json(404, {"error": T("msg.not_found", lang)})
 

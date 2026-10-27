@@ -217,6 +217,23 @@ class AttestTest(unittest.TestCase):
     def test_gate_allow(self):
         self.assertEqual(attest.gate_decision("Safe", pass_rate=1.0)[0], "allow")
 
+    def test_artifact_statement_signed_and_typed(self):
+        st = attest.make_artifact_statement(model_sha256="a" * 64, verdict="Dangerous",
+                                            action="block", source="artifact-verdict")
+        self.assertEqual(st["type"], "mlscan.artifact-verdict/v1")
+        self.assertIsNone(st["bundle_id"])
+        self.assertEqual(st["predicate"]["source"], "artifact-verdict")
+        sig = attest.sign(st, "k")
+        self.assertTrue(attest.verify(st, sig, "k"))
+        self.assertFalse(attest.verify(st, sig, "other"))
+        self.assertEqual(st["subject"][0]["digest"]["sha256"], "a" * 64)
+
+    def test_artifact_statement_default_source(self):
+        st = attest.make_artifact_statement(model_sha256="b" * 64, verdict="", action="quarantine",
+                                            source="policy-default", engine_image="reg/x@sha256:" + "c" * 64)
+        self.assertEqual(st["predicate"]["source"], "policy-default")
+        self.assertEqual(len(st["subject"]), 2)
+
     def test_gate_unknown_verdict_is_fail_closed(self):
         # неизвестный/пустой вердикт не может быть разрешением
         self.assertEqual(attest.gate_decision("")[0], "quarantine")

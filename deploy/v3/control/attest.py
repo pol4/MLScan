@@ -31,6 +31,22 @@ def make_statement(*, bundle_id: str, engine_image: str, model_sha256: str,
         "predicate": predicate, "bundle_id": bundle_id}
 
 
+def make_artifact_statement(*, model_sha256: str, verdict: str, action: str,
+                            coverage: dict | None = None, source: str = "artifact-verdict",
+                            engine_image: str = "") -> dict:
+    """Подписанное утверждение о решении gate по артефакту модели (когда пары (образ, модель) нет).
+
+    source: artifact-verdict (вердикт артефакта) | policy-default (решение по умолчанию, fail-closed).
+    """
+    subject = [{"name": "model", "digest": {"sha256": model_sha256}}]
+    if engine_image:
+        subject.append({"name": engine_image, "digest": {"sha256": engine_image.split("@sha256:")[-1]}})
+    predicate = {"verdict": verdict or None, "action": action, "source": source,
+                 "coverage": coverage or {}}
+    return {"type": "mlscan.artifact-verdict/v1", "subject": subject,
+            "predicate": predicate, "bundle_id": None}
+
+
 def statement_digest(statement: dict) -> str:
     return "sha256:" + hashlib.sha256(canonical(statement).encode()).hexdigest()
 

@@ -120,6 +120,18 @@
 - Ответ: `decision ∈ {allow, block, quarantine}` + `bundle_id` + аттестация. Пайплайн
   блокируется на `block` и помечается на `quarantine`.
 
+### Аудит решений CI-gate (N3)
+
+Каждое решение `/gate` подписано и записано в журнал:
+
+```bash
+curl -sH "X-API-Key: <adm>" 'http://<testing>/gate/decisions?model=<sha256>&limit=20' | python3 -m json.tool
+```
+
+Поля: `source` (`bundle-verdict` — по вердикту bundle, `bundle-no-verdict` — тест не прогнан,
+`artifact-verdict` — по вердикту артефакта модели, `policy-default` — политика по умолчанию),
+`decision`, `attestation_digest`, `signature`. Журнал append-only: изменить/удалить запись нельзя.
+
 ### Запуск теста bundle из UI (N2)
 
 «Загрузки → Тест bundle»: укажите `bundle_id` (или sha256 модели — возьмётся первый подходящий bundle)
