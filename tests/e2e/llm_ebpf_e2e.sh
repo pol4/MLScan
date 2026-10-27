@@ -24,14 +24,36 @@ kubectl --context "$CTX" -n mlscan-build create configmap kata-btf-ebpf \
   --from-file=ebpf_agent.py=deploy/v3/sandbox/kata-btf/ebpf_agent.py \
   --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
 cat > /tmp/ebpf-trigger.py <<'PY'
-import socket, subprocess, time
+import mmap, socket, subprocess, time
 time.sleep(2)
 subprocess.run(["/bin/sh", "-c", "true"], check=False)     # execve shell -> LLM-B-01
-try:                                                        # внешний connect -> LLM-B-02
-    s = socket.socket(); s.settimeout(2); s.connect(("1.1.1.1", 80))
+# внешний egress -> LLM-B-02: пробуем несколько публичных адресов и держим соединение открытым,
+# чтобы kernel-состояние (/proc/net/tcp) успело попасть в событие
+for host, port in (("1.1.1.1", 443), ("8.8.8.8", 53), ("1.1.1.1", 80), ("8.8.4.4", 53)):
+    try:
+        sock = socket.create_connection((host, port), timeout=4)
+        time.sleep(5)
+        sock.close()
+        break
+    except Exception:
+        continue
+try:                                                        # RWX-память -> LLM-B-04
+    m = mmap.mmap(-1, 4096, prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC)
+    m.close()
 except Exception:
     pass
-subprocess.run(["/bin/cat", "/etc/hostname"], check=False)
+try:                                                        # попытка загрузки модуля -> LLM-B-05
+    import ctypes
+    ctypes.CDLL(None, use_errno=True).syscall(313, -1, b"", 0)   # finit_module(неверный fd)
+except Exception:
+    pass
+# honeypot-файл -> LLM-B-03: делаем последним и удерживаем окно (слот карты хранит последний путь)
+try:
+    fh = open("/etc/shadow")
+    time.sleep(4)
+    fh.close()
+except Exception:
+    pass
 PY
 kubectl --context "$CTX" -n mlscan-build create configmap ebpf-trigger \
   --from-file=trigger.py=/tmp/ebpf-trigger.py --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
@@ -92,6 +114,9 @@ assert st == 200, (st, got)
 ids = {f["check_id"] for f in got.get("findings", [])}
 assert "LLM-B-01" in ids, ("нет LLM-B-01 (shell/интерпретатор) в findings", got)
 assert "LLM-B-02" in ids, ("нет LLM-B-02 (внешний egress) в findings", got)
+assert "LLM-B-04" in ids, ("нет LLM-B-04 (исполняемая память) в findings", got)
+assert "LLM-B-03" in ids, ("нет LLM-B-03 (honeypot-файлы) в findings", got)
+assert "LLM-B-05" in ids, ("нет LLM-B-05 (загрузка модуля) в findings", got)
 sev = {f["check_id"]: f["severity"] for f in got["findings"]}
 print("  [OK]   in-guest eBPF -> findings:", sorted(ids), "severity:", sev)
 

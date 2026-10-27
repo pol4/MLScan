@@ -70,11 +70,15 @@ kubectl -n mlscan-build create configmap kata-btf-ebpf --from-file=ebpf_smoke.py
 | Реальные findings | ✅ `tests/e2e/llm_ebpf_e2e.sh`: in-guest event → `/llm/events` → **`LLM-B-01` (high)** |
 | Антиподмена (чужой nonce) | ✅ отклоняется (`rejected=1`) |
 
-Покрытие правил:
-- `LLM-B-01` (запуск shell/интерпретатора) — из хука `execve` + `bpf_get_current_comm` ✅ проверено;
-- `LLM-B-02` (внешний egress) — факт `connect()` даёт eBPF, а адрес назначения агент берёт из
-  kernel-состояния `/proc/net/tcp{,6}` (netns пода общий для контейнеров; loopback отфильтровывается) ✅
-  проверено (`dst=1.1.1.1:80` → `LLM-B-02` high).
+Покрытие правил (все пять — из реального in-guest eBPF, проверено E2E):
+- `LLM-B-01` (shell/интерпретатор) — хук `execve` + `bpf_get_current_comm`;
+- `LLM-B-02` (внешний egress) — факт `connect()` из eBPF, адрес из kernel-состояния `/proc/net/tcp{,6}`
+  (учитываются только **публичные** адреса: loopback/private/link-local отброшены);
+- `LLM-B-03` (honeypot-файлы) — хук `openat` + `bpf_probe_read_user_str` (путь читается из user-памяти,
+  это работает), фильтр подсказок (`/.aws/`, `/.ssh/`, `/.kube/`, `/etc/shadow`, `/etc/passwd`);
+- `LLM-B-04` (исполняемая память) — `mmap` с **RWX** (`PROT_WRITE|PROT_EXEC`, обычная загрузка R-X не
+  считается) и `mprotect` с `PROT_EXEC`; фильтр масок выполняется **в BPF**;
+- `LLM-B-05` (загрузка модуля, critical) — `init_module`/`finit_module`.
 Ограничения (осознанные):
 - `bpf_probe_read_user` в этом госте даёт `EFAULT` → строки из user-памяти (пути файлов, `sockaddr`
   напрямую) не читаются; поэтому атрибуция процесса — `bpf_get_current_comm`, а адрес — из kernel-состояния.

@@ -41,6 +41,9 @@ BPF_PROG_TYPE_RAW_TRACEPOINT = 17
 
 LOG_SIZE = 1 << 16
 DUMP_NR = int(os.environ.get("EBPF_DUMP_NR", "-1"))
+EXTRA = os.environ.get("EBPF_EXTRA", "1") == "1"   # хуки mmap/mprotect/module/openat (LLM-B-03/04/05)
+# honeypot-подсказки — те же, что в правиле LLM-B-03 (deploy/v3/llm/tetragon.py); прочие openat не шлём
+HONEYPOT_HINTS = ("/.aws/", "/.ssh/", "/.kube/", "/etc/shadow", "/etc/passwd")
 KEY_SIZE = 4
 VALUE_SIZE = 96                      # {u64 count; u32 pid; u32 pad; u64 argptr; u64 rv; u8 buf[64]}
 
@@ -50,13 +53,15 @@ OP = {
     "stx_dw": 0x7B, "st_dw": 0x7A, "add_imm": 0x07, "mov_reg": 0xBF, "mov_imm": 0xB7,
     "jeq_imm": 0x15, "jne_imm": 0x55, "jgt_imm": 0x25, "call": 0x85, "exit": 0x95,
     "jsl_imm": 0xC5,   # BPF_JMP | BPF_JSLT | BPF_K
+    "and_imm": 0x57,   # BPF_ALU64 | BPF_AND | BPF_K
 }
 # Номера syscall (x86_64)
 NR_EXECVE, NR_CONNECT, NR_OPENAT = 59, 42, 257
 NR_MMAP, NR_MPROTECT = 9, 10
 NR_INIT_MODULE, NR_FINIT_MODULE = 175, 313
 # слоты ARRAY-карты: 0=execve, 1=connect, 2=mmap, 3=mprotect, 4=init_module, 5=finit_module
-SLOT = {NR_EXECVE: 0, NR_CONNECT: 1, NR_MMAP: 2, NR_MPROTECT: 3, NR_INIT_MODULE: 4, NR_FINIT_MODULE: 5}
+SLOT = {NR_EXECVE: 0, NR_CONNECT: 1, NR_MMAP: 2, NR_MPROTECT: 3, NR_INIT_MODULE: 4,
+        NR_FINIT_MODULE: 5, NR_OPENAT: 6}
 # offsets в struct pt_regs (x86_64): r15..r8, ax, cx, dx, si, di, orig_ax
 #   index: 0..9 (r15..r8), 10=ax(80), 11=cx(88), 12=dx(96), 13=si(104), 14=di(112), 15=orig_ax(120)
 OFF_ARG0, OFF_ARG1, OFF_ORIG_AX = 112, 104, 120
@@ -140,6 +145,9 @@ class Asm:
     def jsl_imm(self, dst, imm, off):
         self._i(OP["jsl_imm"], dst=dst, imm=imm, off=off)
 
+    def and_imm(self, dst, imm):
+        self._i(OP["and_imm"], dst=dst, imm=imm)
+
     def call(self, helper):
         self._i(OP["call"], imm=helper)
 
@@ -150,7 +158,7 @@ class Asm:
         return b"".join(self.ins)
 
 
-def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
+def build_hook(nr: int, arg_off: int, map_fd: int, need_mask: int = 0, read_str: bool = False) -> bytes:
     """Программа raw-tracepoint: если syscall == nr — читает строку аргумента и пишет в map[nr%2]."""
     a = Asm()
     a.ldx_dw(6, 1, 0)            # r6 = ctx->args[0] = pt_regs* (для verifier — scalar)
@@ -165,9 +173,19 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     jump = len(a.ins)
     a.jne_imm(7, nr, 0)          # если не наш syscall — на выход (off пропатчим)
     # аргумент (filename / sockaddr) — user-указатель из pt_regs; строку читаем probe_read_user
+    skip_neg = None
+    # ЗНАЧЕНИЕ аргумента (prot/flags/fd): читаем 8 байт из pt_regs+arg_off через probe_read_kernel
+    a.mov_reg(1, 10)
+    a.add_imm(1, -88)
+    a.mov_imm(2, 8)
     a.mov_reg(3, 6)
     a.add_imm(3, arg_off)
-    a.stx_dw(10, 3, -80)         # сохраняем сырой указатель аргумента (диагностика/значение)
+    a.call(113)                  # r10-88 = *(u64 *)(pt_regs + arg_off)
+    if need_mask:
+        a.ldx_dw(1, 10, -88)
+        a.and_imm(1, need_mask & 0xFFFFFFFF)
+        need_jump = len(a.ins)
+        a.jne_imm(1, need_mask & 0xFFFFFFFF, 0)   # не наш случай (напр. не RWX) -> на выход
     # ВАЖНО: bpf_probe_read_user в этом госте стабильно даёт EFAULT (user-память недоступна
     # хелперу), поэтому атрибуцию процесса берём из ядра: bpf_get_current_comm (helper 35).
     # Сырой аргумент (r3) сохраняем для диагностики; окно pt_regs можно дампить (DUMP_NR).
@@ -178,6 +196,14 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
         a.mov_reg(3, 6)
         a.add_imm(3, 80)
         a.call(113)              # bpf_probe_read_kernel: pt_regs[80..144]
+        a.mov_reg(9, 0)
+    elif read_str:
+        # openat: путь = user-строка по указателю из аргумента (читаем probe_read_user_str, helper 45)
+        a.ldx_dw(3, 10, -88)     # r3 = значение аргумента (указатель на путь)
+        a.mov_reg(1, 10)
+        a.add_imm(1, -64)
+        a.mov_imm(2, 64)
+        a.call(45)               # bpf_probe_read_user_str(dst, size, ptr)
         a.mov_reg(9, 0)
     else:
         a.mov_reg(1, 10)
@@ -205,8 +231,8 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     a.stx_dw(8, 1, 0)          # value->count++
     a.call(14)                 # bpf_get_current_pid_tgid
     a.stx_w(8, 0, 8)           # value->pid = низкие 32 бита
-    a.ldx_dw(1, 10, -80)
-    a.stx_dw(8, 1, 16)         # value->argptr
+    a.ldx_dw(1, 10, -88)
+    a.stx_dw(8, 1, 16)         # value->argptr = ЗНАЧЕНИЕ аргумента
     a.stx_dw(8, 9, 24)         # value->rv
     for i in range(8):         # копируем буфер со стека в value->buf (comm занимает первые 16)
         a.ldx_dw(1, 10, -64 + i * 8)
@@ -215,15 +241,18 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     pos_exit = len(a.ins)
     a.mov_imm(0, 0)
     a.exit()
+    if need_mask:
+        a.ins[need_jump] = struct.pack("<BBhI", OP["jne_imm"], 1, pos_exit - need_jump - 1,
+                                       need_mask & 0xFFFFFFFF)
     a.ins[jump] = struct.pack("<BBhI", OP["jne_imm"], 7, pos_exit - jump - 1, nr)
     a.ins[jeq0] = struct.pack("<BBhI", OP["jeq_imm"], 0, pos_exit - jeq0 - 1, 0)
-    if not DUMP_NR == nr:
+    if skip_neg is not None:
         a.ins[skip_neg] = struct.pack("<BBhI", OP["jsl_imm"], 9, pos_exit - skip_neg - 1, 0)
     return a.bytes()
 
 
-def load_hook(nr: int, arg_off: int, map_fd: int) -> int:
-    prog = build_hook(nr, arg_off, map_fd)
+def load_hook(nr: int, arg_off: int, map_fd: int, need_mask: int = 0, read_str: bool = False) -> int:
+    prog = build_hook(nr, arg_off, map_fd, need_mask, read_str)
     buf = C.create_string_buffer(prog)
     lic = C.create_string_buffer(b"GPL")
     log = C.create_string_buffer(LOG_SIZE)
@@ -245,7 +274,7 @@ def load_hook(nr: int, arg_off: int, map_fd: int) -> int:
 
 def create_map() -> int:
     attr = MapCreate(map_type=BPF_MAP_TYPE_ARRAY, key_size=KEY_SIZE, value_size=VALUE_SIZE,
-                     max_entries=6)
+                     max_entries=8)
     fd, err = _bpf(attr, BPF_MAP_CREATE)
     if fd < 0:
         raise RuntimeError(f"BPF_MAP_CREATE: errno={err}")
@@ -378,9 +407,12 @@ def main() -> int:
     m = create_map()
     load_hook(NR_EXECVE, OFF_ARG0, m)        # слот 0 -> process_exec (бинарник из comm)
     load_hook(NR_CONNECT, OFF_ARG1, m)       # слот 1 -> network (адрес из /proc/net/tcp)
-    # TODO(B1+): LLM-B-04 (exec-память) и LLM-B-05 (загрузка модуля) — хуки mmap/mprotect/init_module
-    # реализованы (слоты 2..5), но значения аргументов на raw-tracepoint требуют точной верификации
-    # регистров (иначе ложные срабатывания); включать после проверки дампом окна pt_regs.
+    if EXTRA:                                # LLM-B-04 (exec-память) и LLM-B-05 (загрузка модуля)
+        load_hook(NR_MMAP, OFF_ARG_MMAP_PROT, m, need_mask=0x6)      # RWX (WRITE|EXEC)
+        load_hook(NR_MPROTECT, OFF_ARG_MPROTECT_PROT, m, need_mask=0x4)  # EXEC
+        load_hook(NR_INIT_MODULE, OFF_ARG0, m)          # слот 4 -> module
+        load_hook(NR_FINIT_MODULE, OFF_ARG1, m)         # слот 5 -> module
+        load_hook(NR_OPENAT, OFF_ARG1, m, read_str=True)  # слот 6 -> file (путь через user-read)
     print(f"[ebpf-agent] bpf активен (BTF {os.path.getsize('/sys/kernel/btf/vmlinux')} байт), "
           f"хуки: execve+connect (2 слота карты)", flush=True)
 
@@ -409,7 +441,48 @@ def main() -> int:
                       "details": f"comm={path.strip()} syscall=execve pid={ex.get('pid')}",
                       "nonce": args.nonce, "ts": time.time()}
                 events.append(ev); pending.append(ev)
-        # NB: memory/module хуки сняты до верификации регистров (см. TODO в build_hook)
+        if EXTRA:
+            rf = read_map(m, 6)
+            if rf.get("count"):
+                path = (rf.get("buf") or "").strip()
+                key = ("file", path)
+                if path and any(h in path for h in HONEYPOT_HINTS) and key not in seen:
+                    seen.add(key)
+                    ev = {"type": "file", "phase": args.phase, "probe_id": "ebpf-agent",
+                          "process": {"binary": "", "args": [], "pid": rf.get("pid")},
+                          "file": {"path": path}, "details": f"openat path={path} pid={rf.get('pid')}",
+                          "nonce": args.nonce, "ts": time.time()}
+                    events.append(ev); pending.append(ev)
+            for slot, desc in ((2, "mmap"), (3, "mprotect"), (4, "init_module"), (5, "finit_module")):
+                r = read_map(m, slot)
+                if not r.get("count"):
+                    continue
+                val = int(r.get("argptr") or 0)
+                if slot in (2, 3):
+                    # mmap: интересен только RWX (PROT_WRITE|PROT_EXEC) — загрузка библиотек (R-X) не считается;
+                    # mprotect: включение PROT_EXEC (JIT/перевод страниц в исполняемые).
+                    prot = val & 0xFFFF
+                    need = 0x6 if slot == 2 else PROT_EXEC
+                    if (prot & need) != need:
+                        continue
+                    key = ("memory", desc, prot)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    ev = {"type": "memory", "phase": args.phase, "probe_id": "ebpf-agent",
+                          "process": {"binary": "", "args": [], "pid": r.get("pid")}, "exec": True,
+                          "details": f"syscall={desc} prot=0x{prot:x} pid={r.get('pid')}",
+                          "nonce": args.nonce, "ts": time.time()}
+                else:                                     # загрузка модуля
+                    key = ("module", desc, val)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    ev = {"type": "module", "phase": args.phase, "probe_id": "ebpf-agent",
+                          "process": {"binary": "", "args": [], "pid": r.get("pid")},
+                          "details": f"syscall={desc} arg=0x{val:x} pid={r.get('pid')}",
+                          "nonce": args.nonce, "ts": time.time()}
+                events.append(ev); pending.append(ev)
         if cn.get("count"):
             peers = external_peers()          # LLM-B-02: внешние адреса из kernel-состояния
             ip = peers[0]["ip"] if peers else ""
