@@ -182,7 +182,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         runtime_class: str = "", cuda_visible_devices: str = "",
                         resources: dict | None = None, model_volume_size: str = "64Gi",
                         ttl_seconds: int = 3600, max_tokens: int = 256,
-                        ebpf_agent: bool = False, ebpf_configmap: str = "mlscan-ebpf-agent") -> dict:
+                        ebpf_agent: bool = False, ebpf_configmap: str = "mlscan-ebpf-agent",
+                        ebpf_image: str = "") -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -232,8 +233,10 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
          "securityContext": dict(hardened, readOnlyRootFilesystem=False)},
     ]
     if ebpf_agent:      # B1: наблюдение ядерных событий инференса внутри гостевой ВМ
+        # B1: образ сенсора (digest-pinned) предпочтительнее ConfigMap; при отсутствии — python + ConfigMap
+        _ebpf_image = ebpf_image or os.environ.get("EBPF_AGENT_IMAGE", "")
         containers.append({
-            "name": "ebpf-agent", "image": "python:3.12-slim",
+            "name": "ebpf-agent", "image": _ebpf_image or "python:3.12-slim",
             "command": ["python", "/opt/ebpf/ebpf_agent.py", "--duration", str(int(ttl_seconds) - 30),
                         "--post", testing_url, "--key", api_key,
                         "--scan-id", scan_id or ("bundle-test-" + bundle_id), "--nonce", "",
@@ -245,7 +248,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
             "securityContext": {"runAsNonRoot": False, "runAsUser": 0,
                                 "allowPrivilegeEscalation": False,
                                 "capabilities": {"drop": ["ALL"], "add": ["BPF", "PERFMON"]}},
-            "volumeMounts": [{"name": "ebpf", "mountPath": "/opt/ebpf", "readOnly": True}],
+            "volumeMounts": ([] if _ebpf_image else
+                             [{"name": "ebpf", "mountPath": "/opt/ebpf", "readOnly": True}]),
             "resources": {"limits": {"memory": "512Mi", "cpu": "1"}}})
     spec = {
         "backoffLimit": 0, "ttlSecondsAfterFinished": int(ttl_seconds),
@@ -271,7 +275,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                 "containers": containers,
                 "volumes": [{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}}]
                            + ([{"name": "dev", "hostPath": {"path": "/dev"}}] if gpu else [])
-                           + ([{"name": "ebpf", "configMap": {"name": ebpf_configmap}}] if ebpf_agent else []),
+                           + ([{"name": "ebpf", "configMap": {"name": ebpf_configmap}}]
+                              if (ebpf_agent and not os.environ.get("EBPF_AGENT_IMAGE")) else []),
             },
         },
     }

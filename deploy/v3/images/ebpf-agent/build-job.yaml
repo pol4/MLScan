@@ -1,0 +1,40 @@
+# Сборка образа сенсора (kaniko) в локальный реестр. Требует ConfigMap mlscan-ebpf-agent (скрипт агента).
+apiVersion: batch/v1
+kind: Job
+metadata: {name: build-ebpf-agent, namespace: mlscan-build}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: prepare
+        image: python:3.12-slim
+        command: ["sh","-c"]
+        args:
+        - |
+          set -e
+          cp /cm/ebpf_agent.py /work/ebpf_agent.py
+          cp /df/Dockerfile /work/Dockerfile
+          ls -l /work
+        volumeMounts: [{name: work, mountPath: /work}, {name: cm, mountPath: /cm, readOnly: true},
+                       {name: df, mountPath: /df, readOnly: true}]
+        securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:v1.23.2
+        args:
+        - "--context=dir:///work"
+        - "--dockerfile=Dockerfile"
+        - "--destination=192.168.20.116:32000/mlscan/ebpf-agent:v1"
+        - "--insecure"
+        - "--skip-tls-verify"
+        volumeMounts: [{name: work, mountPath: /work}]
+      volumes:
+      - name: work
+        emptyDir: {}
+      - name: cm
+        configMap: {name: mlscan-ebpf-agent}
+      - name: df
+        configMap: {name: mlscan-ebpf-agent-docker}

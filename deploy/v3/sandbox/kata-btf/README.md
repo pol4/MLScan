@@ -148,3 +148,20 @@ nonce скана) и E2E «прогон в песочнице → реальны
   доступо́м к API 8080 (авторизация обязательна).
 - Проверено: `tests/e2e/sandbox_ebpf_e2e.sh` → сканирование модели в песочнице → **`LLM-B-01`** в
   `/llm/events/<scan_id>`; скан-токен после завершения отвергнут.
+
+## Образ сенсора (digest-pinned) и запуск под root
+
+- Собран образ `deploy/v3/images/ebpf-agent/` (kaniko, `build-job.yaml`) → локальный реестр:
+  `localhost:32000/mlscan/ebpf-agent@sha256:5924e01c…` (python:3.12-slim + агент + libcap2-bin).
+  **LLM-job теста** использует его (env `EBPF_AGENT_IMAGE`) — код сенсора версионирован по digest,
+  ConfigMap для скрипта уже не нужен.
+- **Скан-джоб песочницы** продолжает использовать образ песочницы по digest + ConfigMap `mlscan-ebpf-agent`:
+  политика `require-kata-and-digest-image` требует, чтобы **все** контейнеры использовали образ
+  `*mlscan-sandbox@sha256:*`, поэтому отдельный образ там недопустим.
+- **Почему root**: попытка вернуть non-root через file capabilities (`setcap cap_bpf,cap_perfmon+ep` на
+  python) не удалась: kaniko **не сохраняет** xattr `security.capability` в слое (в контейнере `getcap`
+  пуст), поэтому процесс без file caps и без root получает `EPERM` на `bpf()` (проверено:
+  `CapPrm/CapEff = 0`, `CapBnd = BPF|PERFMON`). `allowPrivilegeEscalation=true` сам по себе не помогает.
+  Вывод: для non-root нужен другой сборщик (buildah/podman с сохранением xattr) либо образ на основе
+  базового с уже выставленными file caps; до этого сенсор работает **root внутри гостевой ВМ** (осознанно,
+  согласовано), а недоверенный движок/probe остаются non-root.
