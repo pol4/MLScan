@@ -136,6 +136,15 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
   После этого — включение агента в job инференса (`runtimeClassName: kata`, caps BPF/PERFMON),
   при необходимости расширение Kyverno-политики и E2E с реальными `LLM-B-*`.
 
+**B1 — итог (проверено end-to-end).** Замена `probe_read_user`: атрибуция процесса берётся из ядра
+через `bpf_get_current_comm` (helper 16), поэтому агент выдаёт реальные события с именем процесса;
+`tests/e2e/llm_ebpf_e2e.sh` подтверждает цепочку **in-guest eBPF → `/llm/events` → `LLM-B-01` (high)**
+и отбрасывание событий с чужим nonce. Ограничение: адрес назначения (`LLM-B-02`) требует отдельного
+источника (kprobe/CO-RE). Tetragon не используется (нужен `bpffs` в госте). Для включения агента в
+**песочницу** требуется согласование ослабления PodSecurity `mlscan-sandbox` (`restricted` → `baseline`) —
+готовый манифест `deploy/v3/sandbox/kata-btf/30-allow-ebpf-agent.yaml` (не применять без согласования);
+иначе admission отклоняет контейнер с caps `BPF/PERFMON` (проверено).
+
 **N6: JWT для API/CI и rate-limit на входе.** В `v2/auth/authz.py` добавлены:
 - **JWT (HS256, stdlib)** с обязательной проверкой `alg=HS256`, подписи, `exp`/`nbf`, `aud`, `iss`
   (ключ — `MLSCAN_JWT_KEY`, общий для сервисов; JWT-ключ берётся из Secret `mlscan-keys` →

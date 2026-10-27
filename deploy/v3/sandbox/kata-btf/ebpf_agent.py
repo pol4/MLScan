@@ -49,6 +49,7 @@ OP = {
     "ld_map_fd": 0x18, "ld_imm64": 0x18, "ldx_dw": 0x79, "ldx_w": 0x61, "stx_w": 0x63,
     "stx_dw": 0x7B, "st_dw": 0x7A, "add_imm": 0x07, "mov_reg": 0xBF, "mov_imm": 0xB7,
     "jeq_imm": 0x15, "jne_imm": 0x55, "jgt_imm": 0x25, "call": 0x85, "exit": 0x95,
+    "jsl_imm": 0xC5,   # BPF_JMP | BPF_JSLT | BPF_K
 }
 # Номера syscall (x86_64)
 NR_EXECVE, NR_CONNECT, NR_OPENAT = 59, 42, 257
@@ -129,6 +130,9 @@ class Asm:
     def jeq_imm(self, dst, imm, off):
         self._i(OP["jeq_imm"], dst=dst, imm=imm, off=off)
 
+    def jsl_imm(self, dst, imm, off):
+        self._i(OP["jsl_imm"], dst=dst, imm=imm, off=off)
+
     def call(self, helper):
         self._i(OP["call"], imm=helper)
 
@@ -157,9 +161,10 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     a.mov_reg(3, 6)
     a.add_imm(3, arg_off)
     a.stx_dw(10, 3, -80)         # сохраняем сырой указатель (диагностика)
+    # ВАЖНО: bpf_probe_read_user в этом госте стабильно даёт EFAULT (user-память недоступна
+    # хелперу), поэтому атрибуцию процесса берём из ядра: bpf_get_current_comm (helper 35).
+    # Сырой аргумент (r3) сохраняем для диагностики; окно pt_regs можно дампить (DUMP_NR).
     if nr == DUMP_NR:
-        # дамп окна pt_regs: байты 80..144 (r8..ip) — чтобы точно определить позиции
-        a.add_imm(3, 0)
         a.mov_reg(1, 10)
         a.add_imm(1, -64)
         a.mov_imm(2, 64)
@@ -170,9 +175,11 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     else:
         a.mov_reg(1, 10)
         a.add_imm(1, -64)
-        a.mov_imm(2, 64)
-        a.call(112)              # bpf_probe_read_user
-        a.mov_reg(9, 0)          # r9 = код возврата helper-а
+        a.mov_imm(2, 16)
+        a.call(16)               # bpf_get_current_comm(dst, 16) — helper 16
+        a.mov_reg(9, 0)
+        skip_neg = len(a.ins)
+        a.jsl_imm(9, 0, 0)       # ошибка чтения -> не пишем событие
     # ключ (0 для execve/openat, 1 для connect) в r10-68
     a.mov_reg(1, 10)
     a.add_imm(1, -68)
@@ -194,7 +201,7 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     a.ldx_dw(1, 10, -80)
     a.stx_dw(8, 1, 16)         # value->argptr
     a.stx_dw(8, 9, 24)         # value->rv
-    for i in range(8):         # копируем 64 байта со стека в value->buf
+    for i in range(8):         # копируем буфер со стека в value->buf (comm занимает первые 16)
         a.ldx_dw(1, 10, -64 + i * 8)
         a.stx_dw(8, 1, 32 + i * 8)
     # общий выход: обе ветки прыгают на exit (позиция pos_exit)
@@ -203,6 +210,8 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     a.exit()
     a.ins[jump] = struct.pack("<BBhI", OP["jne_imm"], 7, pos_exit - jump - 1, nr)
     a.ins[jeq0] = struct.pack("<BBhI", OP["jeq_imm"], 0, pos_exit - jeq0 - 1, 0)
+    if not DUMP_NR == nr:
+        a.ins[skip_neg] = struct.pack("<BBhI", OP["jsl_imm"], 9, pos_exit - skip_neg - 1, 0)
     return a.bytes()
 
 
@@ -297,16 +306,17 @@ def main() -> int:
         if DUMP_NR >= 0 and ex.get("count"):
             print("[ebpf-agent] pt_regs[80..144] hex:", ex.get("buf_hex", ""), flush=True)
         if ex.get("count"):
-            path = ex["buf"] or "?"
+            path = (ex["buf"] or "?")
             key = ("process_exec", path)
             if key not in seen:
                 seen.add(key)
                 events.append({"type": "process_exec", "phase": args.phase, "probe_id": "ebpf-agent",
-                               "process": {"binary": path.split("/")[-1], "exe": path, "args": []},
-                               "details": f"{path} argptr={ex.get('argptr')} rv={ex.get('rv')}",
+                               "process": {"binary": path.strip(), "exe": path.strip(),
+                                           "args": [], "pid": ex.get("pid")},
+                               "details": f"comm={path.strip()} syscall=execve pid={ex.get('pid')}",
                                "nonce": args.nonce, "ts": time.time()})
         if cn.get("count"):
-            ip = ips_from_sockaddr(cn["buf"].encode())
+            ip = ""      # sockaddr — user-память (в этом госте недоступна хелперу); см. README
             key = ("network", ip)
             if key not in seen:
                 seen.add(key)

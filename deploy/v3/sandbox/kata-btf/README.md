@@ -59,3 +59,28 @@ kubectl -n mlscan-build create configmap kata-btf-ebpf --from-file=ebpf_smoke.py
 Артефакты: `ebpf_agent.py` (агент), `ebpf_smoke.py` (диагностика загрузки/attach), `install.sh` (ядро).
 Запуск агента в Job: `runtimeClassName: kata`, образ с python3, caps `[BPF, PERFMON, SYS_RESOURCE]`,
 `--out /events/ebpf.jsonl` (общий том) и/или `--post <TESTING_URL>/llm/events --key <key> --scan-id .. --nonce ..`.
+
+## Итог B1 (проверено end-to-end)
+
+| Звено | Статус |
+|---|---|
+| BTF-ядро в госте (**без** правок containerd и рестарта демонов) | ✅ `install.sh`, обратимо |
+| Загрузка/привязка eBPF в госте (RAW_TRACEPOINT `sys_enter`) | ✅ `ebpf_smoke.py` |
+| Агент: хуки `execve`/`connect`, атрибуция процесса | ✅ `ebpf_agent.py` (`bpf_get_current_comm`, helper 16) |
+| Реальные findings | ✅ `tests/e2e/llm_ebpf_e2e.sh`: in-guest event → `/llm/events` → **`LLM-B-01` (high)** |
+| Антиподмена (чужой nonce) | ✅ отклоняется (`rejected=1`) |
+
+Ограничения (осознанные):
+- `bpf_probe_read_user` в этом госте даёт `EFAULT` → строки из user-памяти (пути, `sockaddr`) не читаются;
+  атрибуция процесса — через `bpf_get_current_comm` (имя процесса), поэтому `LLM-B-01` работает,
+  а `LLM-B-02` (внешний egress) требует отдельного источника адреса (kprobe по `tcp_connect`/CO-RE).
+- Tetragon не используется: ему нужен `bpffs` в госте (pinning карт) — заменён своим агентом.
+
+Осталось для «продакшн»-включения в песочницу:
+1. **Согласовать ослабление PodSecurity в `mlscan-sandbox`** (`restricted` → `baseline`),
+   иначе Kubernetes/ Kyverno не пропускает контейнер с caps `BPF/PERFMON`
+   (проверено: «would violate PodSecurity restricted … must not include BPF, PERFMON»).
+   Готовый манифест: `30-allow-ebpf-agent.yaml` (применять только после согласования).
+2. Добавить контейнер `ebpf-agent` в job инференса (образ песочницы по digest, скрипт из ConfigMap,
+   общий том событий) — обвязка в `make_llama_test_job`/sandbox job.
+3. E2E «инференс на реальной LLM → `LLM-B-*`» в самой песочнице (сейчас E2E агента идёт в `mlscan-build`).
