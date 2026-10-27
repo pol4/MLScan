@@ -6,7 +6,7 @@
 # он допускает добавление capabilities, сохраняя требования non-root/RO-FS/seccomp
 # (их отдельно требует наша Kyverno-политика mlscan-sandbox-jobs).
 #
-# Применять ТОЛЬКО после явного согласования:
+# СОГЛАСОВАНО (вариант C, 2026-10-27): применяется, песочница mlscan-sandbox переводится в baseline.
 #   kubectl apply -f deploy/v3/sandbox/kata-btf/30-allow-ebpf-agent.yaml
 #
 # Проверка: kubectl -n mlscan-sandbox get pod -l app=mlscan-scan -o jsonpath='{.items[0].spec.containers[*].name}'
@@ -21,7 +21,8 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
     app.kubernetes.io/part-of: mlscan
 ---
-# Явное правило Kyverno: агент — только с digest-образом, без привилегий, минимальные caps.
+# Guard-правила Kyverno: (1) контейнеру ebpf-agent разрешены только BPF/PERFMON;
+# (2) в namespace запрещены опасные capabilities (даже при профиле baseline).
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -30,25 +31,28 @@ spec:
   validationFailureAction: Enforce
   background: false
   rules:
-  - name: agent-caps-limited
+  - name: agent-caps-allowlist
     match:
       any:
       - resources: {kinds: [Job], namespaces: [mlscan-sandbox]}
     validate:
-      message: >-
-        контейнер ebpf-agent может добавлять только BPF и PERFMON (drop=ALL, non-root, RO-FS, seccomp)
-      pattern:
-        spec:
-          template:
-            spec:
-              containers:
-              - (name): ebpf-agent
-                image: "*@sha256:*"
-                securityContext:
-                  runAsNonRoot: true
-                  readOnlyRootFilesystem: true
-                  allowPrivilegeEscalation: false
-                  seccompProfile: {type: RuntimeDefault}
-                  capabilities:
-                    drop: ["ALL"]
-                    add: ["BPF", "PERFMON"]
+      message: "контейнеру ebpf-agent разрешены только capabilities BPF и PERFMON"
+      deny:
+        conditions:
+          any:
+          - key: "{{ request.object.spec.template.spec.containers[?name=='ebpf-agent'].securityContext.capabilities.add[] | [?@ != 'BPF' && @ != 'PERFMON'] | length(@) }}"
+            operator: GreaterThan
+            value: 0
+  - name: no-dangerous-caps
+    match:
+      any:
+      - resources: {kinds: [Job], namespaces: [mlscan-sandbox]}
+    validate:
+      message: "в mlscan-sandbox запрещены опасные capabilities (SYS_ADMIN/SYS_PTRACE/NET_ADMIN/...)"
+      deny:
+        conditions:
+          any:
+          - key: "{{ request.object.spec.template.spec.containers[].securityContext.capabilities.add[] }}"
+            operator: AnyIn
+            value: ["SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "NET_ADMIN", "DAC_OVERRIDE", "NET_RAW",
+                    "SYS_CHROOT", "MKNOD", "AUDIT_CONTROL", "SYS_TIME"]

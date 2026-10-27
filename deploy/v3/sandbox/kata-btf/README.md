@@ -84,3 +84,21 @@ kubectl -n mlscan-build create configmap kata-btf-ebpf --from-file=ebpf_smoke.py
 2. Добавить контейнер `ebpf-agent` в job инференса (образ песочницы по digest, скрипт из ConfigMap,
    общий том событий) — обвязка в `make_llama_test_job`/sandbox job.
 3. E2E «инференс на реальной LLM → `LLM-B-*`» в самой песочнице (сейчас E2E агента идёт в `mlscan-build`).
+
+## Внедрение в песочницу (вариант C — согласовано и применено 2026-10-27)
+
+Применено `30-allow-ebpf-agent.yaml`:
+- namespace `mlscan-sandbox`: `pod-security.kubernetes.io/enforce: baseline` (audit/warn остаются `restricted`);
+- ClusterPolicy `mlscan-ebpf-agent-guard`: (1) контейнеру `ebpf-agent` разрешены **только** `BPF`/`PERFMON`;
+  (2) в namespace запрещены опасные capabilities (`SYS_ADMIN`, `SYS_PTRACE`, `NET_ADMIN`, `NET_RAW`,
+  `SYS_MODULE`, `DAC_OVERRIDE`, `SYS_CHROOT`, `MKNOD`, `AUDIT_CONTROL`, `SYS_TIME`) — даже при baseline;
+- прежние требования сохраняются: `require-kata-and-digest-image` (образ сканера по digest) и
+  `require-hardened-security-context` (non-root, drop ALL, RO-FS, seccomp, без privilege escalation).
+
+Проверено: Job в `mlscan-sandbox` с контейнерами `harness` + `ebpf-agent` (caps `BPF/PERFMON`) —
+**допущен**; обычный скан (`tests/e2e/binding_e2e.sh`, sandbox-джоб) — **работает**;
+`tests/e2e/llm_ebpf_e2e.sh` — **OK** (`LLM-B-01` из реального in-guest eBPF + антиподмена).
+
+Осталось (следующий шаг): добавить контейнер `ebpf-agent` в job инференса/сканов
+(образ песочницы по digest, скрипт из ConfigMap `mlscan-ebpf-agent`, общий том событий,
+nonce скана) и E2E «прогон в песочнице → реальные `LLM-B-*`».

@@ -140,10 +140,12 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
 через `bpf_get_current_comm` (helper 16), поэтому агент выдаёт реальные события с именем процесса;
 `tests/e2e/llm_ebpf_e2e.sh` подтверждает цепочку **in-guest eBPF → `/llm/events` → `LLM-B-01` (high)**
 и отбрасывание событий с чужим nonce. Ограничение: адрес назначения (`LLM-B-02`) требует отдельного
-источника (kprobe/CO-RE). Tetragon не используется (нужен `bpffs` в госте). Для включения агента в
-**песочницу** требуется согласование ослабления PodSecurity `mlscan-sandbox` (`restricted` → `baseline`) —
-готовый манифест `deploy/v3/sandbox/kata-btf/30-allow-ebpf-agent.yaml` (не применять без согласования);
-иначе admission отклоняет контейнер с caps `BPF/PERFMON` (проверено).
+источника (kprobe/CO-RE). Tetragon не используется (нужен `bpffs` в госте). Для включения агента в **песочницу** согласовано и применено ослабление PodSecurity
+`mlscan-sandbox` (`restricted` → `baseline`) вместе с guard-политикой
+`deploy/v3/sandbox/kata-btf/30-allow-ebpf-agent.yaml`: контейнеру `ebpf-agent` разрешены только
+`BPF`/`PERFMON`, а опасные capabilities (SYS_ADMIN/SYS_PTRACE/NET_ADMIN/NET_RAW/...) запрещены
+в namespace; требования digest-образа и hardened securityContext сохранены. Проверено: Job с
+доп. контейнером-агентом допущен, обычный скан в песочнице работает (`binding_e2e` OK).
 
 **N6: JWT для API/CI и rate-limit на входе.** В `v2/auth/authz.py` добавлены:
 - **JWT (HS256, stdlib)** с обязательной проверкой `alg=HS256`, подписи, `exp`/`nbf`, `aud`, `iss`
