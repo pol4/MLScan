@@ -46,9 +46,12 @@ EXTRA = os.environ.get("EBPF_EXTRA", "1") == "1"   # хуки mmap/mprotect/modu
 HONEYPOT_HINTS = ("/.aws/", "/.ssh/", "/.kube/", "/etc/shadow", "/etc/passwd")
 # начала honeypot-путей для BPF-фильтра (сравнение первых 8 байт, выровнено по началу пути)
 HONEYPOT_PREFIX_8 = (b"/etc/sha", b"/etc/pas", b"/root/.a", b"/home/.a", b"/root/.s", b"/root/.k")
-# BPF-фильтр honeypot по префиксу (сравнение первых 8 байт) — по умолчанию ВЫКЛЮЧЕН:
-# проверка константы/окна не подтверждена (фильтр грузится, но не срабатывает); включать после отладки.
-HONEYPOT_FILTER = os.environ.get("EBPF_HONEYPOT_FILTER", "0") == "1"
+if os.environ.get("EBPF_TEST_PREFIX") == "1":      # отладочный набор (проверка механизма фильтра)
+    HONEYPOT_PREFIX_8 = (b"/proc/ne", b"/etc/sha")
+# BPF-фильтр honeypot по префиксу (сравнение первых 8 байт пути) — включён по умолчанию:
+# в кольцо попадают только значимые пути, шум файловой активности его не вымывает.
+# EBPF_HONEYPOT_FILTER=0 — отключить (тогда в кольцо пишутся все пути, фильтр работает в агенте).
+HONEYPOT_FILTER = os.environ.get("EBPF_HONEYPOT_FILTER", "1") == "1"
 KEY_SIZE = 4
 VALUE_SIZE = 96                      # {u64 count; u32 pid; u32 pad; u64 argptr; u64 rv; u8 buf[64]}
 
