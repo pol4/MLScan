@@ -30,7 +30,12 @@ rc=0
 for t in "$HERE"/*_test.js; do
   [ -e "$t" ] || continue
   echo "[ui] === $(basename "$t") ==="
-  node "$t" || rc=1
+  # один повтор: UI-тесты чувствительны к холодному старту/рестарту сервисов
+  if ! node "$t"; then
+    echo "[ui] повтор после сбоя: $(basename "$t")"
+    sleep 3
+    node "$t" || rc=1
+  fi
 done
 
 # Полный операторский E2E с РЕАЛЬНЫМИ моделями (LMSCAN_E2E=1): требует HF-egress, реальные
