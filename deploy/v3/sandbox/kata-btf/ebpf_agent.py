@@ -44,9 +44,11 @@ DUMP_NR = int(os.environ.get("EBPF_DUMP_NR", "-1"))
 EXTRA = os.environ.get("EBPF_EXTRA", "1") == "1"   # хуки mmap/mprotect/module/openat (LLM-B-03/04/05)
 # honeypot-подсказки — те же, что в правиле LLM-B-03 (deploy/v3/llm/tetragon.py); прочие openat не шлём
 HONEYPOT_HINTS = ("/.aws/", "/.ssh/", "/.kube/", "/etc/shadow", "/etc/passwd")
-# TODO(B1+): BPF-side фильтр honeypot по префиксу пути требует корректного построителя меток
-# (текущая попытка не проходила верификатор: недостижимые инструкции / неверные смещения).
-# Пока фильтр выполняется в агенте, а кольцо из RING_SLOTS слотов + частое чтение (250 мс) снижают потери.
+# начала honeypot-путей для BPF-фильтра (сравнение первых 8 байт, выровнено по началу пути)
+HONEYPOT_PREFIX_8 = (b"/etc/sha", b"/etc/pas", b"/root/.a", b"/home/.a", b"/root/.s", b"/root/.k")
+# BPF-фильтр honeypot по префиксу (сравнение первых 8 байт) — по умолчанию ВЫКЛЮЧЕН:
+# проверка константы/окна не подтверждена (фильтр грузится, но не срабатывает); включать после отладки.
+HONEYPOT_FILTER = os.environ.get("EBPF_HONEYPOT_FILTER", "0") == "1"
 KEY_SIZE = 4
 VALUE_SIZE = 96                      # {u64 count; u32 pid; u32 pad; u64 argptr; u64 rv; u8 buf[64]}
 
@@ -112,6 +114,8 @@ class Asm:
 
     def __init__(self):
         self.ins: list[bytes] = []
+        self._labels: dict = {}
+        self._pending: list = []
 
     def _i(self, code, dst=0, src=0, off=0, imm=0):
         self.ins.append(struct.pack("<BBhI", code, ((src & 0xF) << 4) | (dst & 0xF),
@@ -175,6 +179,25 @@ class Asm:
 
     def exit(self):
         self._i(OP["exit"])
+
+    def label(self, name: str) -> None:
+        """Поставить метку (для переходов вперёд)."""
+        self._labels[name] = len(self.ins)
+
+    def jmp(self, code: int, label: str, dst: int = 0, src: int = 0, imm: int = 0) -> None:
+        """Инструкция перехода на метку (смещение проставится в resolve())."""
+        self._pending.append((len(self.ins), code, dst, src, imm, label))
+        self._i(code, dst=dst, src=src, off=0, imm=imm)
+
+    def resolve(self) -> None:
+        """Проставить смещения для всех переходов по меткам."""
+        for idx, code, dst, src, imm, label in self._pending:
+            if label not in self._labels:
+                raise RuntimeError(f"нет метки {label!r}")
+            off = self._labels[label] - idx - 1
+            self.ins[idx] = struct.pack("<BBhI", code, ((src & 0xF) << 4) | (dst & 0xF),
+                                        off, imm & 0xFFFFFFFF)
+        self._pending = []
 
     def bytes(self) -> bytes:
         return b"".join(self.ins)
@@ -362,8 +385,17 @@ def load_openat_hook(paths_fd: int, skip_pid: int = 0) -> int:
     if skip_pid:                                           # не пишем открытия самого агента (шум)
         a.call(14)                                          # r0 = pid_tgid
         a.mov_reg(1, 0); a.and_imm(1, 0xFFFFFFFF)           # низкие 32 бита = pid
-        j_self = len(a.ins); a.jeq_imm(1, skip_pid & 0xFFFFFFFF, 0)   # наш pid -> выход
-    body_pos = len(a.ins)                                  # начало тела кольца
+        a.jmp(OP["jeq_imm"], "exit", dst=1, imm=skip_pid & 0xFFFFFFFF)   # наш pid -> выход
+    # BPF-фильтр honeypot: в кольцо попадают ТОЛЬКО значимые пути (иначе шум вымывает кольцо)
+    if HONEYPOT_FILTER and HONEYPOT_PREFIX_8:
+        a.ldx_dw(1, 10, -64)                               # r1 = первые 8 байт пути
+        for lit in HONEYPOT_PREFIX_8:
+            v = int.from_bytes(lit.ljust(8, b"\x00")[:8], "little")
+            a.ld_imm64(2, v)
+            a.jmp(OP["jeq_reg"], "body", dst=1, src=2)      # совпало -> в тело кольца
+        a.jmp(OP["ja"], "exit")                             # иначе -> выход
+    a.label("body")                                        # начало тела кольца
+    body_pos = len(a.ins)
     a.mov_reg(1, 10); a.add_imm(1, -84); a.mov_imm(2, CURSOR_KEY); a.stx_w(1, 2, 0)
     a.ld_map(1, paths_fd); a.mov_reg(2, 10); a.add_imm(2, -84)
     a.call(1)
@@ -383,11 +415,10 @@ def load_openat_hook(paths_fd: int, skip_pid: int = 0) -> int:
     for i in range(7):                                     # 56 байт пути -> value+16
         a.ldx_dw(1, 10, -64 + i * 8)
         a.stx_dw(8, 1, 16 + i * 8)
+    a.label("exit")
     pos_exit = len(a.ins)
     a.mov_imm(0, 0); a.exit()
-    if j_self is not None:
-        a.ins[j_self] = struct.pack("<BBhI", OP["jeq_imm"], 1, pos_exit - j_self - 1,
-                                    skip_pid & 0xFFFFFFFF)
+    a.resolve()
     a.ins[j_nr] = struct.pack("<BBhI", OP["jne_imm"], 7, pos_exit - j_nr - 1, NR_OPENAT)
     a.ins[j_c0] = struct.pack("<BBhI", OP["jeq_imm"], 0, pos_exit - j_c0 - 1, 0)
     a.ins[j_c1] = struct.pack("<BBhI", OP["jeq_imm"], 0, pos_exit - j_c1 - 1, 0)
