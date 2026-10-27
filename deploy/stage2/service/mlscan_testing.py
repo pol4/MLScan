@@ -590,6 +590,17 @@ def _hf_download_worker(dl_id: str) -> None:
                 if os.path.exists(f0):
                     msha = _sha256_file(f0)
                     db_exec("UPDATE hf_downloads SET model_sha256=" + _lit(msha) + ", updated=now() WHERE id=" + _lit(dl_id))
+                    # B1: модель с HF должна быть в хранилище как артефакт (presigned URL для теста bundle)
+                    if DB_ENABLED:
+                        try:
+                            key0 = _hf_key(repo, os.path.basename(fl[0]))
+                            fmt0 = "gguf" if str(fl[0]).lower().endswith(".gguf") else "bin"
+                            db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key,source) SELECT "
+                                    + _lit(msha) + ", " + str(os.path.getsize(f0)) + ", " + _lit(fmt0) + ", "
+                                    + _lit(os.path.basename(fl[0])) + ", " + _lit(key0) + ", 'hf' "
+                                    "WHERE NOT EXISTS (SELECT 1 FROM artifacts WHERE sha256=" + _lit(msha) + ")")
+                        except Exception:  # noqa: BLE001
+                            pass
                     if eng and v3binding is not None:
                         b = v3binding.make_bundle(image_digest=eng, model_sha256=msha,
                                                   engine_manifest={"entrypoint": "engine", "source": "hf"},

@@ -63,12 +63,13 @@ if [ "${MLSCAN_E2E:-0}" = "1" ] && [ -e "$HERE/operator_browser_e2e.js" ]; then
     done
     echo "[ui] port-forward к сервису тестирования готов (pid $PF_PID)"
   fi
-  echo "[ui] === operator_browser_e2e.js (реальные модели) ==="
-  # один повтор: операторский сценарий тоже чувствителен к холодному старту/рестарту сервисов
-  if ! node "$HERE/operator_browser_e2e.js"; then
-    echo "[ui] повтор после сбоя: operator_browser_e2e.js"
+  # Полный операторский сценарий (надмножество operator_browser_e2e.js):
+  # локальная LLM + инференс, модель с HF + инференс, safetensors, архив, gate, цепочка вердиктов.
+  echo "[ui] === full_browser_e2e.js (реальные модели: LLM, HF, архив) ==="
+  if ! node "$HERE/full_browser_e2e.js"; then
+    echo "[ui] повтор после сбоя: full_browser_e2e.js"
     sleep 5
-    node "$HERE/operator_browser_e2e.js" || rc=1
+    node "$HERE/full_browser_e2e.js" || rc=1
   fi
   [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null
 fi
