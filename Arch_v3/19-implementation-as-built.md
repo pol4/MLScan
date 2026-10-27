@@ -113,6 +113,19 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
 `tests/ui/operator_browser_e2e.js` больше не содержит admin-ключа: он берётся из `MLSCAN_API_KEY`
 (в `run_ui_tests.sh` при `MLSCAN_E2E=1` — из Secret `mlscan-keys`).
 
+**N4: квоты HF-загрузок и журнал egress.** Введены суточные квоты скачивания с HF на тенанта:
+`hf_quotas(tenant,daily_bytes)` (персональный лимит; `NULL` — лимит по умолчанию `HF_DAILY_BYTES`,
+200 ГиБ) и проверка в воркере **до** чтения файла (размер уже известен по HEAD): превышение →
+загрузка помечается `error` с явной причиной, в журнал пишется `denied`. Ведётся **append-only** журнал
+`hf_egress_log` (tenant, repo, file, host, bytes, status, error) — пишутся успешные файлы (`ok`, с
+фактическим хостом после редиректа на CDN), отказы (`denied`) и ошибки (`error`); trigger
+`hf_egress_nochange` запрещает UPDATE/DELETE. API: `GET/POST /hf/quota` (admin задаёт лимит тенанта,
+`daily_bytes=null` — снять), `GET /hf/egress?limit=N` (audit). Метрики `/v3/metrics` дополнены:
+`mlscan_hf_files_total{tenant,status}`, `mlscan_hf_bytes_total{tenant,status}`,
+`mlscan_hf_used_today_bytes{tenant}`, `mlscan_hf_daily_limit_bytes{tenant}`. Проверка:
+`tests/e2e/hf_quota_e2e.sh` (лимит 1 МиБ блокирует файл 4 МБ с записью `denied`, снятие лимита —
+успешная загрузка с записью `ok`/хост, метрики, append-only).
+
 **N3: подписанные решения gate и append-only журнал (аудит).** Решение по паре (образ, модель) —
 как по вердикту bundle, так и **без bundle** — теперь всегда подписано: `attest.make_artifact_statement`
 (тип `mlscan.artifact-verdict/v1`, subject: модель (+ образ), predicate: verdict/action/`source`)

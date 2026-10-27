@@ -120,6 +120,21 @@
 - Ответ: `decision ∈ {allow, block, quarantine}` + `bundle_id` + аттестация. Пайплайн
   блокируется на `block` и помечается на `quarantine`.
 
+### Квоты и журнал скачивания с HF (N4)
+
+```bash
+# лимит на тенанта (admin); daily_bytes=null — снять персональный лимит
+curl -sX POST -H "X-API-Key: <adm>" -H 'Content-Type: application/json' \
+     -d '{"tenant":"operator","daily_bytes":10737418240}' http://<testing>/hf/quota
+# текущие лимиты и журнал egress (куда ходили, сколько скачали, чем закончилось)
+curl -sH "X-API-Key: <adm>" http://<testing>/hf/quota
+curl -sH "X-API-Key: <adm>" 'http://<testing>/hf/egress?limit=50'
+```
+
+Превышение суточной квоты → загрузка завершается ошибкой «суточная квота HF исчерпана», в журнале
+появляется запись `denied`. Журнал append-only (изменять/удалять нельзя). Метрики:
+`mlscan_hf_files_total`, `mlscan_hf_bytes_total`, `mlscan_hf_used_today_bytes`, `mlscan_hf_daily_limit_bytes`.
+
 ### Аудит решений CI-gate (N3)
 
 Каждое решение `/gate` подписано и записано в журнал:

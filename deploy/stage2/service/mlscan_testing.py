@@ -106,6 +106,8 @@ HF_BASE_URL = os.environ.get("HF_BASE_URL", "https://huggingface.co")
 # Пределы загрузки HF (защита PVC/памяти, docs/14 P0-6/P1-3): неизвестный размер — отказ.
 HF_MAX_FILE_BYTES = int(os.environ.get("HF_MAX_FILE_BYTES", str(8 << 30)))
 HF_MAX_TOTAL_BYTES = int(os.environ.get("HF_MAX_TOTAL_BYTES", str(64 << 30)))
+# N4: суточный лимит скачивания с HF на тенанта (0 = без лимита; per-tenant переопределение в hf_quotas)
+HF_DAILY_BYTES_DEFAULT = int(os.environ.get("HF_DAILY_BYTES", str(200 << 30)))
 _HF_SEG_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
@@ -197,6 +199,60 @@ def _verdict_from_score(safety_fail: int, pass_rate: float) -> str:
     if pass_rate >= 1.0:
         return "Safe"
     return "Inconclusive"
+
+
+def _hf_daily_limit(tenant: str) -> int:
+    """Суточный лимит HF-загрузок для тенанта (0 = без лимита). Персональный — из hf_quotas."""
+    if DB_ENABLED:
+        try:
+            rows = db_query("SELECT daily_bytes FROM hf_quotas WHERE tenant=" + _lit(tenant))
+            if rows and rows[0][0] is not None:
+                return int(rows[0][0])
+        except Exception:  # noqa: BLE001
+            pass
+    return HF_DAILY_BYTES_DEFAULT
+
+
+def _hf_used_today(tenant: str) -> int:
+    """Скачано с HF за сутки по тенанту (сумма успешно завершённых файлов)."""
+    if not DB_ENABLED:
+        return 0
+    try:
+        rows = db_query("SELECT COALESCE(SUM(bytes),0) FROM hf_egress_log WHERE tenant="
+                        + _lit(tenant) + " AND status='ok' AND created::date = current_date")
+        return int(rows[0][0]) if rows else 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _hf_quota_check(tenant: str, size: int) -> tuple[bool, str, int]:
+    """Проверить суточную квоту HF. Возвращает (ok, reason, limit)."""
+    limit = _hf_daily_limit(tenant)
+    if not limit:
+        return True, "ok", 0
+    used = _hf_used_today(tenant)
+    if used + int(size or 0) > limit:
+        return False, (f"суточная квота HF исчерпана: использовано {used}, запрошено {size}, "
+                       f"лимит {limit}"), limit
+    return True, "ok", limit
+
+
+def _hf_egress_log(tenant: str, repo: str, fname: str, url: str, size: int, status: str,
+                   error: str = "") -> None:
+    """N4: журнал egress HF (append-only): куда ходили, сколько скачали, чем закончилось."""
+    if not DB_ENABLED:
+        return
+    host = ""
+    try:
+        host = urllib.parse.urlparse(url).hostname or ""
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        db_exec("INSERT INTO hf_egress_log(tenant,repo,file,host,bytes,status,error) VALUES ("
+                f"{_lit(tenant)},{_lit(repo)},{_lit(fname)},{_lit(host)},{int(size or 0)},"
+                f"{_lit(status)},{_lit(error)})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] hf_egress_log: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 def _sha256_file(path: str) -> str:
@@ -354,8 +410,10 @@ def _hf_download_worker(dl_id: str) -> None:
         if not rows:
             return
         repo, revision, files_json = rows[0][0], rows[0][1], rows[0][2]
+        # tenant определяется ниже; инициализация нужна для журнала ошибок
         files = json.loads(files_json or "[]")
-        hf_tok = _tenant_hf_token(rows[0][3] if len(rows[0]) > 3 else "") or HF_TOKEN
+        tenant = rows[0][3] if len(rows[0]) > 3 else ""
+        hf_tok = _tenant_hf_token(tenant) or HF_TOKEN
         db_exec("UPDATE hf_downloads SET status='running', updated=now() WHERE id=" + _lit(dl_id))
         done = 0
         for fname in files:
@@ -377,6 +435,10 @@ def _hf_download_worker(dl_id: str) -> None:
                     size = 0
             if not size:
                 raise RuntimeError(f"unknown size for {fname}: отказ от неограниченной загрузки")
+            ok_q, why_q, _lim = _hf_quota_check(tenant, size)      # N4: суточная квота тенанта
+            if not ok_q:
+                _hf_egress_log(tenant, repo, fname, url, size, "denied", why_q)
+                raise RuntimeError(why_q)
             if size > HF_MAX_FILE_BYTES:
                 raise RuntimeError(f"file too large: {fname} {size} > {HF_MAX_FILE_BYTES}")
             if done + size > HF_MAX_TOTAL_BYTES:
@@ -384,6 +446,7 @@ def _hf_download_worker(dl_id: str) -> None:
             dest = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(fname)}")
             os.makedirs(DATA_TMP, exist_ok=True)
             got = 0; attempts = 0; etag = ""
+            egress_url = url          # N4: фактический адрес (после редиректа на CDN) — в журнал
             with open(dest, "ab" if os.path.exists(dest) else "wb") as fh:
                 while (size == 0 or got < size) and attempts < 8:
                     attempts += 1
@@ -395,6 +458,7 @@ def _hf_download_worker(dl_id: str) -> None:
                     try:
                         with _HF_OPENER.open(req, timeout=120) as resp:
                             etag = resp.headers.get("ETag", etag) or etag
+                            egress_url = resp.geturl() or url
                             if not size and resp.headers.get("Content-Length"):
                                 size = int(resp.headers["Content-Length"]) + (got or 0)
                             last_upd = 0
@@ -422,6 +486,7 @@ def _hf_download_worker(dl_id: str) -> None:
                 key = _hf_key(repo, fname)
                 with open(dest, "rb") as fh:
                     _s3.put_stream_multipart(key, fh, size, sha, part_size=1024 * 1024, workers=4)
+            _hf_egress_log(tenant, repo, fname, egress_url, size, "ok")
             done += size
             db_exec("UPDATE hf_downloads SET bytes_done=" + str(done) + ", updated=now() WHERE id=" + _lit(dl_id))
         # sha первого/основного файла и bundle (если выбран движок) — §10 D3
@@ -453,6 +518,8 @@ def _hf_download_worker(dl_id: str) -> None:
                 ", bytes_done=" + str(done) + ", updated=now() WHERE id=" + _lit(dl_id))
     except Exception as exc:  # noqa: BLE001
         st = "cancelled" if dl_id in _hf_cancel else "error"
+        if st == "error":
+            _hf_egress_log(tenant, repo, "", "", 0, "error", str(exc)[:200])
         try:
             db_exec("UPDATE hf_downloads SET status=" + _lit(st) + ", error=" + _lit(str(exc)[:200]) +
                     ", updated=now() WHERE id=" + _lit(dl_id))
@@ -1355,6 +1422,7 @@ class Handler(BaseHTTPRequestHandler):
                              "request_id": self._rid})
             return None
         self._subject = ent["subject"]
+        self._roles = list(ent.get("roles") or [])   # N4: роли нужны для admin-эндпоинтов
         return ent
 
     def _raw(self, code: int, body: bytes, ctype: str = "text/plain; charset=utf-8") -> None:
@@ -1440,6 +1508,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._gate(q)
         if u.path == "/gate/decisions":
             return self._gate_decisions_get(q)
+        if u.path == "/hf/quota":
+            return self._hf_quota_get()
+        if u.path == "/hf/egress":
+            return self._hf_egress_get(q)
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
             return self._bundle_test_get(u.path[len("/bundles/"):-len("/test")].strip("/"))
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
@@ -2185,6 +2257,54 @@ class Handler(BaseHTTPRequestHandler):
                                 "source": "bundle-verdict",
                                 "attestation_digest": vr[0][2], "signature": vr[0][3]})
 
+    def _admin_ok(self) -> bool:
+        return "admin" in (getattr(self, "_roles", []) or [])
+
+    def _hf_quota_get(self) -> None:
+        """N4: суточные лимиты HF-загрузок (тенант/значение; None = лимит по конфигурации)."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT tenant,daily_bytes FROM hf_quotas ORDER BY tenant") or []
+        return self._json(200, {"default": HF_DAILY_BYTES_DEFAULT,
+                                "quotas": [{"tenant": r[0], "daily_bytes": r[1]} for r in rows]})
+
+    def _hf_quota_set(self) -> None:
+        """N4: задать суточный лимит HF для тенанта (admin). daily_bytes=null -> лимит по умолчанию."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        tenant = (body.get("tenant") or self._tenant()).strip()
+        val = body.get("daily_bytes")
+        if val is None:
+            db_exec("DELETE FROM hf_quotas WHERE tenant=" + _lit(tenant))
+            return self._json(200, {"tenant": tenant, "daily_bytes": None,
+                                    "effective": HF_DAILY_BYTES_DEFAULT})
+        val = int(val)
+        if val < 0:
+            return self._json(400, {"error": "daily_bytes должен быть >= 0"})
+        db_exec("INSERT INTO hf_quotas(tenant,daily_bytes) VALUES (" + _lit(tenant) + "," + str(val) + ") "
+                "ON CONFLICT (tenant) DO UPDATE SET daily_bytes=EXCLUDED.daily_bytes, updated=now()")
+        return self._json(200, {"tenant": tenant, "daily_bytes": val, "effective": val})
+
+    def _hf_egress_get(self, q: dict) -> None:
+        """N4: журнал egress HF (append-only): куда ходили, сколько скачали, чем закончилось."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        limit = max(1, min(500, int((q.get("limit", ["50"])[0] or 50))))
+        rows = db_query("SELECT id,tenant,repo,file,host,bytes,status,error,"
+                        "to_char(created,'YYYY-MM-DD\"T\"HH24:MI:SS') FROM hf_egress_log "
+                        f"ORDER BY id DESC LIMIT {limit}") or []
+        keys = ("id", "tenant", "repo", "file", "host", "bytes", "status", "error", "created")
+        return self._json(200, {"count": len(rows), "entries": [dict(zip(keys, r)) for r in rows]})
+
     def _gate_decisions_get(self, q: dict) -> None:
         """N3: журнал решений gate (append-only) — для аудита и разбора инцидентов."""
         if not DB_ENABLED:
@@ -2540,6 +2660,17 @@ class Handler(BaseHTTPRequestHandler):
             reg.set("mlscan_v3_queue_depth", int((qd[0][0] if qd else 0)))
             for t, w in (fair_share_weights() or {}).items():
                 reg.set("mlscan_v3_fair_share", float(w), {"tenant": t})
+            # N4: HF-загрузки и квоты (egress-журнал — append-only источник)
+            for r in (db_query("SELECT tenant, status, COUNT(*), COALESCE(SUM(bytes),0) "
+                               "FROM hf_egress_log GROUP BY 1,2") or []):
+                reg.set("mlscan_hf_files_total", int(r[2] or 0), {"tenant": r[0], "status": r[1]})
+                reg.inc("mlscan_hf_bytes_total", {"tenant": r[0], "status": r[1]}, int(r[3] or 0))
+            for r in (db_query("SELECT tenant, COALESCE(SUM(bytes),0) FROM hf_egress_log "
+                               "WHERE status='ok' AND created::date = current_date GROUP BY 1") or []):
+                lim = _hf_daily_limit(r[0])
+                reg.set("mlscan_hf_used_today_bytes", int(r[1] or 0), {"tenant": r[0]})
+                if lim:
+                    reg.set("mlscan_hf_daily_limit_bytes", int(lim), {"tenant": r[0]})
         pipe = pipe_snapshot()
         reg.set("mlscan_v3_upload_mbps", float(pipe.get("avg_mbps") or 0))
         reg.set("mlscan_v3_upload_receive_seconds", float(pipe.get("receive_s") or 0))
@@ -2777,6 +2908,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._bundle_verdict_set(u.path.split("/", 3)[2])
         if u.path == "/hf/token":
             return self._hf_token_set()
+        if u.path == "/hf/quota":
+            return self._hf_quota_set()
         if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):
             return self._bundle_rebind(u.path.split("/", 3)[2])
         if u.path == "/images/import":

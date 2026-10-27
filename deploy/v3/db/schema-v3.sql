@@ -186,3 +186,21 @@ CREATE TABLE IF NOT EXISTS gate_decisions (
   payload TEXT DEFAULT '',
   created TIMESTAMPTZ DEFAULT now()
 );
+
+-- N4: квоты HF-загрузок (per-tenant, суточный объём; 0/NULL — лимит из конфигурации) и журнал egress
+CREATE TABLE IF NOT EXISTS hf_quotas (
+  tenant TEXT PRIMARY KEY,
+  daily_bytes BIGINT,
+  updated TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS hf_egress_log (
+  id BIGSERIAL PRIMARY KEY,
+  tenant TEXT DEFAULT '',
+  repo TEXT DEFAULT '',
+  file TEXT DEFAULT '',
+  host TEXT DEFAULT '',
+  bytes BIGINT DEFAULT 0,
+  status TEXT NOT NULL,
+  error TEXT DEFAULT '',
+  created TIMESTAMPTZ DEFAULT now()
+);
