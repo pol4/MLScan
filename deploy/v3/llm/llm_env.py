@@ -238,6 +238,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         "--post", testing_url, "--key", api_key,
                         "--scan-id", scan_id or ("bundle-test-" + bundle_id), "--nonce", "",
                         "--trigger-shell"],
+            "env": ([{"name": "EBPF_DUMP_SLOTS", "value": "1"}, {"name": "EBPF_DUMP_RINGS", "value": "1"}]
+                    if os.environ.get("MLSCAN_EBPF_DEBUG") == "1" else []),
             # в этой сборке Kata eBPF доступен только root-в-госте (non-root даёт EPERM даже с CAP_BPF):
             # агент — наш доверенный код, движок остаётся non-root; под изолирован в микро-ВМ.
             "securityContext": {"runAsNonRoot": False, "runAsUser": 0,

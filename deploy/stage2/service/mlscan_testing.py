@@ -204,6 +204,26 @@ def _engine_signed(engine_image: str) -> bool:
     return bool(rows and (rows[0][0] or "").strip())
 
 
+def _bump_sensor_events(body: dict) -> None:
+    """B1: учесть события in-guest сенсора, дошедшие до сервиса (видимость/метрика).
+
+    Ключ может быть усечён (scan_id = 'bundle-test-<bid[:16]>'), поэтому матчим по значению и префиксу.
+    """
+    n_ev = len(body.get("events") or [])
+    if not (DB_ENABLED and n_ev):
+        return
+    for tbl, col, key in (("bundle_tests", "bundle_id", body.get("bundle_id") or ""),
+                          ("bundle_tests", "scan_id", body.get("scan_id") or ""),
+                          ("scan_tokens", "scan_id", body.get("scan_id") or "")):
+        if not key:
+            continue
+        try:
+            db_exec(f"UPDATE {tbl} SET sensor_events=COALESCE(sensor_events,0)+{n_ev} "
+                    f"WHERE {col}=" + _lit(key) + f" OR {col} LIKE " + _lit(key + "%"))
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _gate_log(source: str, *, image: str = "", model_sha256: str = "", verdict: str = "",
               decision: str = "", attestation_digest: str = "", signature: str = "",
               payload: dict | None = None) -> None:
@@ -2115,6 +2135,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": f"bad json: {exc}"})
         scan_id = body.get("scan_id") or ""
         nonce = body.get("nonce") or ""
+        _bump_sensor_events(body)
         events = body.get("events") or []
         findings, rejected = v3tetragon.map_findings(events, nonce)
         if DB_ENABLED and scan_id:
@@ -2168,7 +2189,8 @@ class Handler(BaseHTTPRequestHandler):
             return False
         try:
             rows = db_query("SELECT bundle_id FROM bundle_tests WHERE run_token=" + _lit(token)
-                            + " AND status IN ('created','running')")
+                            + " AND (status IN ('created','running')"
+                            + " OR (status='done' AND updated > now() - interval '2 minutes'))")
             if rows:
                 return True
             # события сенсора могут прийти чуть позже завершения скана (окно дозвона 2 минуты)
@@ -2265,6 +2287,11 @@ class Handler(BaseHTTPRequestHandler):
             k8s("POST", f"/apis/batch/v1/namespaces/{LLM_TEST_NS}/jobs", job)
         except Exception as exc:  # noqa: BLE001
             return self._json(502, {"error": f"job: {type(exc).__name__}: {exc}"})
+        if DB_ENABLED:      # чистая метрика за прогон: сбрасываем счётчик событий сенсора
+            try:
+                db_exec("UPDATE bundle_tests SET sensor_events=0 WHERE bundle_id=" + _lit(bundle_id))
+            except Exception:  # noqa: BLE001
+                pass
         db_exec("INSERT INTO bundle_tests(bundle_id,scan_id,job,namespace,status,run_token,gpu,error) VALUES ("
                 f"{_lit(bundle_id)},{_lit(scan_id)},{_lit(name)},{_lit(LLM_TEST_NS)},'running',"
                 f"{_lit(run_token)},{'true' if bool(body.get('gpu', LLM_TEST_GPU)) else 'false'},'') "
@@ -2905,6 +2932,15 @@ class Handler(BaseHTTPRequestHandler):
         if DB_ENABLED:
             qd = db_query("SELECT COUNT(*) FROM tasks WHERE status='queued'")
             samples["queue_depth"] = int((qd[0][0] if qd else 0))
+        if DB_ENABLED:
+            try:
+                rows = db_query("SELECT COUNT(*), COALESCE(SUM(CASE WHEN COALESCE(sensor_events,0) > 0 "
+                                "THEN 1 ELSE 0 END), 0) FROM bundle_tests WHERE status IN ('done','running')")
+                total, with_ev = (rows[0][0], rows[0][1]) if rows else (0, 0)
+                if total:
+                    samples["sensor_coverage"] = round(float(with_ev) / float(total), 3)
+            except Exception:  # noqa: BLE001
+                pass
         return self._json(200, {"slo": v3slo.SLO, "samples": samples,
                                 "alerts": v3slo.evaluate(samples)})
 

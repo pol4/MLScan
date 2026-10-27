@@ -212,3 +212,7 @@ CREATE TABLE IF NOT EXISTS scan_tokens (
   status TEXT NOT NULL DEFAULT 'running',
   updated TIMESTAMPTZ DEFAULT now()
 );
+
+-- B1: видимость работы in-guest eBPF-сенсора (события, дошедшие до сервиса)
+ALTER TABLE bundle_tests ADD COLUMN IF NOT EXISTS sensor_events INT DEFAULT 0;
+ALTER TABLE scan_tokens ADD COLUMN IF NOT EXISTS sensor_events INT DEFAULT 0;

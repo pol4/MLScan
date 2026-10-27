@@ -531,6 +531,7 @@ def _post_events(args, batch: list) -> None:
                                           "Authorization": "Bearer " + args.key})
     try:
         with op.open(req, timeout=30) as r:
+            print(f"[ebpf-agent] отправлено событий: {len(batch)}", flush=True)
             print("[ebpf-agent] /llm/events:", r.status, r.read().decode()[:200], flush=True)
     except Exception as exc:  # noqa: BLE001
         print("[ebpf-agent] /llm/events ошибка:", type(exc).__name__, exc, flush=True)

@@ -56,7 +56,21 @@ for _ in range(20):                       # агент публикует соб
         break
     time.sleep(3)
 assert ev_ok, "LLM-B-01 не зафиксирован агентом во время инференса"
+
+# видимость сенсора: счётчик дошедших событий в БД и SLO (мягкая проверка — под мог смениться)
+rows = m.db_query("SELECT COALESCE(sensor_events,0) FROM bundle_tests WHERE bundle_id=" + m._lit(bid))
+n_ev = int(rows[0][0]) if rows else 0
+print("  [i]    сервис учёл событий сенсора:", n_ev)
+st, slo = api("GET", "/v3/slo")
+print("  [i]    /v3/slo sensor_coverage =", (slo.get("samples") or {}).get("sensor_coverage"))
 PY
 RC=$?; [ "$RC" = "0" ] || { echo "[FAIL] llm ebpf inference e2e"; exit 1; }
+# прямая проверка: агент в контейнере инференс-джоба отправил события (в этом же прогоне)
+SENT=$(kubectl --context "$CTX" -n mlscan-build logs -l app=mlscan-llm-test -c ebpf-agent --tail=200 2>/dev/null \
+  | grep -o "отправлено событий: [0-9]*" | awk '{s+=$3} END {print s+0}')
+if [ "${SENT:-0}" -lt 1 ]; then
+  echo "[FAIL] сенсор в инференс-джобе не отправил ни одного события"; exit 1
+fi
+echo "  [OK]   сенсор отправил событий за прогон: $SENT"
 kubectl --context "$CTX" -n mlscan-build delete jobs -l app=mlscan-llm-test --ignore-not-found >/dev/null 2>&1
 echo "B1 llm ebpf inference: OK"
