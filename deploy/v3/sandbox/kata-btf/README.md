@@ -35,3 +35,27 @@ MLSCAN_NODE_SSH=user@node bash deploy/v3/sandbox/kata-btf/install.sh   # бэк�
 kubectl -n mlscan-build create configmap kata-btf-ebpf --from-file=ebpf_smoke.py=deploy/v3/sandbox/kata-btf/ebpf_smoke.py
 # запустить Job с runtimeClassName=kata, python:3.12-slim, caps [BPF,PERFMON,SYS_RESOURCE], скрипт /opt/ebpf/ebpf_smoke.py
 ```
+
+## Минимальный in-guest агент (`ebpf_agent.py`) — статус WIP
+
+Что **работает** (проверено на стенде):
+- создание ARRAY-карты, `BPF_PROG_LOAD` программ типа RAW_TRACEPOINT и attach к raw-tracepoint
+  `sys_enter` **из гостевой ВМ** (без Torvalds-магии и внешних образов);
+- определение номера syscall через `pt_regs` (`orig_ax` = offset 120) и фильтрация по нему —
+  хуки `execve` (59) и `connect` (42) срабатывают, счётчики и события пишутся (JSONL + POST `/llm/events`);
+- окно `pt_regs` читается `bpf_probe_read_kernel` корректно (проверено дампом: `ax=-38`,
+  `si/ip` — user-указатели, `di=-100 (AT_FDCWD)`, `orig_ax=257`).
+
+Что **не получилось** (открытый вопрос для следующего шага):
+- `bpf_probe_read_user` по указателю аргумента возвращает `-EFAULT` (14) → строки (путь/адрес)
+  пока не извлекаются; сама схема проверена на уровне счётчиков и типов событий.
+- Вероятная причина: raw-tracepoint `sys_enter` даёт `pt_regs`-контекст, но в этой сборке чтение
+  user-памяти требует иного подхода; надёжный путь — **типизированный tracepoint**
+  `syscalls/sys_enter_execve` (`BPF_PROG_TYPE_TRACEPOINT`, смещение `filename` из
+  `/sys/kernel/tracing/events/syscalls/sys_enter_execve/format`) с attach через `perf_event_open` +
+  `PERF_EVENT_IOC_SET_BPF`. Либо CO-RE (BTF) чтение `task_struct->mm`.
+- Слоты карты: 0 = execve, 1 = connect (openat отложен до расширения карты).
+
+Артефакты: `ebpf_agent.py` (агент), `ebpf_smoke.py` (диагностика загрузки/attach), `install.sh` (ядро).
+Запуск агента в Job: `runtimeClassName: kata`, образ с python3, caps `[BPF, PERFMON, SYS_RESOURCE]`,
+`--out /events/ebpf.jsonl` (общий том) и/или `--post <TESTING_URL>/llm/events --key <key> --scan-id .. --nonce ..`.

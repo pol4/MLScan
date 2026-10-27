@@ -127,8 +127,14 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
   raw-tracepoint работают — `deploy/v3/sandbox/kata-btf/ebpf_smoke.py` (stdlib+ctypes) печатает
   «eBPF в госте РАБОТАЕТ».
 - Tetragon как агент упирается в отсутствие `bpffs` в госте (pinning карт в `/sys/fs/bpf`); принято
-  решение использовать **собственный минимальный in-guest агент** (развитие smoke-скрипта), который
-  пишет события в общий том пода → probe-runner → `/llm/events` → `LLM-B-*`. Это следующий шаг B1.
+  решение использовать **собственный минимальный in-guest агент** (`deploy/v3/sandbox/kata-btf/ebpf_agent.py`).
+  Статус агента: BPF-карта + `BPF_PROG_LOAD` (RAW_TRACEPOINT) + attach `sys_enter` из гостя работают,
+  хуки `execve`/`connect` срабатывают и пишут события в JSONL и в `/llm/events`; окно `pt_regs`
+  читается `bpf_probe_read_kernel` корректно. **Открыто:** извлечение строк (`probe_read_user`
+  возвращает `-EFAULT`) — следующий шаг — типизированный tracepoint `syscalls/sys_enter_execve`
+  (`BPF_PROG_TYPE_TRACEPOINT` + `perf_event_open`/`PERF_EVENT_IOC_SET_BPF`) либо CO-RE по BTF.
+  После этого — включение агента в job инференса (`runtimeClassName: kata`, caps BPF/PERFMON),
+  при необходимости расширение Kyverno-политики и E2E с реальными `LLM-B-*`.
 
 **N6: JWT для API/CI и rate-limit на входе.** В `v2/auth/authz.py` добавлены:
 - **JWT (HS256, stdlib)** с обязательной проверкой `alg=HS256`, подписи, `exp`/`nbf`, `aud`, `iss`
