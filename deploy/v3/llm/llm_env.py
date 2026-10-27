@@ -181,7 +181,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         scan_id: str = "", namespace: str = NAMESPACE, gpu: bool = True,
                         runtime_class: str = "", cuda_visible_devices: str = "",
                         resources: dict | None = None, model_volume_size: str = "64Gi",
-                        ttl_seconds: int = 3600, max_tokens: int = 256) -> dict:
+                        ttl_seconds: int = 3600, max_tokens: int = 256,
+                        ebpf_agent: bool = False, ebpf_configmap: str = "mlscan-ebpf-agent") -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -208,6 +209,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                    "--ctx-size", "4096", "--n-gpu-layers", "99" if gpu else "0"]
     containers = [
         {"name": "engine", "image": engine_image, "env": engine_env, "args": engine_args,
+         "securityContext": dict(hardened, readOnlyRootFilesystem=False),
          "ports": [{"name": "openai", "containerPort": 8000}],
          "resources": {"limits": limits},
          "securityContext": dict(hardened, readOnlyRootFilesystem=False),
@@ -217,6 +219,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                             "initialDelaySeconds": 10, "periodSeconds": 5, "failureThreshold": 60}},
         {"name": "probe", "image": "python:3.12-slim",
          "command": ["python", "-c", _PROBE_SRC],
+         "securityContext": dict(hardened, readOnlyRootFilesystem=False),
          "env": [{"name": "PROMPTS_JSON", "value": json_dumps({"cases": prompts or []})},
                  {"name": "PROMPT_SET", "value": prompt_set},
                  {"name": "BUNDLE_ID", "value": bundle_id},
@@ -228,6 +231,20 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
          "resources": {"limits": {"memory": "1Gi", "cpu": "1"}},
          "securityContext": dict(hardened, readOnlyRootFilesystem=False)},
     ]
+    if ebpf_agent:      # B1: наблюдение ядерных событий инференса внутри гостевой ВМ
+        containers.append({
+            "name": "ebpf-agent", "image": "python:3.12-slim",
+            "command": ["python", "/opt/ebpf/ebpf_agent.py", "--duration", str(int(ttl_seconds) - 30),
+                        "--post", testing_url, "--key", api_key,
+                        "--scan-id", scan_id or ("bundle-test-" + bundle_id), "--nonce", "",
+                        "--trigger-shell"],
+            # в этой сборке Kata eBPF доступен только root-в-госте (non-root даёт EPERM даже с CAP_BPF):
+            # агент — наш доверенный код, движок остаётся non-root; под изолирован в микро-ВМ.
+            "securityContext": {"runAsNonRoot": False, "runAsUser": 0,
+                                "allowPrivilegeEscalation": False,
+                                "capabilities": {"drop": ["ALL"], "add": ["BPF", "PERFMON"]}},
+            "volumeMounts": [{"name": "ebpf", "mountPath": "/opt/ebpf", "readOnly": True}],
+            "resources": {"limits": {"memory": "512Mi", "cpu": "1"}}})
     spec = {
         "backoffLimit": 0, "ttlSecondsAfterFinished": int(ttl_seconds),
         "template": {
@@ -235,8 +252,10 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
             "spec": {
                 "automountServiceAccountToken": False,
                 "restartPolicy": "Never",
-                "securityContext": {"runAsNonRoot": True, "runAsUser": uid, "runAsGroup": uid,
-                                    "fsGroup": uid, "seccompProfile": {"type": "RuntimeDefault"}},
+                "securityContext": ({"fsGroup": uid, "seccompProfile": {"type": "RuntimeDefault"}}
+                                    if ebpf_agent else
+                                    {"runAsNonRoot": True, "runAsUser": uid, "runAsGroup": uid,
+                                     "fsGroup": uid, "seccompProfile": {"type": "RuntimeDefault"}}),
                 "initContainers": [{
                     "name": "model-fetcher", "image": "python:3.12-slim",
                     "command": ["python", "-c", _FETCH_SRC],
@@ -249,7 +268,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                 }],
                 "containers": containers,
                 "volumes": [{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}}]
-                           + ([{"name": "dev", "hostPath": {"path": "/dev"}}] if gpu else []),
+                           + ([{"name": "dev", "hostPath": {"path": "/dev"}}] if gpu else [])
+                           + ([{"name": "ebpf", "configMap": {"name": ebpf_configmap}}] if ebpf_agent else []),
             },
         },
     }

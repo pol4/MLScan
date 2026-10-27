@@ -270,6 +270,23 @@ def ips_from_sockaddr(raw: bytes) -> str:
     return ""
 
 
+def _post_events(args, batch: list) -> None:
+    """Отправить пакет событий в /llm/events (инкрементально, чтобы findings появились сразу)."""
+    if not batch:
+        return
+    import urllib.request
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    body = json.dumps({"scan_id": args.scan_id, "nonce": args.nonce, "events": batch}).encode()
+    req = urllib.request.Request(args.post.rstrip("/") + "/llm/events", data=body, method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + args.key})
+    try:
+        with op.open(req, timeout=30) as r:
+            print("[ebpf-agent] /llm/events:", r.status, r.read().decode()[:200], flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print("[ebpf-agent] /llm/events ошибка:", type(exc).__name__, exc, flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="")
@@ -279,6 +296,8 @@ def main() -> int:
     ap.add_argument("--scan-id", default="")
     ap.add_argument("--nonce", default="")
     ap.add_argument("--phase", default="probe")
+    ap.add_argument("--trigger-shell", action="store_true",
+                    help="самопроверка: выполнить 'sh -c true' (execve shell внутри гостя)")
     args = ap.parse_args()
 
     try:                                    # BPF-память учитывается в memlock в госте Kata
@@ -297,8 +316,12 @@ def main() -> int:
     print(f"[ebpf-agent] bpf активен (BTF {os.path.getsize('/sys/kernel/btf/vmlinux')} байт), "
           f"хуки: execve+connect (2 слота карты)", flush=True)
 
+    if args.trigger_shell:      # самопроверка сенсора (в проде это делает сам движок/агент модели)
+        subprocess.run(["/bin/sh", "-c", "true"], check=False)
     events: list[dict] = []
+    pending: list[dict] = []
     t_end = time.time() + max(args.duration, 5)
+    last_post = 0.0
     seen = set()
     while time.time() < t_end:
         time.sleep(1.0)
@@ -310,19 +333,23 @@ def main() -> int:
             key = ("process_exec", path)
             if key not in seen:
                 seen.add(key)
-                events.append({"type": "process_exec", "phase": args.phase, "probe_id": "ebpf-agent",
+                ev = {"type": "process_exec", "phase": args.phase, "probe_id": "ebpf-agent",
                                "process": {"binary": path.strip(), "exe": path.strip(),
                                            "args": [], "pid": ex.get("pid")},
-                               "details": f"comm={path.strip()} syscall=execve pid={ex.get('pid')}",
-                               "nonce": args.nonce, "ts": time.time()})
+                       "details": f"comm={path.strip()} syscall=execve pid={ex.get('pid')}",
+                       "nonce": args.nonce, "ts": time.time()}
+                events.append(ev); pending.append(ev)
+        if args.post and pending and (time.time() - last_post) >= 3.0:
+            _post_events(args, pending); pending = []; last_post = time.time()
         if cn.get("count"):
             ip = ""      # sockaddr — user-память (в этом госте недоступна хелперу); см. README
             key = ("network", ip)
             if key not in seen:
                 seen.add(key)
-                events.append({"type": "network", "phase": args.phase, "probe_id": "ebpf-agent",
-                               "dst": {"ip": ip}, "details": cn["buf"], "nonce": args.nonce,
-                               "ts": time.time()})
+                ev = {"type": "network", "phase": args.phase, "probe_id": "ebpf-agent",
+                       "dst": {"ip": ip}, "details": cn["buf"], "nonce": args.nonce,
+                       "ts": time.time()}
+                events.append(ev); pending.append(ev)
 
     if args.out:
         os.makedirs(os.path.dirname(args.out), exist_ok=True)
@@ -330,15 +357,8 @@ def main() -> int:
             for e in events:
                 fh.write(json.dumps(e, ensure_ascii=False) + "\n")
         print(f"[ebpf-agent] событий: {len(events)} -> {args.out}", flush=True)
-    if args.post:
-        import urllib.request
-        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        body = json.dumps({"scan_id": args.scan_id, "nonce": args.nonce, "events": events}).encode()
-        req = urllib.request.Request(args.post.rstrip("/") + "/llm/events", data=body, method="POST",
-                                     headers={"Content-Type": "application/json",
-                                              "Authorization": "Bearer " + args.key})
-        with op.open(req, timeout=60) as r:
-            print("[ebpf-agent] /llm/events:", r.status, r.read().decode()[:200], flush=True)
+    if args.post and pending:                     # финальная отправка остатка
+        _post_events(args, pending)
     return 0
 
 

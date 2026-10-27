@@ -102,3 +102,19 @@ kubectl -n mlscan-build create configmap kata-btf-ebpf --from-file=ebpf_smoke.py
 Осталось (следующий шаг): добавить контейнер `ebpf-agent` в job инференса/сканов
 (образ песочницы по digest, скрипт из ConfigMap `mlscan-ebpf-agent`, общий том событий,
 nonce скана) и E2E «прогон в песочнице → реальные `LLM-B-*`».
+
+## B1 завершён: агент в job'е теста bundle (in-guest наблюдение инференса)
+
+- `LLM_TEST_EBPF=1` (env сервиса) — job теста bundle получает третий контейнер `ebpf-agent`:
+  образ python, скрипт из ConfigMap `mlscan-ebpf-agent`, caps `BPF/PERFMON`, тома нет (публикует сам);
+- запрос теста может переопределять: `{"gpu": false, "runtime_class": "kata", "ebpf": true}` —
+  так E2E гоняет **реальный in-guest** путь (GPU+Kata требует отдельного nvidia-gpu kata-ядра);
+- агент публикует события **инкрементально** (дельтами каждые ~3 c) в `/llm/events` по **run-token**
+  job'а (не API-ключ) — findings появляются сразу;
+- **нюанс сборки**: eBPF в госте этой Kata доступен только **root-в-госте** (non-root с `CAP_BPF`
+  получает EPERM — проверено), поэтому агент запускается root в контейнере, а движок и probe остаются
+  non-root; под изолирован в микро-ВМ.
+
+Проверка: `tests/e2e/llm_ebpf_inference_e2e.sh` → «B1 llm ebpf inference: OK»: реальный прогон
+инференса (llama.cpp CPU, Kata+BTF) → агент → `/llm/events` → **LLM-B-01 (high)**; вердикт bundle
+(`Needs review` → `block`) и подписанная аттестация формируются как раньше.

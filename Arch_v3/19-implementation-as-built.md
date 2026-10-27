@@ -147,6 +147,16 @@ HF-загрузки, `POST /bundles`, `POST /bundles/<id>/rebind` и `/gate`.
 в namespace; требования digest-образа и hardened securityContext сохранены. Проверено: Job с
 доп. контейнером-агентом допущен, обычный скан в песочнице работает (`binding_e2e` OK).
 
+**B1 — завершено (LLM-путь).** В job теста bundle добавлен третий контейнер `ebpf-agent`
+(env `LLM_TEST_EBPF=1`, скрипт из ConfigMap `mlscan-ebpf-agent`, caps `BPF/PERFMON`, публикация
+событий инкрементально в `/llm/events` по **run-token** job'а). Запрос теста может задавать
+`{"gpu": false, "runtime_class": "kata", "ebpf": true}` — так E2E идёт по реальному in-guest пути
+(BTF-ядро Kata). Нюанс сборки: eBPF в госте доступен только root-в-госте (non-root с `CAP_BPF` даёт
+EPERM), поэтому агент — root в контейнере, движок/probe остаются non-root. Проверено:
+`tests/e2e/llm_ebpf_inference_e2e.sh` → реальный инференс (llama.cpp CPU, Kata+BTF) → **LLM-B-01 (high)**
+в `/llm/events`, вердикт bundle и аттестация — как прежде; E2E агента `llm_ebpf_e2e.sh` — OK;
+`binding_e2e`/`bundle_test_e2e`/`gate_attest_e2e`/`llm_events_e2e` — OK; tests/v3 192 passed.
+
 **N6: JWT для API/CI и rate-limit на входе.** В `v2/auth/authz.py` добавлены:
 - **JWT (HS256, stdlib)** с обязательной проверкой `alg=HS256`, подписи, `exp`/`nbf`, `aud`, `iss`
   (ключ — `MLSCAN_JWT_KEY`, общий для сервисов; JWT-ключ берётся из Secret `mlscan-keys` →

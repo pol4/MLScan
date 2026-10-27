@@ -452,7 +452,14 @@ containerd-runtime-хендлеров; разные RuntimeClass → разны�
   (`runtime_type=io.containerd.kata.v2`, `BinaryName=kata-runtime`).
 - В кластере есть только RuntimeClass `kata` (handler `kata`).
 
-> **Статус B1 (факт, 2026-10-27):** реализовано проще, чем в плане ниже, — **без правки
+> **Статус B1 — ЗАВЕРШЕНО (LLM-путь, 2026-10-27):** BTF-ядро Kata переключено без правок containerd и без
+> рестарта демонов; in-guest агент (`ebpf_agent.py`) фиксирует реальные события и в job'е теста bundle
+> даёт **LLM-B-01** на инференсе (`tests/e2e/llm_ebpf_inference_e2e.sh`); в песочнице namespace переведён
+> в `baseline` с guard-политикой (только `BPF/PERFMON` у `ebpf-agent`, опасные caps запрещены).
+> Ограничения: адрес назначения для `LLM-B-02` (нужен kprobe/CO-RE), Tetragon не используется (нужен
+> `bpffs` в госте), eBPF-в-госте требует root-в-контейнере (non-root даёт EPERM).
+>
+> Ниже — исходный план (как предполагалось): реализовано проще, чем в плане ниже, — **без правки
 > `containerd-template.toml` и без рестарта демонов**: достаточно переключить `kernel` в активном
 > конфиге Kata на BTF-вариант (`deploy/v3/sandbox/kata-btf/install.sh`; бэкап/откат документированы) —
 > конфиг читается при создании каждой микро-ВМ, действует только `mlscan-sandbox`. Проверено в госте:

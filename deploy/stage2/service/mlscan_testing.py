@@ -100,6 +100,7 @@ LLM_TEST_RUNTIME_CLASS = os.environ.get("LLM_TEST_RUNTIME_CLASS", "nvidia")
 LLM_TEST_GPU = os.environ.get("LLM_TEST_GPU", "1") == "1"
 LLM_TEST_MAX_TOKENS = int(os.environ.get("LLM_TEST_MAX_TOKENS", "256"))
 LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
+LLM_TEST_EBPF = os.environ.get("LLM_TEST_EBPF", "0") == "1"      # B1: in-guest eBPF-агент в job'е теста
 DETECTORS_VERSION = os.environ.get("MLSCAN_DETECTORS_VERSION", "det-1")
 # H1: Hugging Face (HF_MOCK=1 — встроенный mock-сервер для hermetic-тестов; иначе реальный HF)
 HF_BASE_URL = os.environ.get("HF_BASE_URL", "https://huggingface.co")
@@ -2160,7 +2161,9 @@ class Handler(BaseHTTPRequestHandler):
                       "tolerance": c.get("tolerance")} for c in cases],
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
             scan_id=scan_id, namespace=LLM_TEST_NS, gpu=bool(body.get("gpu", LLM_TEST_GPU)),
-            runtime_class=LLM_TEST_RUNTIME_CLASS, max_tokens=int(body.get("max_tokens") or LLM_TEST_MAX_TOKENS))
+            runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),
+            max_tokens=int(body.get("max_tokens") or LLM_TEST_MAX_TOKENS),
+            ebpf_agent=bool(body.get("ebpf", LLM_TEST_EBPF)))
         name = job["metadata"]["name"]
         try:
             # повторный запуск теста: убираем прежний job (иначе 409 AlreadyExists)
@@ -2966,10 +2969,12 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         # N2: job теста bundle аутентифицируется одноразовым run-token (только для своего bundle)
-        if u.path == "/llm/score":
+        if u.path in ("/llm/score", "/llm/events"):
             tok = (self.headers.get("Authorization") or "").replace("Bearer ", "").strip()
             if tok and self._run_token_ok(tok):
-                return self._llm_score(run_token=tok)
+                if u.path == "/llm/score":
+                    return self._llm_score(run_token=tok)
+                return self._llm_events()      # B1: события in-guest eBPF от job'а теста
         if self._require() is None:
             return
         if self._rate_limited():
