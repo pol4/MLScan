@@ -53,9 +53,16 @@ OP = {
 }
 # Номера syscall (x86_64)
 NR_EXECVE, NR_CONNECT, NR_OPENAT = 59, 42, 257
+NR_MMAP, NR_MPROTECT = 9, 10
+NR_INIT_MODULE, NR_FINIT_MODULE = 175, 313
+# слоты ARRAY-карты: 0=execve, 1=connect, 2=mmap, 3=mprotect, 4=init_module, 5=finit_module
+SLOT = {NR_EXECVE: 0, NR_CONNECT: 1, NR_MMAP: 2, NR_MPROTECT: 3, NR_INIT_MODULE: 4, NR_FINIT_MODULE: 5}
 # offsets в struct pt_regs (x86_64): r15..r8, ax, cx, dx, si, di, orig_ax
 #   index: 0..9 (r15..r8), 10=ax(80), 11=cx(88), 12=dx(96), 13=si(104), 14=di(112), 15=orig_ax(120)
 OFF_ARG0, OFF_ARG1, OFF_ORIG_AX = 112, 104, 120
+# args: 0=di(112), 1=si(104), 2=dx(96), 3=r10(56), 4=r8(72), 5=r9(64)
+OFF_ARG_MMAP_PROT = 96        # mmap(addr, len, prot, flags, ...) -> prot = arg2 (dx)
+OFF_ARG_MPROTECT_PROT = 96    # mprotect(addr, len, prot)      -> prot = arg2 (dx)
 
 
 class MapCreate(C.Structure):
@@ -160,7 +167,7 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     # аргумент (filename / sockaddr) — user-указатель из pt_regs; строку читаем probe_read_user
     a.mov_reg(3, 6)
     a.add_imm(3, arg_off)
-    a.stx_dw(10, 3, -80)         # сохраняем сырой указатель (диагностика)
+    a.stx_dw(10, 3, -80)         # сохраняем сырой указатель аргумента (диагностика/значение)
     # ВАЖНО: bpf_probe_read_user в этом госте стабильно даёт EFAULT (user-память недоступна
     # хелперу), поэтому атрибуцию процесса берём из ядра: bpf_get_current_comm (helper 35).
     # Сырой аргумент (r3) сохраняем для диагностики; окно pt_regs можно дампить (DUMP_NR).
@@ -183,7 +190,7 @@ def build_hook(nr: int, arg_off: int, map_fd: int) -> bytes:
     # ключ (0 для execve/openat, 1 для connect) в r10-68
     a.mov_reg(1, 10)
     a.add_imm(1, -68)
-    a.mov_imm(2, 0 if nr != NR_CONNECT else 1)
+    a.mov_imm(2, SLOT.get(nr, 0))
     a.stx_w(1, 2, 0)
     # lookup(map, &key)
     a.ld_map(1, map_fd)
@@ -238,7 +245,7 @@ def load_hook(nr: int, arg_off: int, map_fd: int) -> int:
 
 def create_map() -> int:
     attr = MapCreate(map_type=BPF_MAP_TYPE_ARRAY, key_size=KEY_SIZE, value_size=VALUE_SIZE,
-                     max_entries=2)
+                     max_entries=6)
     fd, err = _bpf(attr, BPF_MAP_CREATE)
     if fd < 0:
         raise RuntimeError(f"BPF_MAP_CREATE: errno={err}")
@@ -368,14 +375,17 @@ def main() -> int:
         return 1
 
     m = create_map()
-    load_hook(NR_EXECVE, OFF_ARG0, m)      # ключ 0 -> process_exec
-    load_hook(NR_CONNECT, OFF_ARG1, m)     # ключ 1 -> network
-    # NB: openat отложен — нужен отдельный слот карты (сейчас слоты: 0=execve, 1=connect)
+    load_hook(NR_EXECVE, OFF_ARG0, m)        # слот 0 -> process_exec (бинарник из comm)
+    load_hook(NR_CONNECT, OFF_ARG1, m)       # слот 1 -> network (адрес из /proc/net/tcp)
+    # TODO(B1+): LLM-B-04 (exec-память) и LLM-B-05 (загрузка модуля) — хуки mmap/mprotect/init_module
+    # реализованы (слоты 2..5), но значения аргументов на raw-tracepoint требуют точной верификации
+    # регистров (иначе ложные срабатывания); включать после проверки дампом окна pt_regs.
     print(f"[ebpf-agent] bpf активен (BTF {os.path.getsize('/sys/kernel/btf/vmlinux')} байт), "
           f"хуки: execve+connect (2 слота карты)", flush=True)
 
     if args.trigger_shell:      # самопроверка сенсора (в проде это делает сам движок/агент модели)
         subprocess.run(["/bin/sh", "-c", "true"], check=False)
+    PROT_EXEC = 0x4
     events: list[dict] = []
     pending: list[dict] = []
     t_end = time.time() + max(args.duration, 5)
@@ -385,7 +395,8 @@ def main() -> int:
         time.sleep(1.0)
         ex, cn = read_map(m, 0), read_map(m, 1)
         if DUMP_NR >= 0 and ex.get("count"):
-            print("[ebpf-agent] pt_regs[80..144] hex:", ex.get("buf_hex", ""), flush=True)
+            print("[ebpf-agent] pt_regs[80..144] hex (слот %d):" % SLOT.get(DUMP_NR, 0),
+                  (read_map(m, SLOT.get(DUMP_NR, 0)).get("buf_hex") or ""), flush=True)
         if ex.get("count"):
             path = (ex["buf"] or "?")
             key = ("process_exec", path)
@@ -397,7 +408,8 @@ def main() -> int:
                        "details": f"comm={path.strip()} syscall=execve pid={ex.get('pid')}",
                        "nonce": args.nonce, "ts": time.time()}
                 events.append(ev); pending.append(ev)
-        if args.post and pending and (time.time() - last_post) >= 3.0:
+        # NB: memory/module хуки сняты до верификации регистров (см. TODO выше)
+        if args.post and pending and (last_post == 0.0 or (time.time() - last_post) >= 3.0):
             _post_events(args, pending); pending = []; last_post = time.time()
         if cn.get("count"):
             peers = external_peers()          # LLM-B-02: внешние адреса из kernel-состояния
@@ -412,6 +424,11 @@ def main() -> int:
                        "nonce": args.nonce, "ts": time.time()}
                 events.append(ev); pending.append(ev)
 
+    if os.environ.get("EBPF_DUMP_SLOTS") == "1":
+        for i in range(6):
+            r = read_map(m, i)
+            print(f"[ebpf-agent] slot {i}: count={r.get('count')} pid={r.get('pid')} argval=0x{int(r.get('argptr') or 0):x}",
+                  flush=True)
     if args.out:
         os.makedirs(os.path.dirname(args.out), exist_ok=True)
         with open(args.out, "w") as fh:

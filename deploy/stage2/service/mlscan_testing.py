@@ -1200,11 +1200,14 @@ def run_sandbox(scan_id: str, name: str, fmt: str, artifact_url: str) -> dict:
             except Exception as exc:  # noqa: BLE001
                 result["parse_error"] = str(exc)
         result["stdout_tail"] = (logs or "")[-1200:]
-    try:
-        k8s("DELETE", f"/apis/batch/v1/namespaces/{SANDBOX_NS}/jobs/{job}?propagationPolicy=Background",
-            expect_json=False)
-    except Exception:  # noqa: BLE001
-        pass
+    if not (SANDBOX_EBPF and run_token):
+        # С сенсором eBPF job НЕ удаляем сразу: контейнер-сенсор живёт дольше скана и должен
+        # успеть опубликовать события (детерминированная уборка — по ttlSecondsAfterFinished).
+        try:
+            k8s("DELETE", f"/apis/batch/v1/namespaces/{SANDBOX_NS}/jobs/{job}?propagationPolicy=Background",
+                expect_json=False)
+        except Exception:  # noqa: BLE001
+            pass
     return result
 
 
