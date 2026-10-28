@@ -1,0 +1,41 @@
+## образы с digest
+192.168.20.116:32000/nvidia/k8s-device-plugin:v0.17.0-mlscan sha256:4d64bbf424f9131fe4c4f366ae49b90dc6dab48af525e259271aea0f7748f02b
+192.168.20.116:32000/nvidia/k8s-device-plugin@sha256:4d64bbf424f9131fe4c4f366ae49b90dc6dab48af525e259271aea0f7748f02b sha256:4d64bbf424f9131fe4c4f366ae49b90dc6dab48af525e259271aea0f7748f02b
+docker.io/nvidia/cuda:12.4.0-base-ubuntu22.04 sha256:80d4d9ac041242f6ae5d05f9be262b3374e0e0b8bb5a49c6c3e94e192cde4a44
+docker.io/nvidia/cuda@sha256:80d4d9ac041242f6ae5d05f9be262b3374e0e0b8bb5a49c6c3e94e192cde4a44 sha256:80d4d9ac041242f6ae5d05f9be262b3374e0e0b8bb5a49c6c3e94e192cde4a44
+ghcr.io/ggml-org/llama.cpp:server sha256:1fa7f8f0ca663fdcf3203dc125a7e0b5c9e49c9ed054b049599666cd7e300eb0
+ghcr.io/ggml-org/llama.cpp:server-cuda sha256:b51c252687249a6990ae1c168156cb215c954bfd71f9c434eda9a065b1a40dbe
+ghcr.io/ggml-org/llama.cpp@sha256:1fa7f8f0ca663fdcf3203dc125a7e0b5c9e49c9ed054b049599666cd7e300eb0 sha256:1fa7f8f0ca663fdcf3203dc125a7e0b5c9e49c9ed054b049599666cd7e300eb0
+ghcr.io/ggml-org/llama.cpp@sha256:b51c252687249a6990ae1c168156cb215c954bfd71f9c434eda9a065b1a40dbe sha256:b51c252687249a6990ae1c168156cb215c954bfd71f9c434eda9a065b1a40dbe
+localhost:32000/mlscan-llama-cpp:v1 sha256:1fa7f8f0ca663fdcf3203dc125a7e0b5c9e49c9ed054b049599666cd7e300eb0
+localhost:32000/mlscan-sandbox:latest sha256:eabc481937e6e4f60a3b8f907a738f3616ef6cf8eab7537b9d506771306bdf3e
+localhost:32000/mlscan-sandbox:v2 sha256:244280c82ad40f79faad9aa96ea4f97c81fc1ddbb150e5e4ba8e7d9fee82c610
+localhost:32000/mlscan-sandbox:v3 sha256:c0e9dec9d2ce1b67ca974f845b4c9e803337a9082606d1d11b8c716a8dfbc9b7
+localhost:32000/mlscan-sandbox:v4 sha256:6130fe9978eb9c261763e9027e8123166f0a0d22a978f3e7b9a747d3850e76b7
+localhost:32000/mlscan-sandbox@sha256:244280c82ad40f79faad9aa96ea4f97c81fc1ddbb150e5e4ba8e7d9fee82c610 sha256:244280c82ad40f79faad9aa96ea4f97c81fc1ddbb150e5e4ba8e7d9fee82c610
+localhost:32000/mlscan-sandbox@sha256:6130fe9978eb9c261763e9027e8123166f0a0d22a978f3e7b9a747d3850e76b7 sha256:6130fe9978eb9c261763e9027e8123166f0a0d22a978f3e7b9a747d3850e76b7
+localhost:32000/mlscan-sandbox@sha256:c0e9dec9d2ce1b67ca974f845b4c9e803337a9082606d1d11b8c716a8dfbc9b7 sha256:c0e9dec9d2ce1b67ca974f845b4c9e803337a9082606d1d11b8c716a8dfbc9b7
+localhost:32000/mlscan-sandbox@sha256:cd5e9b8c7fd7b8efec3151b598048a1a191484519985d6572afbe8d7f668a13d sha256:cd5e9b8c7fd7b8efec3151b598048a1a191484519985d6572afbe8d7f668a13d
+localhost:32000/mlscan-sandbox@sha256:eabc481937e6e4f60a3b8f907a738f3616ef6cf8eab7537b9d506771306bdf3e sha256:eabc481937e6e4f60a3b8f907a738f3616ef6cf8eab7537b9d506771306bdf3e
+localhost:32000/mlscan/ebpf-agent:v1 sha256:5924e01cf9cbb22bdb617ac4314ae89df56441b33ce008456c3a85e03f85f4e1
+localhost:32000/mlscan/ebpf-agent@sha256:5924e01cf9cbb22bdb617ac4314ae89df56441b33ce008456c3a85e03f85f4e1 sha256:5924e01cf9cbb22bdb617ac4314ae89df56441b33ce008456c3a85e03f85f4e1
+quay.io/cilium/tetragon:v1.4.0 sha256:500eca691c0be96dc7943c2da43d9d3ea1fdcaabfa0406a63742914d3c438123
+quay.io/cilium/tetragon:v1.6.0 sha256:2f5d6bba8deca48445eddbda48368d3b924f98c26c5a8559874a207a702ca5eb
+quay.io/cilium/tetragon@sha256:2f5d6bba8deca48445eddbda48368d3b924f98c26c5a8559874a207a702ca5eb sha256:2f5d6bba8deca48445eddbda48368d3b924f98c26c5a8559874a207a702ca5eb
+
+## GPU
+NVIDIA GeForce GTX 1050, 580.178.04, 2048 MiB
+Quadro RTX 4000, 580.178.04, 8192 MiB
+Quadro RTX 4000, 580.178.04, 8192 MiB
+NVRM version: NVIDIA UNIX x86_64 Kernel Module  580.178.04  Tue Jul  7 12:38:21 UTC 2026
+GCC version:  gcc version 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1) 
+## kata
+   OCI specs: 1.2.1
+25 /opt/kata/share/kata-containers/vmlinux-debug.container
+## snap
+microk8s  v1.33.13  9067  1.33/stable  canonical**  classic
+## helm releases
+NAME   	NAMESPACE        	REVISION	UPDATED                                	STATUS  	CHART         	APP VERSION
+falco  	mlscan-monitoring	2       	2026-10-22 11:26:08.329418704 +0300 MSK	deployed	falco-9.2.1   	0.45.1     
+openbao	dev-control      	1       	2026-09-19 15:20:57.906688807 +0300 MSK	deployed	openbao-0.29.5	v2.6.2     
+vault  	dev-control      	2       	2026-10-22 15:09:28.583021432 +0300 MSK	deployed	vault-0.28.1  	1.17.2     

@@ -4,8 +4,10 @@
 Kubernetes и **(2)** можно ли развернуть MLScan в текущей конфигурации на «голом» кластере, если часть
 базовой инфраструктуры заменяется (Calico → **Istio ambient**, OpenBao → **Vault**, Flux → **ArgoCD**).
 
-Экспорт выполнен скриптом `deploy/export/export-cluster-artifacts.sh` в `/tmp/mlscan-cluster-export`
-(см. §2). **Секреты в git не коммитятся** — только перечень и требования к ротации.
+Экспорт выполнен скриптом `deploy/export/export-cluster-artifacts.sh`. **Всё вывезено в локальный каталог
+проекта**: полный бэкап (секреты, дамп БД, образы) — в `backup/mlscan-cluster-export/` (в `.gitignore`,
+~455 МБ), безопасная часть (конфиги узла, политики, digest'ы, история образа песочницы) — в
+`deploy/export/snapshot/` (в git). **Секреты в git не коммитятся** — только перечень и требования к ротации.
 
 ---
 
@@ -46,11 +48,11 @@ Kubernetes и **(2)** можно ли развернуть MLScan в текущ�
 содержимое S3 (артефакты/модели) — повторная загрузка/скан; образ llama.cpp CUDA (2.4 ГБ) — `pull` по
 digest; ПВХ аналитики/интеграций (служебные данные) — пересоздаются; Falco — переустановка helm-чартом.
 
-**Единственное, что сейчас не воспроизводится из git** (критично): **исходники образа песочницы**
-(`Dockerfile` в репозитории отсутствует; образ существует только в локальном реестре) и **правки узла**
-(Kata BTF-ядро, runtime-хендлеры containerd, device-plugin из исходников). Варианты: (а) восстановить образ
-из `mlscan-sandbox.tar` (готово) и по `ctr images inspect` восстановить Dockerfile в репозиторий;
-(б) пересобрать песочницу из harness-кода `deploy/sandbox` — **исходников нет**, значит обязательно (а).
+**Пробел с исходниками песочницы закрыт**: из истории образа восстановлен Dockerfile
+(`deploy/sandbox/Dockerfile`: `FROM python:3.12-slim` + `pip install --index-url …/cpu torch numpy joblib
+dill cloudpickle`, `CMD ["python3"]`), а harness-код и так лежит в репозитории
+(`deploy/stage1/gen_configmaps.py` → ConfigMap в `/opt/mlscan`). Образ можно как восстановить из
+`backup/…/images/mlscan-sandbox.tar`, так и пересобрать из репозитория (kaniko/Docker).
 
 ---
 
