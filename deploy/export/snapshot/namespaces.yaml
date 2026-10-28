@@ -1,0 +1,667 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"name":"container-registry"}}
+    creationTimestamp: "2026-04-19T18:23:05Z"
+    labels:
+      kubernetes.io/metadata.name: container-registry
+    name: container-registry
+    resourceVersion: "930"
+    uid: 1246b77e-f37c-4f6e-b6e0-a2b25bdefb93
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-04-19T18:19:39Z"
+    labels:
+      kubernetes.io/metadata.name: default
+    name: default
+    resourceVersion: "29"
+    uid: a30dd6c0-02bf-49ba-a59c-f58612babbad
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-admin"},"spec":{},"status":{}}
+    creationTimestamp: "2026-09-28T10:31:41Z"
+    labels:
+      istio-injection: enabled
+      kubernetes.io/metadata.name: dev-admin
+    name: dev-admin
+    resourceVersion: "22135236"
+    uid: dfc1204c-2a63-4e8d-a08f-66f11f9feb78
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-api"},"spec":{},"status":{}}
+    creationTimestamp: "2026-09-28T08:41:28Z"
+    labels:
+      istio-injection: enabled
+      kubernetes.io/metadata.name: dev-api
+    name: dev-api
+    resourceVersion: "21579694"
+    uid: f9e2a02a-c7ab-4c93-9dca-94681a4055b4
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-audit"},"spec":{},"status":{}}
+    creationTimestamp: "2026-09-28T09:55:05Z"
+    labels:
+      istio-injection: enabled
+      kubernetes.io/metadata.name: dev-audit
+    name: dev-audit
+    resourceVersion: "21579702"
+    uid: a563b273-208a-4722-a7eb-5e43f8decda6
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"devenv.kilo/zone":"dev-code","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"dev-code"}}
+    creationTimestamp: "2026-09-19T11:37:48Z"
+    labels:
+      devenv.kilo/zone: dev-code
+      kubernetes.io/metadata.name: dev-code
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/warn: restricted
+    name: dev-code
+    resourceVersion: "15524447"
+    uid: 9b36d82b-7cc3-4cf6-96d0-29e067bd27f9
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-control"},"spec":{},"status":{}}
+    creationTimestamp: "2026-09-19T11:37:48Z"
+    labels:
+      istio-injection: enabled
+      kubernetes.io/metadata.name: dev-control
+    name: dev-control
+    resourceVersion: "21579697"
+    uid: 3239b851-2531-48ca-a500-3a2f5996a809
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-10-04T11:10:53Z"
+    labels:
+      devenv.kilo/plane: data
+      kubernetes.io/metadata.name: dev-data
+    name: dev-data
+    resourceVersion: "21513826"
+    uid: 8786f3c5-63aa-443e-bd33-a46110208af6
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"devenv.kilo/zone":"dev-infra","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"dev-infra"}}
+    creationTimestamp: "2026-09-19T11:37:49Z"
+    labels:
+      devenv.kilo/zone: dev-infra
+      kubernetes.io/metadata.name: dev-infra
+      pod-security.kubernetes.io/enforce: baseline
+      pod-security.kubernetes.io/warn: baseline
+    name: dev-infra
+    resourceVersion: "15533562"
+    uid: d4b60fc7-3220-45f9-8c9e-0c826baa7351
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"devenv.kilo/zone":"dev-llm","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"dev-llm"}}
+    creationTimestamp: "2026-09-19T11:37:49Z"
+    labels:
+      devenv.kilo/zone: dev-llm
+      kubernetes.io/metadata.name: dev-llm
+      pod-security.kubernetes.io/enforce: baseline
+      pod-security.kubernetes.io/warn: baseline
+    name: dev-llm
+    resourceVersion: "15533565"
+    uid: ae8a2257-318f-4c56-8c00-be1ff461e94d
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-observability"},"spec":{},"status":{}}
+    creationTimestamp: "2026-10-08T13:50:01Z"
+    labels:
+      kubernetes.io/metadata.name: dev-observability
+    name: dev-observability
+    resourceVersion: "23305911"
+    uid: f124afcf-7a40-45c6-a30e-e5c7ee19fa4e
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"devenv.kilo/trust":"untrusted","devenv.kilo/zone":"dev-poc","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"dev-poc"}}
+    creationTimestamp: "2026-09-20T06:44:04Z"
+    labels:
+      devenv.kilo/trust: untrusted
+      devenv.kilo/zone: dev-poc
+      kubernetes.io/metadata.name: dev-poc
+      pod-security.kubernetes.io/enforce: baseline
+      pod-security.kubernetes.io/warn: baseline
+    name: dev-poc
+    resourceVersion: "15802686"
+    uid: eb1b06e6-25ed-4ea0-941b-ec30fc5d9139
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-security"},"spec":{},"status":{}}
+    creationTimestamp: "2026-09-28T21:19:18Z"
+    labels:
+      kubernetes.io/metadata.name: dev-security
+    name: dev-security
+    resourceVersion: "19396758"
+    uid: d70af81e-7e71-408e-919f-695cebc03b14
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"devenv.kilo/zone":"dev-staging","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"dev-staging"}}
+    creationTimestamp: "2026-09-19T11:37:50Z"
+    labels:
+      devenv.kilo/zone: dev-staging
+      kubernetes.io/metadata.name: dev-staging
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/warn: restricted
+    name: dev-staging
+    resourceVersion: "15524473"
+    uid: e36f6f6d-ee85-40fe-b9ca-50d108bc95f5
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"devenv.kilo/zone":"dev-target","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"dev-target"}}
+    creationTimestamp: "2026-09-19T11:37:50Z"
+    labels:
+      devenv.kilo/zone: dev-target
+      kubernetes.io/metadata.name: dev-target
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/warn: restricted
+    name: dev-target
+    resourceVersion: "15524467"
+    uid: 82946ae0-3f8c-41d4-9d9f-b2782f2069fc
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"devenv.kilo/zone":"dev-test","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"dev-test"}}
+    creationTimestamp: "2026-09-19T11:37:49Z"
+    labels:
+      devenv.kilo/zone: dev-test
+      kubernetes.io/metadata.name: dev-test
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/warn: restricted
+    name: dev-test
+    resourceVersion: "15524451"
+    uid: 3908849d-2627-4988-81e4-b9015cec6f7a
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-ui"},"spec":{},"status":{}}
+    creationTimestamp: "2026-09-21T15:25:03Z"
+    labels:
+      istio-injection: enabled
+      kubernetes.io/metadata.name: dev-ui
+    name: dev-ui
+    resourceVersion: "22135233"
+    uid: 2f4efb1e-623b-463e-ad64-331b3cb38091
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-webide"},"spec":{},"status":{}}
+    creationTimestamp: "2026-10-10T12:31:29Z"
+    labels:
+      kubernetes.io/metadata.name: dev-webide
+    name: dev-webide
+    resourceVersion: "24121094"
+    uid: 16b260fd-7526-4455-ada6-382bc93e46d2
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"dev-workspace"},"spec":{},"status":{}}
+    creationTimestamp: "2026-09-26T10:47:15Z"
+    labels:
+      istio-injection: enabled
+      kubernetes.io/metadata.name: dev-workspace
+    name: dev-workspace
+    resourceVersion: "21579701"
+    uid: f52ac782-21bd-4def-8b88-f174e884dfac
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-09-19T16:06:19Z"
+    labels:
+      app.kubernetes.io/instance: flux-system
+      app.kubernetes.io/part-of: flux
+      kubernetes.io/metadata.name: flux-system
+      pod-security.kubernetes.io/warn: restricted
+      pod-security.kubernetes.io/warn-version: latest
+    name: flux-system
+    resourceVersion: "15602382"
+    uid: 978dffbd-4f8d-4c2e-aca3-effdb5553653
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-04-19T19:48:01Z"
+    labels:
+      kubernetes.io/metadata.name: istio-system
+    name: istio-system
+    resourceVersion: "13466"
+    uid: 128bdac7-f2c2-49aa-b87e-a8bab88bc4a5
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-04-19T18:19:39Z"
+    labels:
+      kubernetes.io/metadata.name: kube-node-lease
+    name: kube-node-lease
+    resourceVersion: "37"
+    uid: 3f6410fe-d600-4ae5-8284-3684ae5a01e4
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-04-19T18:19:39Z"
+    labels:
+      kubernetes.io/metadata.name: kube-public
+    name: kube-public
+    resourceVersion: "22"
+    uid: 05fb2e22-bafc-424a-90e0-cb09df2d8e75
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-04-19T18:19:39Z"
+    labels:
+      kubernetes.io/metadata.name: kube-system
+    name: kube-system
+    resourceVersion: "11"
+    uid: 481dcfd2-1b10-49d9-9bee-afd142baeb8d
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"labels":{"app.kubernetes.io/instance":"kyverno","app.kubernetes.io/part-of":"kyverno","app.kubernetes.io/version":"v1.19.1"},"name":"kyverno"}}
+    creationTimestamp: "2026-09-19T12:09:17Z"
+    labels:
+      app.kubernetes.io/instance: kyverno
+      app.kubernetes.io/part-of: kyverno
+      app.kubernetes.io/version: v1.19.1
+      kubernetes.io/metadata.name: kyverno
+    name: kyverno
+    resourceVersion: "15531107"
+    uid: db4c1eb2-fb24-4ebd-ad54-a5244fc87294
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"app.kubernetes.io/component":"analytics","app.kubernetes.io/part-of":"mlscan","mlscan.io/stage":"3","pod-security.kubernetes.io/audit":"restricted","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"mlscan-analytics"}}
+    creationTimestamp: "2026-10-22T08:24:44Z"
+    labels:
+      app.kubernetes.io/component: analytics
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-analytics
+      mlscan.io/stage: "3"
+      pod-security.kubernetes.io/audit: restricted
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/warn: restricted
+    name: mlscan-analytics
+    resourceVersion: "29520698"
+    uid: a87c2780-8d24-42c9-8b7f-16a1ec58511d
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"mlscan-build"},"spec":{},"status":{}}
+    creationTimestamp: "2026-10-22T08:22:05Z"
+    labels:
+      kubernetes.io/metadata.name: mlscan-build
+    name: mlscan-build
+    resourceVersion: "29519396"
+    uid: 14965b7c-dd59-4ffc-8a11-84d08e10850b
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"app.kubernetes.io/part-of":"mlscan","mlscan.io/stage":"v2-i1"},"name":"mlscan-data"}}
+    creationTimestamp: "2026-10-22T08:21:02Z"
+    labels:
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-data
+      mlscan.io/stage: v2-i1
+    name: mlscan-data
+    resourceVersion: "29518656"
+    uid: 1adcf946-c68d-41e0-aa5a-9c9920047adf
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"app.kubernetes.io/component":"ingress","app.kubernetes.io/part-of":"mlscan","mlscan.io/stage":"ingress"},"name":"mlscan-ingress"}}
+    creationTimestamp: "2026-10-22T08:25:06Z"
+    labels:
+      app.kubernetes.io/component: ingress
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-ingress
+      mlscan.io/stage: ingress
+    name: mlscan-ingress
+    resourceVersion: "29520974"
+    uid: b557b744-804e-4ad5-a29a-9ca3ec7a7964
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"app.kubernetes.io/component":"integrations","app.kubernetes.io/part-of":"mlscan","mlscan.io/stage":"4","pod-security.kubernetes.io/audit":"restricted","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"mlscan-integrations"}}
+    creationTimestamp: "2026-10-22T08:25:09Z"
+    labels:
+      app.kubernetes.io/component: integrations
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-integrations
+      mlscan.io/stage: "4"
+      pod-security.kubernetes.io/audit: restricted
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/warn: restricted
+    name: mlscan-integrations
+    resourceVersion: "29521007"
+    uid: 46d2da65-f50d-4ad9-afa8-29d73d2ebb78
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"mlscan-monitoring"},"spec":{},"status":{}}
+    creationTimestamp: "2026-10-22T08:20:39Z"
+    labels:
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-monitoring
+      mlscan.io/stage: "1"
+    name: mlscan-monitoring
+    resourceVersion: "29518455"
+    uid: b36ac1ca-79bd-43d4-8a52-127483f63fdd
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"app.kubernetes.io/component":"ops","app.kubernetes.io/part-of":"mlscan","mlscan.io/stage":"5","pod-security.kubernetes.io/audit":"restricted","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"mlscan-ops"}}
+    creationTimestamp: "2026-10-22T08:25:35Z"
+    labels:
+      app.kubernetes.io/component: ops
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-ops
+      mlscan.io/stage: "5"
+      pod-security.kubernetes.io/audit: restricted
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/warn: restricted
+    name: mlscan-ops
+    resourceVersion: "29521283"
+    uid: eb05cc70-6a71-41e1-af54-2be346c7fd14
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"app.kubernetes.io/part-of":"mlscan","pod-security.kubernetes.io/audit":"restricted","pod-security.kubernetes.io/enforce":"privileged","pod-security.kubernetes.io/warn":"restricted"},"name":"mlscan-sandbox"}}
+    creationTimestamp: "2026-10-22T08:20:36Z"
+    labels:
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-sandbox
+      pod-security.kubernetes.io/audit: restricted
+      pod-security.kubernetes.io/enforce: privileged
+      pod-security.kubernetes.io/warn: restricted
+    name: mlscan-sandbox
+    resourceVersion: "31823559"
+    uid: 8a702cf3-6f25-4854-ae7f-dca20af5824c
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"app.kubernetes.io/component":"testing-service","app.kubernetes.io/part-of":"mlscan","mlscan.io/stage":"2","pod-security.kubernetes.io/audit":"restricted","pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/warn":"restricted"},"name":"mlscan-testing"}}
+    creationTimestamp: "2026-10-22T08:24:19Z"
+    labels:
+      app.kubernetes.io/component: testing-service
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-testing
+      mlscan.io/stage: "2"
+      pod-security.kubernetes.io/audit: restricted
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/warn: restricted
+    name: mlscan-testing
+    resourceVersion: "29520407"
+    uid: 767df558-bc00-4aec-837f-662d546411c6
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"labels":{"app.kubernetes.io/part-of":"mlscan","mlscan.io/stage":"v3"},"name":"mlscan-v3-data"}}
+    creationTimestamp: "2026-10-25T16:33:54Z"
+    labels:
+      app.kubernetes.io/part-of: mlscan
+      kubernetes.io/metadata.name: mlscan-v3-data
+      mlscan.io/stage: v3
+    name: mlscan-v3-data
+    resourceVersion: "30994452"
+    uid: 7eec94d4-19d5-4351-b3bf-d942916cce8b
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-10-04T12:50:18Z"
+    labels:
+      istio-injection: enabled
+      kubernetes.io/metadata.name: t0-istio-test
+    name: t0-istio-test
+    resourceVersion: "21559011"
+    uid: d49955ee-f9f3-44bf-b0fd-2e9f03a06938
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+kind: List
+metadata:
+  resourceVersion: ""

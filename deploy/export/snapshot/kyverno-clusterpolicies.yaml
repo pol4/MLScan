@@ -1,0 +1,807 @@
+apiVersion: v1
+items:
+- apiVersion: kyverno.io/v1
+  kind: ClusterPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"kyverno.io/v1","kind":"ClusterPolicy","metadata":{"annotations":{"policies.kyverno.io/category":"Supply Chain","policies.kyverno.io/severity":"high","policies.kyverno.io/title":"AISandBox agent images trust"},"name":"aisandbox-agent-images-trust"},"spec":{"background":false,"rules":[{"match":{"any":[{"resources":{"kinds":["Pod"],"namespaces":["dev-code","dev-test"]}}]},"name":"verify-agent-image-signatures","verifyImages":[{"attestors":[{"entries":[{"keys":{"publicKeys":"-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE11qfoYaNw2rQRz3IShLzN6o1sU3F\nsRJKjrKc+pzaBlf/dGgCakayJAVYtMSeipBXRqUYT+d5RORVq8LxNr/Z/w==\n-----END PUBLIC KEY-----"}}]}],"imageReferences":["*agent*"],"mutateDigest":false}]}],"validationFailureAction":"Audit"}}
+      policies.kyverno.io/category: Supply Chain
+      policies.kyverno.io/severity: high
+      policies.kyverno.io/title: AISandBox agent images trust
+    creationTimestamp: "2026-10-08T12:05:26Z"
+    generation: 2
+    name: aisandbox-agent-images-trust
+    resourceVersion: "29986236"
+    uid: d52902c4-a904-4748-8894-dc4e9a80598f
+  spec:
+    admission: true
+    background: false
+    emitWarning: false
+    rules:
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Pod
+            namespaces:
+            - dev-code
+            - dev-test
+      name: verify-agent-image-signatures
+      skipBackgroundRequests: true
+      verifyImages:
+      - attestors:
+        - entries:
+          - keys:
+              publicKeys: |-
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE11qfoYaNw2rQRz3IShLzN6o1sU3F
+                sRJKjrKc+pzaBlf/dGgCakayJAVYtMSeipBXRqUYT+d5RORVq8LxNr/Z/w==
+                -----END PUBLIC KEY-----
+              signatureAlgorithm: sha256
+            signatureAlgorithm: sha256
+        imageReferences:
+        - '*agent*'
+        mutateDigest: false
+        required: true
+        useCache: true
+        verifyDigest: true
+    validationFailureAction: Audit
+  status:
+    autogen:
+      rules:
+      - match:
+          any:
+          - resources:
+              kinds:
+              - apps/v1/DaemonSet
+              - apps/v1/Deployment
+              - batch/v1/Job
+              - apps/v1/ReplicaSet
+              - v1/ReplicationController
+              - apps/v1/StatefulSet
+              namespaces:
+              - dev-code
+              - dev-test
+          resources: {}
+        name: autogen-verify-agent-image-signatures
+        skipBackgroundRequests: true
+        verifyImages:
+        - attestors:
+          - entries:
+            - keys:
+                publicKeys: |-
+                  -----BEGIN PUBLIC KEY-----
+                  MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE11qfoYaNw2rQRz3IShLzN6o1sU3F
+                  sRJKjrKc+pzaBlf/dGgCakayJAVYtMSeipBXRqUYT+d5RORVq8LxNr/Z/w==
+                  -----END PUBLIC KEY-----
+                signatureAlgorithm: sha256
+              signatureAlgorithm: sha256
+          imageReferences:
+          - '*agent*'
+          mutateDigest: false
+          required: true
+          useCache: true
+          validate: {}
+          verifyDigest: true
+      - match:
+          any:
+          - resources:
+              kinds:
+              - batch/v1/CronJob
+              namespaces:
+              - dev-code
+              - dev-test
+          resources: {}
+        name: autogen-cronjob-verify-agent-image-signatures
+        skipBackgroundRequests: true
+        verifyImages:
+        - attestors:
+          - entries:
+            - keys:
+                publicKeys: |-
+                  -----BEGIN PUBLIC KEY-----
+                  MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE11qfoYaNw2rQRz3IShLzN6o1sU3F
+                  sRJKjrKc+pzaBlf/dGgCakayJAVYtMSeipBXRqUYT+d5RORVq8LxNr/Z/w==
+                  -----END PUBLIC KEY-----
+                signatureAlgorithm: sha256
+              signatureAlgorithm: sha256
+          imageReferences:
+          - '*agent*'
+          mutateDigest: false
+          required: true
+          useCache: true
+          validate: {}
+          verifyDigest: true
+    conditions:
+    - lastTransitionTime: "2026-10-23T05:04:03Z"
+      message: Ready
+      reason: Succeeded
+      status: "True"
+      type: Ready
+    rulecount:
+      generate: 0
+      mutate: 0
+      validate: 0
+      verifyimages: 1
+    validatingadmissionpolicy:
+      generated: false
+      message: ""
+- apiVersion: kyverno.io/v1
+  kind: ClusterPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"kyverno.io/v1","kind":"ClusterPolicy","metadata":{"annotations":{},"name":"mlscan-ebpf-agent-guard"},"spec":{"background":false,"rules":[{"match":{"any":[{"resources":{"kinds":["Job"],"namespaces":["mlscan-sandbox"]}}]},"name":"agent-caps-allowlist","validate":{"deny":{"conditions":{"any":[{"key":"{{ request.object.spec.template.spec.containers[?name=='ebpf-agent'].securityContext.capabilities.add[] | [?@ != 'BPF' \u0026\u0026 @ != 'PERFMON'] | length(@) }}","operator":"GreaterThan","value":0}]}},"message":"контейнеру ebpf-agent разрешены только capabilities BPF и PERFMON"}},{"match":{"any":[{"resources":{"kinds":["Job"],"namespaces":["mlscan-sandbox"]}}]},"name":"no-dangerous-caps-or-privileged","validate":{"deny":{"conditions":{"any":[{"key":"{{ request.object.spec.template.spec.containers[].securityContext.capabilities.add[] }}","operator":"AnyIn","value":["SYS_ADMIN","SYS_PTRACE","SYS_MODULE","NET_ADMIN","NET_RAW","DAC_OVERRIDE","SYS_CHROOT","MKNOD","AUDIT_CONTROL","SYS_TIME","SETUID","SETGID","SYSLOG","MAC_ADMIN","MAC_OVERRIDE","SYS_BOOT","SYS_RAWIO"]},{"key":"{{ request.object.spec.template.spec.containers[].securityContext.privileged }}","operator":"AnyIn","value":[true,"true","True",1,"1"]},{"key":"{{ request.object.spec.template.spec.hostNetwork || `false` }}","operator":"Equals","value":true},{"key":"{{ request.object.spec.template.spec.hostPID || `false` }}","operator":"Equals","value":true},{"key":"{{ request.object.spec.template.spec.volumes[].hostPath | length(@) }}","operator":"GreaterThan","value":0}]}},"message":"в mlscan-sandbox запрещены privileged/host*/опасные capabilities"}}],"validationFailureAction":"Enforce"}}
+    creationTimestamp: "2026-10-27T12:08:06Z"
+    generation: 3
+    name: mlscan-ebpf-agent-guard
+    resourceVersion: "31823560"
+    uid: b49fc1ec-ce29-47af-86dc-b217546b40bc
+  spec:
+    admission: true
+    background: false
+    emitWarning: false
+    rules:
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Job
+            namespaces:
+            - mlscan-sandbox
+      name: agent-caps-allowlist
+      skipBackgroundRequests: true
+      validate:
+        allowExistingViolations: true
+        deny:
+          conditions:
+            any:
+            - key: '{{ request.object.spec.template.spec.containers[?name==''ebpf-agent''].securityContext.capabilities.add[]
+                | [?@ != ''BPF'' && @ != ''PERFMON''] | length(@) }}'
+              operator: GreaterThan
+              value: 0
+        message: контейнеру ebpf-agent разрешены только capabilities BPF и PERFMON
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Job
+            namespaces:
+            - mlscan-sandbox
+      name: no-dangerous-caps-or-privileged
+      skipBackgroundRequests: true
+      validate:
+        allowExistingViolations: true
+        deny:
+          conditions:
+            any:
+            - key: '{{ request.object.spec.template.spec.containers[].securityContext.capabilities.add[]
+                }}'
+              operator: AnyIn
+              value:
+              - SYS_ADMIN
+              - SYS_PTRACE
+              - SYS_MODULE
+              - NET_ADMIN
+              - NET_RAW
+              - DAC_OVERRIDE
+              - SYS_CHROOT
+              - MKNOD
+              - AUDIT_CONTROL
+              - SYS_TIME
+              - SETUID
+              - SETGID
+              - SYSLOG
+              - MAC_ADMIN
+              - MAC_OVERRIDE
+              - SYS_BOOT
+              - SYS_RAWIO
+            - key: '{{ request.object.spec.template.spec.containers[].securityContext.privileged
+                }}'
+              operator: AnyIn
+              value:
+              - true
+              - "true"
+              - "True"
+              - 1
+              - "1"
+            - key: '{{ request.object.spec.template.spec.hostNetwork || `false` }}'
+              operator: Equals
+              value: true
+            - key: '{{ request.object.spec.template.spec.hostPID || `false` }}'
+              operator: Equals
+              value: true
+            - key: '{{ request.object.spec.template.spec.volumes[].hostPath | length(@)
+                }}'
+              operator: GreaterThan
+              value: 0
+        message: в mlscan-sandbox запрещены privileged/host*/опасные capabilities
+    validationFailureAction: Enforce
+  status:
+    autogen: {}
+    conditions:
+    - lastTransitionTime: "2026-10-27T12:08:06Z"
+      message: Ready
+      reason: Succeeded
+      status: "True"
+      type: Ready
+    rulecount:
+      generate: 0
+      mutate: 0
+      validate: 2
+      verifyimages: 0
+    validatingadmissionpolicy:
+      generated: false
+      message: 'skip generating ValidatingAdmissionPolicy: multiple rules are not
+        applicable.'
+- apiVersion: kyverno.io/v1
+  kind: ClusterPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"kyverno.io/v1","kind":"ClusterPolicy","metadata":{"annotations":{"policies.kyverno.io/description":"Job'ы в mlscan-sandbox: kata, digest-образ песочницы, безопасный securityContext","policies.kyverno.io/title":"MLScan sandbox Jobs"},"name":"mlscan-sandbox-jobs"},"spec":{"background":false,"rules":[{"match":{"any":[{"resources":{"kinds":["Job"],"namespaces":["mlscan-sandbox"]}}]},"name":"require-kata-and-digest-image","validate":{"message":"Job в mlscan-sandbox должен использовать runtimeClassName=kata и образ mlscan-sandbox по digest","pattern":{"spec":{"template":{"spec":{"containers":[{"image":"*mlscan-sandbox@sha256:*"}],"runtimeClassName":"kata"}}}}}},{"match":{"any":[{"resources":{"kinds":["Job"],"namespaces":["mlscan-sandbox"]}}]},"name":"require-hardened-security-context","validate":{"deny":{"conditions":{"all":[{"key":"{{ request.object.spec.template.spec.containers[?name!='ebpf-agent'].securityContext.capabilities.add[] | length(@) }}","operator":"GreaterThan","value":0},{"key":"{{ request.object.spec.template.spec.containers[?name!='ebpf-agent'].securityContext.runAsNonRoot | [?@ != `true`] | length(@) }}","operator":"GreaterThan","value":0},{"key":"{{ request.object.spec.template.spec.containers[?securityContext.allowPrivilegeEscalation!='false'].securityContext.allowPrivilegeEscalation }}","operator":"AnyIn","value":["true","True",1,"1"]},{"key":"{{ request.object.spec.template.spec.containers[?securityContext.readOnlyRootFilesystem!='true'].securityContext.readOnlyRootFilesystem }}","operator":"AnyIn","value":["false","False",0,"0"]},{"key":"{{ request.object.spec.template.spec.containers[].securityContext.capabilities.drop[] | [?@ != 'ALL'] | length(@) }}","operator":"GreaterThan","value":0},{"key":"{{ request.object.spec.template.spec.automountServiceAccountToken }}","operator":"AnyIn","value":[true,"true","True",1,"1"]},{"key":"{{ request.object.spec.template.spec.securityContext.seccompProfile.type }}","operator":"NotEquals","value":"RuntimeDefault"}]}},"message":"Job в mlscan-sandbox: все контейнеры кроме `ebpf-agent` должны быть non-root; у всех — drop ALL, no-priv-escalation, RO-FS, seccomp; pod — без service account токена"}}],"validationFailureAction":"Enforce"}}
+      policies.kyverno.io/description: 'Job''ы в mlscan-sandbox: kata, digest-образ
+        песочницы, безопасный securityContext'
+      policies.kyverno.io/title: MLScan sandbox Jobs
+    creationTimestamp: "2026-10-23T14:41:54Z"
+    generation: 2
+    name: mlscan-sandbox-jobs
+    resourceVersion: "31819611"
+    uid: ecd1c25f-557e-42d0-965c-fa9510706221
+  spec:
+    admission: true
+    background: false
+    emitWarning: false
+    rules:
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Job
+            namespaces:
+            - mlscan-sandbox
+      name: require-kata-and-digest-image
+      skipBackgroundRequests: true
+      validate:
+        allowExistingViolations: true
+        message: Job в mlscan-sandbox должен использовать runtimeClassName=kata и
+          образ mlscan-sandbox по digest
+        pattern:
+          spec:
+            template:
+              spec:
+                containers:
+                - image: '*mlscan-sandbox@sha256:*'
+                runtimeClassName: kata
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Job
+            namespaces:
+            - mlscan-sandbox
+      name: require-hardened-security-context
+      skipBackgroundRequests: true
+      validate:
+        allowExistingViolations: true
+        deny:
+          conditions:
+            all:
+            - key: '{{ request.object.spec.template.spec.containers[?name!=''ebpf-agent''].securityContext.capabilities.add[]
+                | length(@) }}'
+              operator: GreaterThan
+              value: 0
+            - key: '{{ request.object.spec.template.spec.containers[?name!=''ebpf-agent''].securityContext.runAsNonRoot
+                | [?@ != `true`] | length(@) }}'
+              operator: GreaterThan
+              value: 0
+            - key: '{{ request.object.spec.template.spec.containers[?securityContext.allowPrivilegeEscalation!=''false''].securityContext.allowPrivilegeEscalation
+                }}'
+              operator: AnyIn
+              value:
+              - "true"
+              - "True"
+              - 1
+              - "1"
+            - key: '{{ request.object.spec.template.spec.containers[?securityContext.readOnlyRootFilesystem!=''true''].securityContext.readOnlyRootFilesystem
+                }}'
+              operator: AnyIn
+              value:
+              - "false"
+              - "False"
+              - 0
+              - "0"
+            - key: '{{ request.object.spec.template.spec.containers[].securityContext.capabilities.drop[]
+                | [?@ != ''ALL''] | length(@) }}'
+              operator: GreaterThan
+              value: 0
+            - key: '{{ request.object.spec.template.spec.automountServiceAccountToken
+                }}'
+              operator: AnyIn
+              value:
+              - true
+              - "true"
+              - "True"
+              - 1
+              - "1"
+            - key: '{{ request.object.spec.template.spec.securityContext.seccompProfile.type
+                }}'
+              operator: NotEquals
+              value: RuntimeDefault
+        message: 'Job в mlscan-sandbox: все контейнеры кроме `ebpf-agent` должны быть
+          non-root; у всех — drop ALL, no-priv-escalation, RO-FS, seccomp; pod — без
+          service account токена'
+    validationFailureAction: Enforce
+  status:
+    autogen: {}
+    conditions:
+    - lastTransitionTime: "2026-10-23T14:41:54Z"
+      message: Ready
+      reason: Succeeded
+      status: "True"
+      type: Ready
+    rulecount:
+      generate: 0
+      mutate: 0
+      validate: 2
+      verifyimages: 0
+    validatingadmissionpolicy:
+      generated: false
+      message: 'skip generating ValidatingAdmissionPolicy: multiple rules are not
+        applicable.'
+- apiVersion: kyverno.io/v1
+  kind: ClusterPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"kyverno.io/v1","kind":"ClusterPolicy","metadata":{"annotations":{},"name":"require-kata-runtime-untrusted-zones"},"spec":{"background":true,"rules":[{"match":{"any":[{"resources":{"kinds":["Pod"],"namespaces":["dev-code","dev-test"]}}]},"name":"require-kata-runtime","validate":{"message":"Pod в недоверенной зоне обязан использовать RuntimeClass kata.","pattern":{"spec":{"runtimeClassName":"kata"}}}}],"validationFailureAction":"Enforce"}}
+    creationTimestamp: "2026-09-19T13:43:38Z"
+    generation: 1
+    name: require-kata-runtime-untrusted-zones
+    resourceVersion: "15659451"
+    uid: 172fc0de-2800-4a2f-a294-519ff6eec15f
+  spec:
+    admission: true
+    background: true
+    emitWarning: false
+    rules:
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Pod
+            namespaces:
+            - dev-code
+            - dev-test
+      name: require-kata-runtime
+      skipBackgroundRequests: true
+      validate:
+        allowExistingViolations: true
+        message: Pod в недоверенной зоне обязан использовать RuntimeClass kata.
+        pattern:
+          spec:
+            runtimeClassName: kata
+    validationFailureAction: Enforce
+  status:
+    autogen:
+      rules:
+      - match:
+          any:
+          - resources:
+              kinds:
+              - apps/v1/DaemonSet
+              - apps/v1/Deployment
+              - batch/v1/Job
+              - apps/v1/ReplicaSet
+              - v1/ReplicationController
+              - apps/v1/StatefulSet
+              namespaces:
+              - dev-code
+              - dev-test
+          resources: {}
+        name: autogen-require-kata-runtime
+        skipBackgroundRequests: true
+        validate:
+          allowExistingViolations: true
+          message: Pod в недоверенной зоне обязан использовать RuntimeClass kata.
+          pattern:
+            spec:
+              template:
+                spec:
+                  runtimeClassName: kata
+      - match:
+          any:
+          - resources:
+              kinds:
+              - batch/v1/CronJob
+              namespaces:
+              - dev-code
+              - dev-test
+          resources: {}
+        name: autogen-cronjob-require-kata-runtime
+        skipBackgroundRequests: true
+        validate:
+          allowExistingViolations: true
+          message: Pod в недоверенной зоне обязан использовать RuntimeClass kata.
+          pattern:
+            spec:
+              jobTemplate:
+                spec:
+                  template:
+                    spec:
+                      runtimeClassName: kata
+    conditions:
+    - lastTransitionTime: "2026-09-19T13:43:38Z"
+      message: Ready
+      reason: Succeeded
+      status: "True"
+      type: Ready
+    rulecount:
+      generate: 0
+      mutate: 0
+      validate: 1
+      verifyimages: 0
+    validatingadmissionpolicy:
+      generated: false
+      message: skip generating ValidatingAdmissionPolicy for non CEL rules.
+- apiVersion: kyverno.io/v1
+  kind: ClusterPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"kyverno.io/v1","kind":"ClusterPolicy","metadata":{"annotations":{},"name":"require-no-sa-token-untrusted-zones"},"spec":{"background":true,"rules":[{"match":{"any":[{"resources":{"kinds":["Pod"],"namespaces":["dev-code","dev-test"]}}]},"name":"forbid-sa-token-automount","validate":{"deny":{"conditions":{"all":[{"key":"{{ request.object.spec.automountServiceAccountToken || true }}","operator":"Equals","value":true}]}},"message":"automountServiceAccountToken запрещён в недоверенных зонах (запрет доступа к kube API)."}}],"validationFailureAction":"Enforce"}}
+    creationTimestamp: "2026-09-19T13:43:38Z"
+    generation: 1
+    name: require-no-sa-token-untrusted-zones
+    resourceVersion: "15659452"
+    uid: c2b7fcbe-01d6-449c-9ac8-0c797dab8cc0
+  spec:
+    admission: true
+    background: true
+    emitWarning: false
+    rules:
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Pod
+            namespaces:
+            - dev-code
+            - dev-test
+      name: forbid-sa-token-automount
+      skipBackgroundRequests: true
+      validate:
+        allowExistingViolations: true
+        deny:
+          conditions:
+            all:
+            - key: '{{ request.object.spec.automountServiceAccountToken || true }}'
+              operator: Equals
+              value: true
+        message: automountServiceAccountToken запрещён в недоверенных зонах (запрет
+          доступа к kube API).
+    validationFailureAction: Enforce
+  status:
+    autogen:
+      rules:
+      - match:
+          any:
+          - resources:
+              kinds:
+              - apps/v1/DaemonSet
+              - apps/v1/Deployment
+              - batch/v1/Job
+              - apps/v1/ReplicaSet
+              - v1/ReplicationController
+              - apps/v1/StatefulSet
+              namespaces:
+              - dev-code
+              - dev-test
+          resources: {}
+        name: autogen-forbid-sa-token-automount
+        skipBackgroundRequests: true
+        validate:
+          allowExistingViolations: true
+          deny:
+            conditions:
+              all:
+              - key: '{{ request.object.spec.template.spec.automountServiceAccountToken
+                  || true }}'
+                operator: Equals
+                value: true
+          message: automountServiceAccountToken запрещён в недоверенных зонах (запрет
+            доступа к kube API).
+      - match:
+          any:
+          - resources:
+              kinds:
+              - batch/v1/CronJob
+              namespaces:
+              - dev-code
+              - dev-test
+          resources: {}
+        name: autogen-cronjob-forbid-sa-token-automount
+        skipBackgroundRequests: true
+        validate:
+          allowExistingViolations: true
+          deny:
+            conditions:
+              all:
+              - key: '{{ request.object.spec.jobTemplate.spec.template.spec.automountServiceAccountToken
+                  || true }}'
+                operator: Equals
+                value: true
+          message: automountServiceAccountToken запрещён в недоверенных зонах (запрет
+            доступа к kube API).
+    conditions:
+    - lastTransitionTime: "2026-09-19T13:43:38Z"
+      message: Ready
+      reason: Succeeded
+      status: "True"
+      type: Ready
+    rulecount:
+      generate: 0
+      mutate: 0
+      validate: 1
+      verifyimages: 0
+    validatingadmissionpolicy:
+      generated: false
+      message: skip generating ValidatingAdmissionPolicy for non CEL rules.
+- apiVersion: kyverno.io/v1
+  kind: ClusterPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"kyverno.io/v1","kind":"ClusterPolicy","metadata":{"annotations":{},"name":"require-signed-images-devzones"},"spec":{"background":true,"rules":[{"match":{"any":[{"resources":{"kinds":["Pod"],"namespaces":["dev-code","dev-test","dev-target","dev-staging"]}}]},"name":"verify-cosign-signature","verifyImages":[{"attestors":[{"entries":[{"keys":{"publicKeys":"-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExs+2NGU4VciChnIlXbuVHY5xmExz\niZ6KPXQbODHi27hAkxhO5hcsFQ62g2B1oJMJyo/7XU/mKRqJrLai/FWGwQ==\n-----END PUBLIC KEY-----\n"}}]}],"imageReferences":["*"],"mutateDigest":false,"verifyDigest":false}]}],"validationFailureAction":"Audit"}}
+    creationTimestamp: "2026-09-19T12:15:05Z"
+    generation: 2
+    name: require-signed-images-devzones
+    resourceVersion: "29986239"
+    uid: f2630328-0308-4c48-8329-aa49ab0ef969
+  spec:
+    admission: true
+    background: true
+    emitWarning: false
+    rules:
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Pod
+            namespaces:
+            - dev-code
+            - dev-test
+            - dev-target
+            - dev-staging
+      name: verify-cosign-signature
+      skipBackgroundRequests: true
+      verifyImages:
+      - attestors:
+        - entries:
+          - keys:
+              publicKeys: |
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExs+2NGU4VciChnIlXbuVHY5xmExz
+                iZ6KPXQbODHi27hAkxhO5hcsFQ62g2B1oJMJyo/7XU/mKRqJrLai/FWGwQ==
+                -----END PUBLIC KEY-----
+              signatureAlgorithm: sha256
+            signatureAlgorithm: sha256
+        imageReferences:
+        - '*'
+        mutateDigest: false
+        required: true
+        useCache: true
+        verifyDigest: false
+    validationFailureAction: Audit
+  status:
+    autogen:
+      rules:
+      - match:
+          any:
+          - resources:
+              kinds:
+              - apps/v1/DaemonSet
+              - apps/v1/Deployment
+              - batch/v1/Job
+              - apps/v1/ReplicaSet
+              - v1/ReplicationController
+              - apps/v1/StatefulSet
+              namespaces:
+              - dev-code
+              - dev-test
+              - dev-target
+              - dev-staging
+          resources: {}
+        name: autogen-verify-cosign-signature
+        skipBackgroundRequests: true
+        verifyImages:
+        - attestors:
+          - entries:
+            - keys:
+                publicKeys: |
+                  -----BEGIN PUBLIC KEY-----
+                  MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExs+2NGU4VciChnIlXbuVHY5xmExz
+                  iZ6KPXQbODHi27hAkxhO5hcsFQ62g2B1oJMJyo/7XU/mKRqJrLai/FWGwQ==
+                  -----END PUBLIC KEY-----
+                signatureAlgorithm: sha256
+              signatureAlgorithm: sha256
+          imageReferences:
+          - '*'
+          mutateDigest: false
+          required: true
+          useCache: true
+          validate: {}
+          verifyDigest: false
+      - match:
+          any:
+          - resources:
+              kinds:
+              - batch/v1/CronJob
+              namespaces:
+              - dev-code
+              - dev-test
+              - dev-target
+              - dev-staging
+          resources: {}
+        name: autogen-cronjob-verify-cosign-signature
+        skipBackgroundRequests: true
+        verifyImages:
+        - attestors:
+          - entries:
+            - keys:
+                publicKeys: |
+                  -----BEGIN PUBLIC KEY-----
+                  MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExs+2NGU4VciChnIlXbuVHY5xmExz
+                  iZ6KPXQbODHi27hAkxhO5hcsFQ62g2B1oJMJyo/7XU/mKRqJrLai/FWGwQ==
+                  -----END PUBLIC KEY-----
+                signatureAlgorithm: sha256
+              signatureAlgorithm: sha256
+          imageReferences:
+          - '*'
+          mutateDigest: false
+          required: true
+          useCache: true
+          validate: {}
+          verifyDigest: false
+    conditions:
+    - lastTransitionTime: "2026-10-23T05:04:03Z"
+      message: Ready
+      reason: Succeeded
+      status: "True"
+      type: Ready
+    rulecount:
+      generate: 0
+      mutate: 0
+      validate: 0
+      verifyimages: 1
+    validatingadmissionpolicy:
+      generated: false
+      message: ""
+- apiVersion: kyverno.io/v1
+  kind: ClusterPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"kyverno.io/v1","kind":"ClusterPolicy","metadata":{"annotations":{},"name":"verify-images-signed-enforce"},"spec":{"background":true,"rules":[{"match":{"any":[{"resources":{"kinds":["Pod"],"namespaces":["dev-target","dev-staging"]}}]},"name":"verify-cosign-signature","verifyImages":[{"attestors":[{"entries":[{"keys":{"publicKeys":"-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExs+2NGU4VciChnIlXbuVHY5xmExz\niZ6KPXQbODHi27hAkxhO5hcsFQ62g2B1oJMJyo/7XU/mKRqJrLai/FWGwQ==\n-----END PUBLIC KEY-----\n"}}]}],"imageReferences":["*"],"mutateDigest":false,"verifyDigest":true}]}],"validationFailureAction":"Audit"}}
+    creationTimestamp: "2026-09-19T18:38:47Z"
+    generation: 2
+    name: verify-images-signed-enforce
+    resourceVersion: "29986240"
+    uid: 7215d66a-bdb2-4059-9fce-17130adf88b5
+  spec:
+    admission: true
+    background: true
+    emitWarning: false
+    rules:
+    - match:
+        any:
+        - resources:
+            kinds:
+            - Pod
+            namespaces:
+            - dev-target
+            - dev-staging
+      name: verify-cosign-signature
+      skipBackgroundRequests: true
+      verifyImages:
+      - attestors:
+        - entries:
+          - keys:
+              publicKeys: |
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExs+2NGU4VciChnIlXbuVHY5xmExz
+                iZ6KPXQbODHi27hAkxhO5hcsFQ62g2B1oJMJyo/7XU/mKRqJrLai/FWGwQ==
+                -----END PUBLIC KEY-----
+              signatureAlgorithm: sha256
+            signatureAlgorithm: sha256
+        imageReferences:
+        - '*'
+        mutateDigest: false
+        required: true
+        useCache: true
+        verifyDigest: true
+    validationFailureAction: Audit
+  status:
+    autogen:
+      rules:
+      - match:
+          any:
+          - resources:
+              kinds:
+              - apps/v1/DaemonSet
+              - apps/v1/Deployment
+              - batch/v1/Job
+              - apps/v1/ReplicaSet
+              - v1/ReplicationController
+              - apps/v1/StatefulSet
+              namespaces:
+              - dev-target
+              - dev-staging
+          resources: {}
+        name: autogen-verify-cosign-signature
+        skipBackgroundRequests: true
+        verifyImages:
+        - attestors:
+          - entries:
+            - keys:
+                publicKeys: |
+                  -----BEGIN PUBLIC KEY-----
+                  MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExs+2NGU4VciChnIlXbuVHY5xmExz
+                  iZ6KPXQbODHi27hAkxhO5hcsFQ62g2B1oJMJyo/7XU/mKRqJrLai/FWGwQ==
+                  -----END PUBLIC KEY-----
+                signatureAlgorithm: sha256
+              signatureAlgorithm: sha256
+          imageReferences:
+          - '*'
+          mutateDigest: false
+          required: true
+          useCache: true
+          validate: {}
+          verifyDigest: true
+      - match:
+          any:
+          - resources:
+              kinds:
+              - batch/v1/CronJob
+              namespaces:
+              - dev-target
+              - dev-staging
+          resources: {}
+        name: autogen-cronjob-verify-cosign-signature
+        skipBackgroundRequests: true
+        verifyImages:
+        - attestors:
+          - entries:
+            - keys:
+                publicKeys: |
+                  -----BEGIN PUBLIC KEY-----
+                  MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExs+2NGU4VciChnIlXbuVHY5xmExz
+                  iZ6KPXQbODHi27hAkxhO5hcsFQ62g2B1oJMJyo/7XU/mKRqJrLai/FWGwQ==
+                  -----END PUBLIC KEY-----
+                signatureAlgorithm: sha256
+              signatureAlgorithm: sha256
+          imageReferences:
+          - '*'
+          mutateDigest: false
+          required: true
+          useCache: true
+          validate: {}
+          verifyDigest: true
+    conditions:
+    - lastTransitionTime: "2026-10-23T05:04:03Z"
+      message: Ready
+      reason: Succeeded
+      status: "True"
+      type: Ready
+    rulecount:
+      generate: 0
+      mutate: 0
+      validate: 0
+      verifyimages: 1
+    validatingadmissionpolicy:
+      generated: false
+      message: ""
+kind: List
+metadata:
+  resourceVersion: ""

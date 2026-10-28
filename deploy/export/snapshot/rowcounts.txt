@@ -1,0 +1,6 @@
+artifacts|281
+scans|3391
+bundles|44
+bundle_verdicts|8
+gate_decisions|130
+hf_downloads|90

@@ -67,8 +67,7 @@ kubectl --context "$CTX" -n mlscan-data exec "$PODP" -- psql -U mlscan -d mlscan
 for t in artifacts scans bundles bundle_verdicts bundle_verdict_chain gate_decisions hf_downloads \
          hf_egress_log hf_quotas hf_tokens scan_tokens registry_images llm_prompts prompt_sets bundle_tests; do
   printf "%-24s " "$t" >> "$OUT/db/rowcounts.txt"
-  kubectl --context "$CTX" -n mlscan-data exec "$PODP" -- psql -U mlscan -d mlscan -tAc "SELECT count(*) FROM $t" \
-    2>/dev/null >> "$OUT/db/rowcounts.txt || echo "(нет)" >> "$OUT/db/rowcounts.txt"
+  { kubectl --context "$CTX" -n mlscan-data exec "$PODP" -- psql -U mlscan -d mlscan -tAc "SELECT count(*) FROM $t" 2>/dev/null || echo "(нет)"; } >> "$OUT/db/rowcounts.txt"
 done
 
 echo "[export] 4) S3 (Garage): список объектов"
@@ -126,5 +125,10 @@ git remote -v > "$OUT/repo/remotes.txt" 2>/dev/null || true
 git status --short > "$OUT/repo/status.txt" 2>/dev/null || true
 git log --oneline -20 > "$OUT/repo/log.txt" 2>/dev/null || true
 
+for d in node cluster manifests db images secrets; do
+  if [ -z "$(ls -A "$OUT/$d" 2>/dev/null)" ]; then
+    echo "[export] ВНИМАНИЕ: каталог $d пуст (проверьте доступ к узлу/кластеру)" >&2
+  fi
+done
 echo "[export] готово: $OUT"
 du -sh "$OUT" 2>/dev/null | awk '{print "  размер:", $1}'
