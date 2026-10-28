@@ -675,6 +675,192 @@ def _with_lang(path: str, code: str) -> str:
                                     urllib.parse.urlencode(q), parts.fragment))
 
 
+# ---------------------------------------------------------------------------
+# v3 UI: разделы (Сканы / Загрузка / Настройки / Администрирование)
+# Код панелей переносится через DOM, чтобы не ломать существующие обработчики.
+# ---------------------------------------------------------------------------
+V3UI_MARKUP = """
+<div id='v3nav' style='margin:10px 0 6px'>
+  <button type='button' class='v3tab' data-v3='scans'>Сканы</button>
+  <button type='button' class='v3tab' data-v3='upload'>Загрузка</button>
+  <button type='button' class='v3tab' data-v3='settings'>Настройки</button>
+  <button type='button' class='v3tab' data-v3='admin' id='v3admin-tab'>Администрирование</button>
+</div>
+<div class='v3sect' id='sec-scans'>
+  <div class='upload' style='margin-top:0'><b>Сканы: артефакты</b>
+    <button type='button' id='v3art-refresh'>Обновить</button>
+    <div id='v3artlist' style='margin-top:6px;font-size:12px'></div>
+  </div>
+  <div class='upload' id='v3artdetail' style='display:none'></div>
+</div>
+<div class='v3sect' id='sec-upload' style='display:none'>
+  <div class='upload' style='margin-top:0'><b>История операций</b>
+    <select id='v3ops-kind'><option value='uploads'>загрузки артефактов</option>
+      <option value='hf'>HF-загрузки</option><option value='engines'>движки</option></select>
+    <button type='button' id='v3ops-btn'>Показать</button>
+    <div id='v3ops' style='margin-top:6px;font-size:12px'></div>
+  </div>
+</div>
+<div class='v3sect' id='sec-settings' style='display:none'>
+  <div class='upload' style='margin-top:0' id='v3set-token'><b>HF-токен (личный)</b> <span id='v3set-token-slot'></span></div>
+  <div class='upload' style='margin-top:0' id='v3set-ps'><b>Набор тестов (XLSX)</b> <span id='v3set-ps-slot'></span></div>
+</div>
+<div class='v3sect' id='sec-admin' style='display:none'>
+  <div class='upload' style='margin-top:0'><b>Квоты HF (per-tenant)</b>
+    <input id='v3qa-tenant' type='text' placeholder='tenant' style='width:14%'>
+    <input id='v3qa-bytes' type='number' placeholder='daily_bytes (пусто = снять)' style='width:16%'>
+    <button type='button' id='v3qa-save'>Сохранить</button>
+    <div id='v3qa' style='font-size:12px;color:#9aa4b2'></div></div>
+  <div class='upload' style='margin-top:0'><b>Ограничение частоты</b>
+    <input id='v3rl-rps' type='number' placeholder='rps' style='width:8%'>
+    <input id='v3rl-burst' type='number' placeholder='burst' style='width:8%'>
+    <button type='button' id='v3rl-save'>Применить</button>
+    <div id='v3rl' style='font-size:12px;color:#9aa4b2'></div></div>
+  <div class='upload' style='margin-top:0'><b>Аудит</b>
+    <button type='button' id='v3au-chain'>Целостность вердиктов</button>
+    <button type='button' id='v3au-gate'>Решения gate</button>
+    <button type='button' id='v3au-egress'>Журнал egress HF</button>
+    <div id='v3au' style='font-size:12px;color:#9aa4b2;white-space:pre-wrap'></div></div>
+</div>
+"""
+
+V3UI_SCRIPT = """
+<script>
+(function(){
+  const api=(p,o)=>fetch(p,Object.assign({cache:'no-store'},o||{})).then(r=>r.ok?r.json():r.json().then(j=>{throw new Error((j&&j.error)||r.status)}));
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // --- навигация и перенос существующих блоков в разделы ---
+  const secs={scans:document.getElementById('sec-scans'),upload:document.getElementById('sec-upload'),
+              settings:document.getElementById('sec-settings'),admin:document.getElementById('sec-admin')};
+  const dl=document.getElementById('downloads');
+  if(dl&&secs.upload){secs.upload.insertBefore(dl,secs.upload.firstChild);}
+  // список сканов и дашборды -> только в «Сканы»
+  const rows=document.getElementById('rows');
+  if(rows&&secs.scans){const tbl=rows.closest('table')||rows; const ctl=tbl.previousElementSibling;
+    secs.scans.insertBefore(tbl,secs.scans.firstChild); if(ctl&&ctl.classList&&ctl.classList.contains('controls'))secs.scans.insertBefore(ctl,secs.scans.firstChild);}
+  const cards=document.getElementById('cards'); if(cards&&secs.scans)secs.scans.insertBefore(cards,secs.scans.firstChild);
+  // HF-токен -> Настройки; XLSX -> Настройки; домен->класс и админ-панели -> Администрирование
+  const move=(ids,dst)=>{const d=document.getElementById(dst);(ids||[]).forEach(id=>{const el=document.getElementById(id);
+    if(el&&d)d.appendChild(el.parentElement&&el.parentElement.classList.contains('upload')?el.parentElement:el);});};
+  move(['hftoken','hftokensave','hftokenstatus'],'v3set-token-slot');
+  move(['psfile','psstatus'],'v3set-ps-slot');
+  const dc=document.getElementById('dcpanel'); if(dc&&secs.admin)secs.admin.appendChild(dc);
+  // «Тест bundle» больше не отдельная подзакладка: тест запускается из «Сканов»
+  const btTab=document.querySelector("#downloads .tab[data-tab='tab-bundletest']");
+  if(btTab)btTab.style.display='none';
+  // --- HF: режим обзора (модели/датасеты) + очередь ---
+  const hf=document.getElementById('hfpanel');
+  if(hf){const box=document.createElement('div'); box.className='upload'; box.style.marginTop='0';
+    box.innerHTML="<b>HF: обзор доступного</b><br><br>"
+      +"<select id='v3br-kind'><option value='models'>Модели</option><option value='datasets'>Датасеты</option></select> "
+      +"<input id='v3br-author' type='text' placeholder='разработчик (author)' style='width:16%'> "
+      +"<input id='v3br-task' type='text' placeholder='назначение (pipeline/task)' style='width:18%'> "
+      +"<select id='v3br-sort'><option value='downloads'>по загрузкам</option><option value='likes'>по лайкам</option><option value='lastModified'>по дате</option></select> "
+      +"<button type='button' id='v3br-btn'>Обзор</button> <span id='v3br-status' style='font-size:12px;color:#9aa4b2'></span>"
+      +"<div id='v3br-list' style='margin-top:6px;font-size:12px'></div>";
+    hf.insertBefore(box,hf.firstChild);}
+  document.getElementById('v3br-btn')&&document.getElementById('v3br-btn').addEventListener('click',()=>{
+    const st=document.getElementById('v3br-status'); st.textContent='запрос…';
+    api('/hf/browse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      kind:document.getElementById('v3br-kind').value, author:document.getElementById('v3br-author').value.trim(),
+      task:document.getElementById('v3br-task').value.trim(), sort:document.getElementById('v3br-sort').value, limit:20})})
+      .then(d=>{st.textContent='найдено: '+d.count;
+        document.getElementById('v3br-list').innerHTML=(d.items||[]).map(i=>
+          "<div>"+esc(i.id)+" <span style='color:#9aa4b2'>(↓"+i.downloads+")</span> "
+          +"<button type='button' data-repo='"+esc(i.id)+"' data-kind='"+esc(d.kind)+"' class='v3br-queue'>В очередь</button></div>").join('')})
+      .catch(e=>{st.textContent='ERR '+e.message;});});
+  document.addEventListener('click',ev=>{const b=ev.target.closest&&ev.target.closest('.v3br-queue'); if(!b)return;
+    const kind=b.dataset.kind==='datasets'?'dataset':'nonllm';
+    api('/hf/downloads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(
+      {repo_id:b.dataset.repo, quantization:kind==='dataset'?'':'Q8_0', kind:kind})})
+      .then(d=>{b.textContent='в очереди '+(d.id||'').slice(0,8);})
+      .catch(e=>{b.textContent='ERR '+e.message;});});
+  // --- список артефактов и детали ---
+  const artlist=document.getElementById('v3artlist'), detail=document.getElementById('v3artdetail');
+  function renderArtifacts(){
+    if(!artlist)return; artlist.textContent='загрузка…';
+    api('/v3/artifacts?limit=100').then(d=>{
+      artlist.innerHTML="<table style='width:100%;border-collapse:collapse'>"
+        +"<tr><th>Файл</th><th>Формат</th><th>Вердикт</th><th>Движок</th><th>Дата</th></tr>"
+        +(d.artifacts||[]).map(a=>"<tr><td><a href='#' data-sha='"+esc(a.sha256)+"' class='v3art'>"+esc(a.filename)+"</a></td>"
+          +"<td>"+esc(a.format)+"</td><td>"+esc(a.verdict||a.scan_state||'—')+"</td>"
+          +"<td>"+esc((a.engine_image||'—').split('@')[0].split('/').pop())+"</td><td>"+esc(a.created||'')+"</td></tr>").join('')
+        +"</table>";}).catch(e=>{artlist.textContent='ERR '+e.message;});}
+  document.getElementById('v3art-refresh')&&document.getElementById('v3art-refresh').addEventListener('click',renderArtifacts);
+  document.addEventListener('click',ev=>{const a=ev.target.closest&&ev.target.closest('a.v3art'); if(!a)return; ev.preventDefault();
+    showArtifact(a.dataset.sha);});
+  function showArtifact(sha){
+    detail.style.display='block'; detail.textContent='загрузка…';
+    api('/v3/artifacts/'+encodeURIComponent(sha)).then(d=>{
+      const art=d.artifact, chains=(d.bundles||[]).map(b=>
+        "<li>движок <b>"+esc((b.engine_image||'').split('@')[0])+"</b>"
+        +" вердикт инференса: "+esc(b.inference_verdict||'—')+" / "+esc(b.inference_action||'—')
+        +" аттестация: "+esc((b.attestation_digest||'').slice(0,18))+"…</li>").join('');
+      const fnd=(d.findings||[]).map(f=>"<li><b>"+esc(f.check_id)+"</b> ("+esc(f.severity)+", conf "+esc(f.confidence)+"): "
+        +esc(f.title)+"<br><span style='color:#9aa4b2'>"+esc(f.evidence||'')+"</span></li>").join('');
+      detail.innerHTML="<b>"+esc(art.filename)+"</b> <span style='color:#9aa4b2'>"+esc(sha.slice(0,16))+"…</span><br>"
+        +"формат: "+esc(art.format)+", размер: "+esc(art.size)+", вердикт: <b>"+esc(art.verdict||'—')+"</b><br>"
+        +"<br>Связки (движок+модель):<ul>"+(chains||'<li>нет</li>')+"</ul>"
+        +"<div style='margin-top:6px'>Сменить/связать движок: <select id='v3bind-engine'><option value=''>engine: (выберите)</option></select> "
+        +"<button type='button' id='v3bind-btn'>Связать</button> "
+        +"<button type='button' id='v3test-btn'>Запустить/повторить тест</button> "
+        +"<a href='/v3/artifacts/"+encodeURIComponent(sha)+"/report.json' target='_blank'>Отчёт JSON</a> "
+        +"<a href='/v3/artifacts/"+encodeURIComponent(sha)+"/report.html' target='_blank'>Печать/PDF</a></div>"
+        +"<div id='v3bind-status' style='font-size:12px;color:#9aa4b2'></div>"
+        +"<br><b>Находки последнего скана:</b><ul>"+(fnd||'<li>нет</li>')+"</ul>"
+        +"<b>История тестов:</b><ul>"+((d.scans||[]).map(s=>"<li>"+esc(s.scan_id)+" — "+esc(s.state||'')+" / "+esc(s.verdict||'')+" ("+esc(s.finished||'')+")</li>").join('')||'<li>нет</li>')+"</ul>";
+      api('/images/list').then(l=>{const sel=document.getElementById('v3bind-engine');
+        if(sel)(l.images||[]).forEach(i=>{const o=document.createElement('option');o.value=i.digest;
+          o.textContent=(i.ref||i.digest).slice(0,60)+(i.signed?' [signed]':'');sel.appendChild(o);});});
+      const bs=document.getElementById('v3bind-btn');
+      bs&&bs.addEventListener('click',()=>{const e=document.getElementById('v3bind-engine').value;
+        api('/v3/artifacts/'+encodeURIComponent(sha)+'/bind',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({engine_image:e})}).then(r=>{document.getElementById('v3bind-status').textContent=
+            'связано: bundle '+String(r.bundle_id).slice(0,20);}).catch(e2=>{document.getElementById('v3bind-status').textContent='ERR '+e2.message;});});
+      const ts=document.getElementById('v3test-btn');
+      ts&&ts.addEventListener('click',()=>{const e=document.getElementById('v3bind-engine').value;
+        api('/v3/artifacts/'+encodeURIComponent(sha)+'/test',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(e?{engine_image:e}:{})}).then(r=>{document.getElementById('v3bind-status').textContent=
+            r.status==='rescan-required'?('тест не запущен: '+(r.hint||'нужен повторный скан')):('тест запущен: job '+(r.job||''));})
+          .catch(e2=>{document.getElementById('v3bind-status').textContent='ERR '+e2.message;});});
+    }).catch(e=>{detail.textContent='ERR '+e.message;});}
+  // --- истории операций ---
+  document.getElementById('v3ops-btn')&&document.getElementById('v3ops-btn').addEventListener('click',()=>{
+    const k=document.getElementById('v3ops-kind').value, out=document.getElementById('v3ops'); out.textContent='загрузка…';
+    api('/v3/operations?kind='+k+'&limit=50').then(d=>{out.innerHTML="<table style='width:100%;border-collapse:collapse'>"
+      +"<tr>"+Object.keys(d.operations[0]||{}).map(h=>"<th>"+esc(h)+"</th>").join('')+"</tr>"
+      +(d.operations||[]).map(o=>"<tr>"+Object.values(o).map(v=>"<td>"+esc(v)+"</td>").join('')+"</tr>").join('')+"</table>";})
+      .catch(e=>{out.textContent='ERR '+e.message;});});
+  // --- администрирование ---
+  const qa=document.getElementById('v3qa-save');
+  qa&&qa.addEventListener('click',()=>{const t=document.getElementById('v3qa-tenant').value.trim()||null;
+    const b=document.getElementById('v3qa-bytes').value; const body=b===''?{tenant:t,daily_bytes:null}:{tenant:t,daily_bytes:Number(b)};
+    api('/hf/quota',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(r=>{document.getElementById('v3qa').textContent='лимит: '+JSON.stringify(r);}).catch(e=>{document.getElementById('v3qa').textContent='ERR '+e.message;});});
+  const rl=document.getElementById('v3rl-save');
+  rl&&rl.addEventListener('click',()=>{api('/rate-limit',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({rps:Number(document.getElementById('v3rl-rps').value||0),burst:Number(document.getElementById('v3rl-burst').value||1)})})
+    .then(r=>{document.getElementById('v3rl').textContent='лимит: '+JSON.stringify(r);}).catch(e=>{document.getElementById('v3rl').textContent='ERR '+e.message;});});
+  const au=document.getElementById('v3au');
+  document.getElementById('v3au-chain')&&document.getElementById('v3au-chain').addEventListener('click',()=>{
+    api('/v3/evidence/verify').then(r=>{au.textContent='цепочка: '+JSON.stringify(r);}).catch(e=>{au.textContent='ERR '+e.message;});});
+  document.getElementById('v3au-gate')&&document.getElementById('v3au-gate').addEventListener('click',()=>{
+    api('/gate/decisions?limit=20').then(r=>{au.textContent='решения gate: '+JSON.stringify(r).slice(0,2000);}).catch(e=>{au.textContent='ERR '+e.message;});});
+  document.getElementById('v3au-egress')&&document.getElementById('v3au-egress').addEventListener('click',()=>{
+    api('/hf/egress?limit=20').then(r=>{au.textContent='egress: '+JSON.stringify(r).slice(0,2000);}).catch(e=>{au.textContent='ERR '+e.message;});});
+  // --- переключение разделов ---
+  const admin=document.getElementById('v3admin-tab'); const isAdmin=!!document.querySelector("#downloads .tab[data-tab='tab-engines']");
+  if(admin&&!isAdmin)admin.style.display='none';
+  document.querySelectorAll('.v3tab').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('.v3sect').forEach(x=>x.style.display='none');
+    const s=secs[b.dataset.v3]; if(s)s.style.display='block';
+    if(b.dataset.v3==='scans')renderArtifacts();}));
+  document.querySelector(".v3tab[data-v3='scans']").click();
+})();
+</script>
+"""
+
+
 def _lang_switch(lang: str, next_path: str = "/") -> str:
     """Переключатель языка: RU | EN (cookie mlscan_lang + параметр ?lang как фолбэк)."""
     parts = []
@@ -700,7 +886,8 @@ def _page(title: str, body: str, script: str = "", lang: str = "ru",
             f"<a href='/api/overview'>{T('nav.json', lang)}</a>"
             f"<a href='/api/evidence/verify'>{T('nav.evidence', lang)}</a>"
             f"<a href='/policy'>{T('nav.policy', lang)}</a>{extra}"
-            f"{_lang_switch(lang, path)}</header><main>{body}</main>{script}</body></html>").encode()
+            f"{_lang_switch(lang, path)}</header><main>{body}</main>"
+            + V3UI_MARKUP + f"{script}" + V3UI_SCRIPT + "</body></html>").encode()
 
 
 def _js(lang: str) -> str:
@@ -1401,6 +1588,11 @@ class Handler(BaseHTTPRequestHandler):
         if p.startswith("/bundles/") and p.endswith("/test"):
             code, body = self._test_request("GET", p)
             return self._send(code, body, "application/json; charset=utf-8")
+        # v3 UI API: артефакты, операции, целостность, решения gate, квоты/egress, обзор HF
+        if p.startswith("/v3/") or p.startswith("/gate") or p in ("/hf/quota", "/hf/egress") \
+                or p.startswith("/hf/egress"):
+            code, body = self._test_request("GET", p + (("?" + (u.query or "")) if u.query else ""))
+            return self._send(code, body, "application/json; charset=utf-8")
         if p == "/hf/downloads":
             code, body = self._test_request("GET", "/hf/downloads")
             return self._send(code, body, "application/json; charset=utf-8")
@@ -1603,6 +1795,16 @@ class Handler(BaseHTTPRequestHandler):
             data = self.rfile.read(n) if n else b"{}"
             code, body = self._test_request("POST", u.path, data)
             return self._send(code, body, "application/json; charset=utf-8")
+        if u.path == "/v3/artifacts" or u.path.startswith("/v3/artifacts/"):
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", u.path, data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        if u.path in ("/hf/browse", "/hf/search", "/hf/downloads", "/hf/quota"):
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", u.path, data)
+            return self._send(code, body, "application/json; charset=utf-8")
         if u.path.startswith("/images/") and (u.path.endswith("/sign") or u.path.endswith("/sbom")):
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"
@@ -1627,3 +1829,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

@@ -620,7 +620,8 @@ def _hf_download_worker(dl_id: str) -> None:
                             fmt0 = "gguf" if str(fl[0]).lower().endswith(".gguf") else "bin"
                             db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key,source) SELECT "
                                     + _lit(msha) + ", " + str(os.path.getsize(f0)) + ", " + _lit(fmt0) + ", "
-                                    + _lit(os.path.basename(fl[0])) + ", " + _lit(key0) + ", 'hf' "
+                                    + _lit(os.path.basename(fl[0])) + ", " + _lit(key0) + ", "
+                                    + _lit("hf-dataset" if is_dataset else "hf") + " "
                                     "WHERE NOT EXISTS (SELECT 1 FROM artifacts WHERE sha256=" + _lit(msha) + ")")
                         except Exception:  # noqa: BLE001
                             pass
@@ -2771,6 +2772,49 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(201, {"bundle_id": b["bundle_id"], "engine_image": b["engine_image"],
                                 "previous_bundle": bundle_id, "restarted": True, "bundle": b})
 
+    def _hf_browse(self) -> None:
+        """Обзор Hugging Face «как на сайте»: первая страница моделей или датасетов + фильтры.
+
+        kind=models|datasets; фильтры: author (организация/разработчик), task (pipeline_tag),
+        sort (downloads|likes|lastModified). Возвращает список с именами для постановки в очередь.
+        """
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        kind = (body.get("kind") or "models").lower()
+        if kind not in ("models", "datasets"):
+            return self._json(400, {"error": "kind: models|datasets"})
+        limit = max(1, min(100, int(body.get("limit") or 30)))
+        q: dict = {"limit": str(limit), "sort": body.get("sort") or "downloads", "direction": "-1"}
+        if body.get("author"):
+            q["author"] = body["author"]
+        if body.get("task"):
+            q["pipeline_tag"] = body["task"] if kind == "models" else None
+            q["task_categories"] = body["task"] if kind == "datasets" else None
+            q = {k: v for k, v in q.items() if v}
+        items = []
+        if HF_MOCK:
+            items = [{"id": i["id"], "downloads": 0, "likes": 0, "tags": i.get("tags") or []}
+                     for i in _hf_mock_search(body.get("author") or "", body.get("task") or "")]
+        else:
+            try:
+                req = urllib.request.Request(f"{HF_BASE_URL}/api/{kind}?{urllib.parse.urlencode(q)}")
+                tok = _tenant_hf_token(self._tenant()) or HF_TOKEN
+                if tok:
+                    req.add_header("Authorization", f"Bearer {tok}")
+                with _HF_OPENER.open(req, timeout=40) as r:
+                    for it in (json.loads(r.read()) or []):
+                        items.append({"id": it.get("id") or it.get("modelId"),
+                                      "downloads": it.get("downloads") or 0,
+                                      "likes": it.get("likes") or 0,
+                                      "tags": (it.get("tags") or [])[:6],
+                                      "updated": it.get("lastModified") or ""})
+            except Exception as exc:  # noqa: BLE001
+                return self._json(502, {"error": f"hf: {type(exc).__name__}: {exc}"})
+        return self._json(200, {"kind": kind, "count": len(items), "mock": HF_MOCK, "items": items})
+
     def _hf_search(self) -> None:
         n = int(self.headers.get("Content-Length", "0") or "0")
         try:
@@ -2815,6 +2859,9 @@ class Handler(BaseHTTPRequestHandler):
                 and not _engine_signed(engine_image):
             return self._json(400, {"error": "IMAGES_REQUIRE_SIGNED=1: образ движка не подписан "
                                              "(POST /images/<digest>/sign, admin)"})
+        is_dataset = str(body.get("kind") or "").lower() == "dataset"
+        if is_dataset:
+            kind = "nonllm"          # датасет: инференс не требуется, проверяем содержимое
         if kind != "nonllm" and not self._engine_ok(engine_image):
             return self._json(400, {"error": "для LLM-модели обязателен engine_image из уже скачанных "
                                              "(registry_images); скачайте движок в подзакладке «Движки инференса»"})
@@ -3526,6 +3573,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._images_import()
         if u.path == "/domain-class":
             return self._domain_class_set()
+        if u.path == "/hf/browse":
+            return self._hf_browse()
         if u.path == "/hf/search":
             return self._hf_search()
         if u.path == "/hf/downloads":
