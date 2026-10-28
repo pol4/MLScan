@@ -13,6 +13,14 @@ provenance problems.
 
 ---
 
+## Core concept: every artifact runs on an engine
+
+Every check executes an artifact through an **engine**, and the result is recorded as an immutable
+`bundle` (“artifact + engine + versions”). For pickle/scripts/inert formats (safetensors, ONNX, HDF5,
+Keras, archives, datasets) the engine is the platform **sandbox engine** (Kata + harness) and is selected
+by default; for **LLMs** the engine is an external inference image (e.g. `llama.cpp:server-cuda` by
+digest) and must be chosen explicitly (no default).
+
 ## How the project evolved
 
 The project grew **incrementally**: from checking a single format to a platform able to scan
