@@ -474,6 +474,29 @@ def _hf_mock_search(search: str, type_: str) -> list[dict]:
     return res
 
 
+BUILTIN_ENGINE_SOURCE = "builtin-sandbox"
+
+
+def _builtin_engine() -> str:
+    """Ссылка на встроенный песочный движок (дефолт для не-LLM артефактов).
+
+    Концепция: у любого артефакта есть движок. Для pickle/скриптов/инертных форматов и датасетов
+    движком является песочный harness (Kata) — регистрируем его в реестре движков как `source=builtin`.
+    """
+    ref = (SANDBOX_IMAGE or "").strip()
+    if not ref or "@sha256:" not in ref:
+        return ""
+    if DB_ENABLED:
+        try:
+            digest = "sha256:" + ref.split("@sha256:", 1)[1]
+            db_exec("INSERT INTO registry_images(digest,ref,source,size,status) VALUES ("
+                    + _lit(digest) + "," + _lit(ref) + "," + _lit(BUILTIN_ENGINE_SOURCE) + ",0,'ready') "
+                    "ON CONFLICT (digest) DO NOTHING")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[testing] builtin engine: {type(exc).__name__}: {exc}", file=sys.stderr)
+    return ref
+
+
 def _norm_engine(engine_image: str) -> str:
     """Привести движок к виду <ref>@sha256:... (bundle требует digest-форму).
 
@@ -1298,6 +1321,23 @@ def run_sandbox(scan_id: str, name: str, fmt: str, artifact_url: str) -> dict:
             except Exception as exc:  # noqa: BLE001
                 result["parse_error"] = str(exc)
         result["stdout_tail"] = (logs or "")[-1200:]
+    # концепция «движок для любого артефакта»: фиксируем bundle с встроенным песочным движком
+    try:
+        eng = _builtin_engine()
+        sha0 = ((load_scan(scan_id) or {}).get("sha256") or result.get("sha256") or "")
+        if eng and sha0 and v3binding is not None and DB_ENABLED:
+            b = v3binding.make_bundle(image_digest=eng, model_sha256=sha0,
+                                      engine_manifest={"entrypoint": "harness", "source": BUILTIN_ENGINE_SOURCE},
+                                      prompt_set="", detectors=DETECTORS_VERSION, policy="")
+            db_exec("INSERT INTO bundles(bundle_id,engine_image,model_sha256,engine_manifest,prompt_set,"
+                    "detectors,policy,tenant) VALUES (" + _lit(b["bundle_id"]) + "," + _lit(b["engine_image"])
+                    + "," + _lit(b["model_sha256"]) + ","
+                    + _lit(json.dumps(b["engine_manifest"], ensure_ascii=False)) + ","
+                    + _lit(b["prompt_set"]) + "," + _lit(b["detectors"]) + "," + _lit(b["policy"]) + ","
+                    + _lit("") + ") ON CONFLICT (bundle_id) DO NOTHING")
+            result["bundle_id"] = b["bundle_id"]
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] builtin bundle: {type(exc).__name__}: {exc}", file=sys.stderr)
     if not (SANDBOX_EBPF and run_token):
         # С сенсором eBPF job НЕ удаляем сразу: контейнер-сенсор живёт дольше скана и должен
         # успеть опубликовать события (детерминированная уборка — по ttlSecondsAfterFinished).
