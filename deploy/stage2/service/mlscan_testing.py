@@ -1735,6 +1735,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._gate(q)
         if u.path == "/v3/evidence/verify":
             return self._evidence_verify()
+        if u.path == "/v3/artifacts":
+            return self._v3_artifacts_list(q)
+        if u.path == "/v3/operations":
+            return self._v3_operations(q)
+        if u.path.startswith("/v3/artifacts/"):
+            rest = u.path[len("/v3/artifacts/"):].strip("/")
+            if rest.endswith("/report.json"):
+                return self._v3_artifact_report(rest[:-len("/report.json")].strip("/"), "json")
+            if rest.endswith("/report.html"):
+                return self._v3_artifact_report(rest[:-len("/report.html")].strip("/"), "html")
+            return self._v3_artifact_detail(rest)
         if u.path == "/gate/decisions":
             return self._gate_decisions_get(q)
         if u.path == "/rate-limit":
@@ -2331,15 +2342,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _bundle_test_start(self, bundle_id: str) -> None:
         """N2: запустить тест bundle (движок + набор вопросов) и связать результат с bundle."""
-        if not DB_ENABLED:
-            return self._json(503, {"error": "db disabled"})
-        if v3llmenv is None or v3attest is None:
-            return self._json(503, {"error": "v3 llm/attest модули недоступны"})
         n = int(self.headers.get("Content-Length", "0") or "0")
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
         except Exception:  # noqa: BLE001
             body = {}
+        return self._bundle_test_start_core(bundle_id, body)
+
+    def _bundle_test_start_core(self, bundle_id: str, body: dict) -> None:
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        if v3llmenv is None or v3attest is None:
+            return self._json(503, {"error": "v3 llm/attest модули недоступны"})
         rows = db_query("SELECT engine_image,model_sha256,prompt_set FROM bundles WHERE bundle_id="
                         + _lit(bundle_id))
         if not rows:
@@ -3118,6 +3132,224 @@ class Handler(BaseHTTPRequestHandler):
                                 "sbom": r[5] or "", "sbom_present": bool((r[5] or "").strip()),
                                 "stored_key": r[6], "status": r[7]})
 
+    # ---------- v3 UI API: артефакты, история, привязка движка, запуск теста, экспорт ----------
+    ART_KEYS = ("sha256", "filename", "format", "size", "created", "scan_id", "scan_state", "verdict",
+                "bundle_id", "engine_image", "prompt_set")
+
+    def _artifacts_sql(self, where: str = "", limit: int = 100) -> str:
+        return ("SELECT a.sha256, a.filename, a.format, a.size, "
+                "to_char(a.created_at,'YYYY-MM-DD\"T\"HH24:MI:SS'), "
+                "s.scan_id, s.status, s.verdict, b.bundle_id, b.engine_image, b.prompt_set "
+                "FROM artifacts a "
+                "LEFT JOIN LATERAL (SELECT scan_id,status,verdict FROM scans WHERE artifact_id=a.id "
+                "ORDER BY id DESC LIMIT 1) s ON true "
+                "LEFT JOIN LATERAL (SELECT bundle_id,engine_image,prompt_set FROM bundles "
+                "WHERE model_sha256=a.sha256 ORDER BY created DESC LIMIT 1) b ON true "
+                + where + f" ORDER BY a.id DESC LIMIT {int(limit)}")
+
+    def _v3_artifacts_list(self, q: dict) -> None:
+        """Список артефактов (модели/архивы/датасеты) с последним скан-вердиктом и привязанным движком."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        limit = max(1, min(500, int((q.get("limit", ["100"])[0] or 100))))
+        rows = db_query(self._artifacts_sql(limit=limit)) or []
+        items = [dict(zip(self.ART_KEYS, r)) for r in rows]
+        return self._json(200, {"count": len(items), "artifacts": items})
+
+    def _v3_artifact_detail(self, sha: str) -> None:
+        """Детали артефакта: история сканов, связки (bundle) с движками и вердикты, находки последнего скана."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        sha = (sha or "").strip().lower()
+        rows = db_query(self._artifacts_sql("WHERE a.sha256=" + _lit(sha), 1)) or []
+        if not rows:
+            return self._json(404, {"error": "артефакт не найден"})
+        art = dict(zip(self.ART_KEYS, rows[0]))
+        scans = db_query("SELECT s.scan_id,s.status,s.verdict,"
+                         "to_char(s.finished_at,'YYYY-MM-DD\"T\"HH24:MI:SS') FROM scans s "
+                         "JOIN artifacts a ON a.id=s.artifact_id WHERE a.sha256=" + _lit(sha)
+                         + " ORDER BY s.id DESC LIMIT 20") or []
+        bundles = db_query("SELECT b.bundle_id,b.engine_image,b.prompt_set,b.detectors,"
+                           "COALESCE(v.verdict,''),COALESCE(v.action,''),COALESCE(v.attestation_digest,'') "
+                           "FROM bundles b LEFT JOIN bundle_verdicts v ON v.bundle_id=b.bundle_id "
+                           "WHERE b.model_sha256=" + _lit(sha) + " ORDER BY b.created DESC LIMIT 20") or []
+        findings = []
+        if art.get("scan_id"):
+            rec = load_scan(art["scan_id"]) or {}
+            findings = rec.get("findings") or []
+        return self._json(200, {
+            "artifact": art,
+            "scans": [dict(zip(("scan_id", "state", "verdict", "finished"), r)) for r in scans],
+            "bundles": [dict(zip(("bundle_id", "engine_image", "prompt_set", "detectors",
+                                  "inference_verdict", "inference_action", "attestation_digest"), r))
+                        for r in bundles],
+            "findings": findings})
+
+    def _artifact_engine_check(self, engine: str) -> tuple[bool, str]:
+        if not self._engine_ok(engine):
+            return False, "движок не найден в registry_images (импортируйте образ по digest)"
+        if IMAGES_REQUIRE_SIGNED and not _engine_signed(engine):
+            return False, "IMAGES_REQUIRE_SIGNED=1: образ движка не подписан (POST /images/<digest>/sign)"
+        return True, ""
+
+    def _artifact_bundle_ensure(self, sha: str, engine: str, prompt_set: str = "") -> str:
+        ok, why = self._artifact_engine_check(engine)
+        if not ok:
+            raise RuntimeError(why)
+        b = v3binding.make_bundle(image_digest=engine, model_sha256=sha,
+                                  engine_manifest={"entrypoint": "engine", "source": "ui"},
+                                  prompt_set=prompt_set or "", detectors=DETECTORS_VERSION, policy="")
+        db_exec("INSERT INTO bundles(bundle_id,engine_image,model_sha256,engine_manifest,prompt_set,"
+                "detectors,policy,tenant) VALUES (" + _lit(b["bundle_id"]) + "," + _lit(b["engine_image"])
+                + "," + _lit(b["model_sha256"]) + ","
+                + _lit(json.dumps(b["engine_manifest"], ensure_ascii=False)) + ","
+                + _lit(b["prompt_set"]) + "," + _lit(b["detectors"]) + "," + _lit(b["policy"]) + ","
+                + _lit(self._tenant()) + ") ON CONFLICT (bundle_id) DO NOTHING")
+        return b["bundle_id"]
+
+    def _v3_artifact_bind(self, sha: str) -> None:
+        """Связать артефакт с движком (создать/зафиксировать bundle)."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        sha = (sha or "").strip().lower()
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        if not db_query("SELECT 1 FROM artifacts WHERE sha256=" + _lit(sha)):
+            return self._json(404, {"error": "артефакт не найден"})
+        engine = _norm_engine(body.get("engine_image") or "") or _builtin_engine()
+        if not engine:
+            return self._json(400, {"error": "не указан движок и встроенный движок недоступен"})
+        try:
+            bid = self._artifact_bundle_ensure(sha, engine, body.get("prompt_set") or "")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": str(exc)})
+        return self._json(200, {"sha256": sha, "engine_image": engine, "bundle_id": bid})
+
+    def _v3_artifact_test(self, sha: str) -> None:
+        """Запустить тест артефакта: для LLM — инференс (движок обязателен), для остальных — встроенный движок."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        sha = (sha or "").strip().lower()
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception:  # noqa: BLE001
+            body = {}
+        rows = db_query("SELECT format, filename FROM artifacts WHERE sha256=" + _lit(sha))
+        if not rows:
+            return self._json(404, {"error": "артефакт не найден"})
+        fmt = str(rows[0][0] or "").lower()
+        is_llm = fmt in ("gguf", "llm") or str(rows[0][1] or "").lower().endswith(".gguf")
+        engine = _norm_engine(body.get("engine_image") or "")
+        if is_llm and not engine:
+            return self._json(400, {"error": "для LLM нужно указать движок инференса (engine_image)"})
+        if not is_llm:
+            if engine and engine != _builtin_engine():
+                # явно выбран движок для «инертного» артефакта — фиксируем связку и запускаем инференс
+                pass
+            else:
+                # дефолт: встроенный песочный движок; «тест» для не-LLM = повторный скан (реализуется отдельно)
+                bid = ""
+                try:
+                    bid = self._artifact_bundle_ensure(sha, _builtin_engine(), body.get("prompt_set") or "")
+                except Exception as exc:  # noqa: BLE001
+                    return self._json(400, {"error": str(exc)})
+                return self._json(409, {"status": "rescan-required", "bundle_id": bid,
+                                        "engine_image": _builtin_engine(),
+                                        "hint": "для этого формата тест — повторный скан в песочнице; "
+                                                "перезагрузите файл (повторный скан по хранилищу — следующий шаг)"})
+        if not is_llm and not engine:
+            engine = _builtin_engine()      # дефолт: песочный движок платформы
+        if not engine:
+            return self._json(400, {"error": "движок недоступен (нет встроенного и не указан явно)"})
+        try:
+            bid = self._artifact_bundle_ensure(sha, engine, body.get("prompt_set") or "")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": str(exc)})
+        test_body = dict(body, gpu=body.get("gpu"), runtime_class=body.get("runtime_class"))
+        return self._bundle_test_start_core(bid, test_body)
+
+    def _v3_operations(self, q: dict) -> None:
+        """Истории операций по подзакладкам: загрузки локальных файлов, HF-загрузки, движки."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        kind = (q.get("kind", ["uploads"])[0] or "uploads").lower()
+        limit = max(1, min(200, int((q.get("limit", ["50"])[0] or 50))))
+        if kind == "hf":
+            rows = db_query("SELECT id,repo_id,quantization,status,bytes_done,bytes_total,error,"
+                            "to_char(created,'YYYY-MM-DD\"T\"HH24:MI:SS') FROM hf_downloads "
+                            f"ORDER BY id DESC LIMIT {limit}") or []
+            keys = ("id", "repo_id", "quantization", "status", "bytes_done", "bytes_total", "error", "created")
+        elif kind == "engines":
+            rows = db_query("SELECT digest,ref,source,COALESCE(signature,''),COALESCE(sbom,''),status,"
+                            "to_char(created,'YYYY-MM-DD\"T\"HH24:MI:SS') FROM registry_images "
+                            f"ORDER BY created DESC LIMIT {limit}") or []
+            keys = ("digest", "ref", "source", "signature", "sbom", "status", "created")
+        else:
+            rows = db_query("SELECT a.filename,a.sha256,a.format,a.size,s.status,s.verdict,"
+                            "to_char(a.created_at,'YYYY-MM-DD\"T\"HH24:MI:SS') FROM artifacts a "
+                            "LEFT JOIN scans s ON s.artifact_id=a.id "
+                            f"ORDER BY a.id DESC LIMIT {limit}") or []
+            keys = ("filename", "sha256", "format", "size", "status", "verdict", "created")
+        return self._json(200, {"kind": kind, "count": len(rows),
+                                "operations": [dict(zip(keys, r)) for r in rows]})
+
+    def _v3_artifact_report(self, sha: str, kind: str) -> None:
+        """Экспорт отчёта по артефакту: JSON или печатная форма (HTML)."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        sha = (sha or "").strip().lower()
+        rows = db_query(self._artifacts_sql("WHERE a.sha256=" + _lit(sha), 1)) or []
+        if not rows:
+            return self._json(404, {"error": "артефакт не найден"})
+        art = dict(zip(self.ART_KEYS, rows[0]))
+        rec = load_scan(art["scan_id"]) if art.get("scan_id") else {}
+        bundles = db_query("SELECT b.bundle_id,b.engine_image,b.prompt_set,b.detectors,"
+                           "COALESCE(v.verdict,''),COALESCE(v.action,''),COALESCE(v.attestation_digest,''),"
+                           "COALESCE(v.signature,'') FROM bundles b "
+                           "LEFT JOIN bundle_verdicts v ON v.bundle_id=b.bundle_id "
+                           "WHERE b.model_sha256=" + _lit(sha) + " ORDER BY b.created DESC") or []
+        data = {"artifact": art, "scan": {"scan_id": (rec or {}).get("scan_id"),
+                                          "state": (rec or {}).get("state"),
+                                          "verdict": (rec or {}).get("verdict"),
+                                          "coverage": (rec or {}).get("coverage"),
+                                          "findings": (rec or {}).get("findings") or []},
+                "bundles": [dict(zip(("bundle_id", "engine_image", "prompt_set", "detectors", "verdict",
+                                      "action", "attestation_digest", "signature"), r)) for r in bundles]}
+        if kind == "json":
+            return self._json(200, data)
+        esc = lambda x: (str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))  # noqa: E731
+        rows_html = "".join(
+            "<tr><td>" + esc(f.get("check_id")) + "</td><td>" + esc(f.get("severity")) + "</td>"
+            "<td>" + esc(f.get("title")) + "</td><td>" + esc(f.get("evidence")) + "</td></tr>"
+            for f in data["scan"]["findings"])
+        html = ("<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
+                "<title>MLScan: отчёт по артефакту " + esc(sha[:16]) + "</title>"
+                "<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px}"
+                "table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px}"
+                "@media print{button{display:none}}</style></head><body>"
+                "<button onclick='window.print()'>Печать / PDF</button>"
+                "<h1>MLScan: отчёт по артефакту</h1>"
+                "<p><b>Файл:</b> " + esc(data["artifact"]["filename"]) +
+                "<br><b>sha256:</b> " + esc(sha) +
+                "<br><b>Формат:</b> " + esc(data["artifact"]["format"]) +
+                "<br><b>Вердикт:</b> " + esc(data["scan"]["verdict"]) +
+                "<br><b>Движок:</b> " + esc((data["bundles"][0]["engine_image"] if data["bundles"] else "")) +
+                "<br><b>Аттестация:</b> " + esc((data["bundles"][0]["attestation_digest"]
+                                                 if data["bundles"] else "")) + "</p>"
+                "<h2>Находки</h2><table><tr><th>Правило</th><th>Серьёзность</th><th>Описание</th>"
+                "<th>Улика</th></tr>" + (rows_html or "<tr><td colspan='4'>нет находок</td></tr>") +
+                "</table></body></html>")
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _images_verify(self, ref: str) -> None:
         if v3images is None:
             return self._json(503, {"error": "v3 registry module unavailable"})
@@ -3279,6 +3511,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._hf_quota_set()
         if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):
             return self._bundle_rebind(u.path.split("/", 3)[2])
+        if u.path.startswith("/v3/artifacts/"):
+            rest = u.path[len("/v3/artifacts/"):].strip("/")
+            if rest.endswith("/bind"):
+                return self._v3_artifact_bind(rest[:-len("/bind")].strip("/"))
+            if rest.endswith("/test"):
+                return self._v3_artifact_test(rest[:-len("/test")].strip("/"))
+            return self._json(404, {"error": "not found"})
         if u.path.startswith("/images/") and u.path.endswith("/sign"):
             return self._images_sign(u.path[len("/images/"):-len("/sign")].strip("/"))
         if u.path.startswith("/images/") and u.path.endswith("/sbom"):
