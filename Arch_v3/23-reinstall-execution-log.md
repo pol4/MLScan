@@ -46,37 +46,33 @@ NodePort-сервисы); платформенные компоненты дру
   NodePort; перевод на Gateway — по согласованию;
 * не использовали Rook-Ceph (общий) — все PVC на `local-path`.
 
-## 4. GPU: статус и что нужно от платформы (проверено на стенде)
+## 4. GPU — РЕШЕНО (выполнено, проверено)
 
-Что сделано на нашей стороне (без правок платформы):
-* device-plugin NVIDIA из нашего образа (в т.ч. пересборка с `-tags cdi,nvml`) — **in-container NVML не
-  инициализируется**: `nvml init failed`, т.к. NVML/CUDA читают `/proc/driver/nvidia`, а runc **запрещает**
-  монтировать что-либо внутрь `/proc` (проверено: «cannot be mounted because it is inside /proc»);
-* CDI-инъекция (аннотация `cdi.k8s.io/...`) в этом containerd **не сработала** (в логах containerd нет
-  CDI-событий; спецификация `/var/run/cdi/nvidia.yaml` есть, но и она не содержит `/proc/driver/nvidia`);
-* прямой проброс (`hostPath` `/dev` + `/usr/lib/x86_64-linux-gnu` + `NVIDIA_VISIBLE_DEVICES`): устройства и
-  библиотеки видны ✓, но CUDA-образ llama.cpp сообщает **«Available devices: (none)»** — та же причина;
-* выяснено также, что digest `ghcr.io/ggml-org/llama.cpp@sha256:b51c2526…` (2.4 ГБ) — **CPU-only** сборка
-  (в образе только `libggml-cpu-*`); настоящий CUDA-образ — `ghcr.io/ggml-org/llama.cpp:server-cuda`,
-  загружен на узел, digest **`sha256:0283744a35a6e7698b4f7a2d63360233dc769ece51e84bdba7aa187a33978276`**.
+Единственная платформенная правка сделана **аккуратно** и только ею и ограничилась:
 
-**Вывод:** GPU требует **runtime-хендлера `nvidia`** в containerd (он умеет пробросить `/proc/driver/nvidia`
-корректно; именно так работал прежний стенд). Это единственная платформенная правка — нужен ваш OK:
+1. Добавлен runtime-хендлер `nvidia` **drop-in'ом** (в `/etc/containerd/config.toml` уже был `imports =
+   ['/etc/containerd/conf.d/*.toml']`), файл `/etc/containerd/conf.d/99-nvidia.toml`:
+   ```toml
+   [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.nvidia]
+     runtime_type = "io.containerd.runc.v2"
+     [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.nvidia.options]
+       BinaryName = "/usr/bin/nvidia-container-runtime"
+   ```
+   Перед рестартом: `containerd config dump` — конфиг валиден ✓; бэкап исходного конфига сделан ✓.
+2. `systemctl restart containerd` — **без потерь**: контейнеров до/после 116✓, узел `Ready` сразу ✓,
+   продуктивные поды не пострадали (98 Running, 7 «прочих» — как и до).
+3. Создан RuntimeClass `nvidia` (handler `nvidia`).
+4. Проверка: job с `runtimeClassName: nvidia` + CUDA-образ llama.cpp (`sha256:0283744a…`):
+   `--list-devices` → **`CUDA0/CUDA1: Quadro RTX 4000 (7785 MiB)`** (и GTX 1050 как CUDA2) ✓.
+5. **Реальный GPU-инференс**: реальная LLM с HF (291.5 МБ) → bundle с CUDA-движком → тест:
+   вердикт **`Needs review`**, решение **`block`**, аттестация **`sha256:f05642d9…`** ✓.
+   Внутри контейнера движка: `nvidia-smi -L` → 2× RTX 4000, в `/proc/1/maps` — `libcuda` ✓,
+   образ содержит `libggml-cuda.so` ✓.
 
-```bash
-# на узле: добавить handler (аналог прежнего microk8s-шаблона)
-sudo tee /etc/containerd/conf.d/99-nvidia.toml >/dev/null <<'TOML'
-[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
-  runtime_type = 'io.containerd.runc.v2'
-  [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
-    BinaryName = '/usr/bin/nvidia-container-runtime'
-TOML
-sudo systemctl restart containerd        # контейнеры не убиваются (shims переживают), пауза ~5–10 c
-# затем RuntimeClass nvidia -> наши GPU-задачи с runtimeClassName=nvidia (LLM_TEST_RUNTIME_CLASS=nvidia)
-```
-
-После этого включаем: `MLSCAN_GPU_MODE=device-plugin` (или runtimeClass) и прогоняем GPU-инференс
-(в тесте он уже проходил на CPU: вердикт `Needs review`, `block`, аттестация ✓).
+Настройки нашего сервиса: `MLSCAN_GPU_MODE=runtime`, `LLM_TEST_RUNTIME_CLASS=nvidia`,
+`LLM_TEST_GPU=1`, `LLM_TEST_NS=mlscan-gpu` (в этом namespace разрешены runtime-задачи GPU; hostPath
+больше не нужен). Опционально позже: device-plugin (`nvidia.com/gpu` как планируемый ресурс) — теперь он
+заведётся, т.к. runtime даёт `NVML`; и `kata-btf` для in-guest eBPF.
 
 ## 5. Блокер: доставка образа песочницы (dynamic/behavior)
 

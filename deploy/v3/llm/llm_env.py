@@ -317,7 +317,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                             + ([{"name": "s3client", "configMap": {"name": s3_client_configmap}}]
                                if (model_key and s3_env) else [])) 
                            + ([{"name": "dev", "hostPath": {"path": "/dev"}}]
-                              if (gpu and gpu_mode != "cdi") else [])
+                              if (gpu and gpu_mode == "hostdev") else [])
                            + ([{"name": "cudalibs", "hostPath": {"path": "/usr/lib/x86_64-linux-gnu"}}]
                               if (gpu and gpu_mode == "hostdev") else [])
                            + ([{"name": "ebpf", "configMap": {"name": ebpf_configmap}}]
