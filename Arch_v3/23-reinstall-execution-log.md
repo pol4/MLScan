@@ -80,15 +80,23 @@ NodePort-сервисы); платформенные компоненты дру
 `…@sha256:eabc4819…` (локального реестра нет, а Harbor — единственный доверенный containerd реестр).
 Следствие: скан выполняется в статике, **dynamic/behavior неполные**.
 
-**Решение (нужны ваши действия):** создать в Harbor проект `mlscan` и робот-аккаунт с правами push/pull
-(или дать существующие креды). Далее:
+**Решение (нужны ваши действия):** реестр MLScan — **отдельный ресурс**, а не проект в реестре
+стенда AISandBox `192.168.20.116:30003` (у него свой жизненный цикл, пересборки и приёмка). Варианты:
+общий корпоративный **farm-Harbor `192.168.20.254:30003`** (проверено: `401` + Bearer `harbor-registry`,
+TLS от внутреннего `harbor-ca`; доступен с АРМ и с узла) либо собственный Harbor MLScan с S3-бэкендом.
+Нужны: проект `mlscan`, robot-креды, решение по владельцу/квотам/retention. Далее:
 
 ```bash
-# на узле (или через skopeo/ctr с креды-файлом)
-sudo ctr -n k8s.io images push --user <robot>:<secret> 192.168.20.116:30003/mlscan/sandbox:2026-10-29 \
-     localhost:32000/mlscan-sandbox:latest
+# 1) доверие CA на узле (пример для farm-Harbor)
+sudo install -D /dev/null /etc/containerd/certs.d/192.168.20.254:30003/hosts.toml
+#    hosts.toml: server = "https://192.168.20.254:30003"
+#                [host."https://192.168.20.254:30003"] ca = "/etc/containerd/certs.d/192.168.20.254:30003/ca.crt"
+sudo install -m 0644 ca.crt /etc/containerd/certs.d/192.168.20.254:30003/ca.crt
+# 2) push образа по digest (креды — из Secret/файла, не в истории команд)
+sudo ctr -n k8s.io images push --user "$ROBOT:$SECRET" \
+     192.168.20.254:30003/mlscan/sandbox:2026-10-29 localhost:32000/mlscan-sandbox:kb1
 kubectl -n mlscan-testing set env deploy/mlscan-testing \
-     SANDBOX_IMAGE=192.168.20.116:30003/mlscan/sandbox@sha256:<push-digest>
+     SANDBOX_IMAGE=192.168.20.254:30003/mlscan/sandbox@sha256:<push-digest>
 ```
 
 Аналогично — `mlscan/ebpf-agent` (для сенсора, когда включим eBPF) и, при необходимости, зеркалирование
@@ -96,8 +104,14 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
 
 ## 6. Следующие шаги
 
-1. Harbor: проект + робот-креды → push `sandbox` (и `ebpf-agent`) → вернуть digest-pinning и
-   **включить dynamic/behavior** (полные сканы).
+1. **Реестр MLScan — отдельный ресурс** (решено не делить с реестром стенда AISandBox
+   `192.168.20.116:30003`: свой жизненный цикл/пересборки/приёмка). Вариант: общий корпоративный
+   реестр (farm-Harbor `192.168.20.254:30003`, проверено: отвечает `401` + Bearer `harbor-registry`,
+   TLS от внутреннего `harbor-ca`) либо собственный Harbor MLScan. Нужно: проект `mlscan` + robot-креды,
+   решение по владельцу/квотам/retention; затем `ca.crt` + `hosts.toml` в `/etc/containerd/certs.d/`
+   на узлах, push `sandbox`/`ebpf-agent`/`device-plugin` по digest → вернуть digest-pinning.
+   До появления кредов сканы работают через локальный образ (импорт + тег `:kb1`) — dynamic/behavior уже
+   включены (см. §5).
 2. GPU: **согласовать runtime-хендлер `nvidia`** (см. §4) → RuntimeClass → LLM-тесты на CUDA-движке
    `ghcr.io/ggml-org/llama.cpp@sha256:0283744a…`.
 3. eBPF: отдельный `kata-btf` (config + runtime-хендлер) либо согласованная правка Kata-конфига →
