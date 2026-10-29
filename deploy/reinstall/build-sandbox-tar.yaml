@@ -1,0 +1,25 @@
+# Сборка образа песочницы (python3.12-slim + зависимости harness) без реестра:
+# kaniko --no-push --tar-path -> tar пишется на hostPath узла, затем ctr images import.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: build-sandbox-tar, namespace: mlscan-gpu}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:v1.23.2
+        args:
+        - "--context=dir:///ctx"
+        - "--dockerfile=Dockerfile"
+        - "--no-push"
+        - "--tar-path=/host/sandbox.tar"
+        - "--destination=192.168.20.116:32000/mlscan-sandbox:kb1"
+        - "--skip-tls-verify"
+        volumeMounts: [{name: ctx, mountPath: /ctx, readOnly: true}, {name: host, mountPath: /host}]
+      volumes:
+      - {name: ctx, configMap: {name: mlscan-sandbox-dockerfile}}
+      - {name: host, hostPath: {path: /tmp/mlscan-images, type: DirectoryOrCreate}}

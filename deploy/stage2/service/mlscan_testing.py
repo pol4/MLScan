@@ -1461,6 +1461,52 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
                                      for m in ("static", "dynamic", "behavior")}})
 
 
+def _s3_download_to(key: str, path: str, attempts: int = 3) -> None:
+    """Скачивание объекта из S3 в локальный файл с повторами.
+
+    Разовые таймауты S3 (Garage) приводили к ложному `error` скана; повтор делает
+    материализацию устойчивой. Файл перезаписывается с начала на каждой попытке.
+    """
+    last: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            st, _hd, resp = _s3.get_stream(key)
+            if st != 200:
+                raise RuntimeError(f"get_stream {st}")
+            with open(path, "wb") as fh:
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if i + 1 < attempts:
+                time.sleep(1.5 * (i + 1))
+    raise RuntimeError(f"S3 get_stream ({attempts} попытки): {type(last).__name__}: {last}")
+
+
+def _record_model_profile(scan_id: str, name: str, fmt: str, size: int, path: str) -> None:
+    """L0: записать профиль модели по локальной копии артефакта (direct-загрузка).
+
+    Вызывается после материализации: до этого объект лежит только в S3, локальной копии нет.
+    """
+    if v3classifier is None or not DB_ENABLED:
+        return
+    rec = load_scan(scan_id) or {}
+    if (rec.get("kind") or "model") != "model" or not rec.get("sha256"):
+        return
+    try:
+        prof = _classify_and_record(name, fmt, size, "", path=path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[testing] {scan_id}: классификация профиля не удалась: "
+              f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return
+    if prof is not None:
+        _upsert_model_profile(rec["sha256"], prof, "auto")
+
+
 def _materialize_and_scan(scan_id: str, name: str, fmt: str, key: str, size: int) -> None:
     """Прямая загрузка (P0-2): при размере в пределах лимита — локальная копия и
     обычный анализ; иначе (ТБ-объекты) — честный Inconclusive до потокового анализа (P1-6)."""
@@ -1469,15 +1515,8 @@ def _materialize_and_scan(scan_id: str, name: str, fmt: str, key: str, size: int
         tmp = os.path.join(DATA_TMP, "up-" + scan_id + "-" + name)
         try:
             os.makedirs(DATA_TMP, exist_ok=True)
-            st, hd, resp = _s3.get_stream(key)
-            if st != 200:
-                raise RuntimeError(f"get_stream {st}")
-            with open(tmp, "wb") as fh:
-                while True:
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
+            _s3_download_to(key, tmp)
+            _record_model_profile(scan_id, name, fmt, size, tmp)
             process_scan(scan_id, name, fmt, tmp)
             return
         except Exception as exc:  # noqa: BLE001
@@ -1486,7 +1525,15 @@ def _materialize_and_scan(scan_id: str, name: str, fmt: str, key: str, size: int
     # Крупный объект: потоковая статика по префиксу (P1-6) — без полной загрузки.
     prefix_bytes = int(os.environ.get("STATIC_PREFIX_BYTES", str(64 * 1024 ** 2)))
     try:
-        blob = _s3.read_prefix(key, min(prefix_bytes, size))
+        blob = None
+        for _i in range(3):
+            try:
+                blob = _s3.read_prefix(key, min(prefix_bytes, size))
+                break
+            except Exception:  # noqa: BLE001
+                if _i == 2:
+                    raise
+                time.sleep(1.5 * (_i + 1))
         tmp = os.path.join(DATA_TMP, "pfx-" + scan_id + "-" + name)
         os.makedirs(DATA_TMP, exist_ok=True)
         with open(tmp, "wb") as fh:
@@ -2073,8 +2120,8 @@ class Handler(BaseHTTPRequestHandler):
         info["upload_id"] = uid
         _save_session(info, "completed")
         pipe_add(0.0, round(time.monotonic() - t0, 3), 0.0, size, True)
-        if prof is not None:
-            _upsert_model_profile(sha, prof, "manual" if fam_hint else "auto")
+        # Профиль модели (L0) записывается после материализации локальной копии — см.
+        # _record_model_profile внутри _materialize_and_scan (здесь объекта ещё нет локально).
         _tid = _enqueue_scan_task(rec, getattr(self, "_subject", ""))
         save_scan(rec)
         threading.Thread(target=_run_direct_with_task,
