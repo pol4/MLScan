@@ -9,6 +9,11 @@
  *   7) не-LLM примеры: реальный safetensors -> вердикт; реальный архив (zip) -> вердикт;
  *   8) API-проверки: сенсор (sensor_events), CI-gate, цепочка вердиктов (/v3/evidence/verify).
  *
+ * ВНИМАНИЕ: сценарий писался под прежнюю структуру UI (отдельная вкладка «Тест bundle»).
+ * После перестройки интерфейса (разделы Сканы/Загрузка/Настройки/Администрирование, тест запускается
+ * из карточки артефакта) актуальный UI-тест — tests/ui/ui_smoke_e2e.js; этот файл сохранён как
+ * расширенный сценарий для доработки (шаги кликов по вкладке «Тест bundle» в нём устарели).
+ *
  * Требует: реальные фикстуры в /tmp (tests/e2e/make_fixtures.sh), HF-egress, свободный GPU (или CPU-движок).
  * Запуск: MLSCAN_API_KEY=<adm> MLSCAN_TESTING_URL=http://localhost:18080 node tests/ui/full_browser_e2e.js
  */
@@ -17,11 +22,11 @@ const fs = require('fs'), os = require('os'), path = require('path'), http = req
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer-core');
 
-const BASE = process.env.MLSCAN_UI_URL || 'http://analytics.mlscan.local:30217';
+const BASE = process.env.MLSCAN_UI_URL || 'http://analytics.mlscan.local:31110';
 const USER = process.env.MLSCAN_UI_USER || 'admin', PASS = process.env.MLSCAN_UI_PASS || 'Admin-MLScan-1';
-const ENGINE_CUDA = 'sha256:1fa7f8f0ca663fdcf3203dc125a7e0b5c9e49c9ed054b049599666cd7e300eb0';
-const ENGINE_CPU = 'sha256:b51c252687249a6990ae1c168156cb215c954bfd71f9c434eda9a065b1a40dbe';
-const ENGINE_REF = process.env.MLSCAN_ENGINE_REF || 'ghcr.io/ggml-org/llama.cpp';
+const ENGINE_CUDA = process.env.MLSCAN_ENGINE_CUDA || 'sha256:d854233e9f043046f363953047ff518a9792b044cea1d53f86d299e88344cd5f';
+const ENGINE_CPU = process.env.MLSCAN_ENGINE_CPU || 'sha256:c7c0216b2fb8b4e791c1db56f645ea789985347aa79a865030f4b66bd8cf42ae';
+const ENGINE_REF = process.env.MLSCAN_ENGINE_REF || '192.168.20.254:30003/mlscan/llama-cpp';
 const HF_REPO = process.env.MLSCAN_HF_REPO || 'unsloth/gemma-3-270m-it-GGUF';
 const HF_QUERY = process.env.MLSCAN_HF_QUERY || 'gemma-3-270m-it-GGUF';
 const GGUF = process.env.MLSCAN_GGUF || '/tmp/gemma-3-270m-it-Q8_0.gguf';
@@ -72,8 +77,14 @@ function stopPortForward() { if (pf) { try { pf.kill('SIGTERM'); } catch (e) {} 
 (async () => {
   const fails = [], steps = [], bad = [];
   const step = (s) => { steps.push(s); console.log('[e2e] ' + s); };
+  // MLSCAN_HOST_MAP="s3.mlscan.local=192.168.20.116[,host2=ip2]" — резолвинг внешних имён стенда
+  // (браузеру нужен адрес S3 NodePort, т.к. DNS-зоны стенда на АРМ может не быть).
+  const hostMap = (process.env.MLSCAN_HOST_MAP || '').split(',').map(s => s.trim()).filter(Boolean)
+    .map(pair => 'MAP ' + pair.split('=')[0] + ' ' + pair.split('=')[1]).join(',');
+  const launchArgs = ['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors'];
+  if (hostMap) launchArgs.push('--host-resolver-rules=' + hostMap);
   const browser = await puppeteer.launch({ executablePath: chrome(), headless: 'new',
-    protocolTimeout: 3600000, args: ['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors'] });
+    protocolTimeout: 3600000, args: launchArgs });
   const page = await browser.newPage();
   page.setDefaultTimeout(90000);
   page.on('response', (r) => { const u = r.url(); if (r.status() >= 400 && !/favicon\.ico$/.test(u)) bad.push(r.status() + ' ' + u); });
