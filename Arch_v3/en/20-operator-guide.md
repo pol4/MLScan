@@ -8,10 +8,23 @@ safetensors, archive).
 
 | Item | Value |
 |---|---|
-| UI (HTTP/HTTPS) | `http://analytics.mlscan.local:30217` / `https://analytics.mlscan.local:30921` (self-signed) |
-| Logins | `admin / Admin-MLScan-1`, `analyst / Analyst-MLScan-1` |
+| UI (HTTP) | `http://analytics.mlscan.local:31110` (analytics NodePort on the current stand) |
 | Testing API | `http://mlscan-testing.mlscan-testing.svc.cluster.local:8080` (in-cluster) |
+| S3 (public, browser) | `http://s3.mlscan.local:31317` (NodePort → Garage; add a hosts entry on the workstation) |
+| Image registry | farm-Harbor `192.168.20.254:30003`, project `mlscan` (sandbox/engine images **by digest**) |
+| Logins | `admin / Admin-MLScan-1`, `analyst / Analyst-MLScan-1` |
 | API keys | Secret `mlscan-keys` (roles `admin` / `ci` / `svc`) |
+
+> The stand was rebuilt on kubeadm + Kube-OVN; the UI is served via **NodePort 31110** and browser S3 access
+> goes through NodePort **31317**. In-cluster clients (CI, tests inside a pod) get presigned URLs pointing to
+> the internal S3 address via `POST /uploads/initiate {"internal": true}` and
+> `GET /uploads/<id>/parts?internal=1`.
+
+| Item | Value (stand infrastructure) |
+|---|---|
+| Scan job runtime | `kata-btf` (Kata with debug kernel → BTF → in-guest eBPF), namespace `mlscan-sandbox-ebpf` |
+| LLM inference runtime | `nvidia` (containerd handler, GPU without device-plugin), namespace `mlscan-gpu` |
+| Sandbox image | `192.168.20.254:30003/mlscan/sandbox@sha256:…` (pulled via imagePullSecret `mlscan-registry-creds`) |
 
 ## 1. What can be checked
 

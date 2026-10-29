@@ -8,11 +8,23 @@
 
 | Что | Значение |
 |---|---|
-| Интерфейс (HTTP) | `http://analytics.mlscan.local:30217` |
-| Интерфейс (HTTPS) | `https://analytics.mlscan.local:30921` (самоподписанный сертификат) |
-| Логины | `admin / Admin-MLScan-1` (полные права), `analyst / Analyst-MLScan-1` (загрузка и просмотр) |
+| Интерфейс (HTTP) | `http://analytics.mlscan.local:31110` (NodePort аналитики на текущем стенде) |
 | API сервиса тестирования | `http://mlscan-testing.mlscan-testing.svc.cluster.local:8080` (внутри кластера) |
+| S3 (публичный адрес для браузера) | `http://s3.mlscan.local:31317` (NodePort → Garage; при работе с АРМ нужна запись в hosts) |
+| Реестр образов | farm-Harbor `192.168.20.254:30003`, проект `mlscan` (образы песочницы/движков — **по digest**) |
+| Логины | `admin / Admin-MLScan-1` (полные права), `analyst / Analyst-MLScan-1` (загрузка и просмотр) |
 | API-ключи | Secret `mlscan-keys` (роли `admin` / `ci` / `svc`) |
+
+> Текущий стенд пересобран на kubeadm + Kube-OVN; UI отдаётся **NodePort 31110**, S3 для браузера —
+> NodePort **31317** (`s3.mlscan.local` нужно добавить в `/etc/hosts` АРМ, если DNS не настроен).
+> Внутренние клиенты (CI, тесты в поде) получают presigned-URL на внутренний адрес через
+> `POST /uploads/initiate {"internal": true}` и `GET /uploads/<id>/parts?internal=1`.
+
+| Что | Значение (инфраструктура стенда) |
+|---|---|
+| Runtime скан-джоб | `kata-btf` (Kata с debug-ядром → BTF → in-guest eBPF), namespace `mlscan-sandbox-ebpf` |
+| Runtime LLM-инференса | `nvidia` (containerd handler, GPU без device-plugin), namespace `mlscan-gpu` |
+| Образ песочницы | `192.168.20.254:30003/mlscan/sandbox@sha256:…` (pull по imagePullSecret `mlscan-registry-creds`) |
 
 ## 1. Что можно проверять
 
