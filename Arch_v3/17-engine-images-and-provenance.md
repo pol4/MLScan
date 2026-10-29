@@ -150,6 +150,37 @@ graph LR
 - Запрещены теги и внешние реестры в рантайме; pull-through кэш — только для импорта, не для запуска.
 - Изоляция тенантов: отдельные проекты/namespace реестра; RBAC на push/pull; аудит операций импорта.
 
+## 9‑pre. Реестр MLScan активирован (farm-Harbor, 2026-10-29)
+
+Внутренний реестр MLScan включён в работу на **farm-Harbor `192.168.20.254:30003`** (Harbor v2.11.0),
+**проект `mlscan` (private)** — не в реестре стенда приёмки AISandBox.
+
+| Параметр | Значение / как сделано |
+|---|---|
+| Проект | `mlscan`, private, квота **50 GiB**, retention «хранить последние 10 тегов», ежедневно |
+| Robot | `robot$mlscan+ci` — права **pull + push** только в `mlscan`, без срока истечения (секрет — в Secret `mlscan-registry-creds`, вне git) |
+| CA | скачан `http://192.168.20.254:8899/aisandbox-farm-harbor-ca.crt` (`CN=harbor-ca`); на узле: `/usr/local/share/ca-certificates/…` + `update-ca-certificates` **и** `/etc/containerd/certs.d/192.168.20.254:30003/{ca.crt,hosts.toml}` (для CRI/kubelet) |
+| Креды pull | imagePullSecret `mlscan-registry-creds` привязан к SA `default` в `mlscan-sandbox`, `mlscan-gpu`, `mlscan-testing`, `mlscan-build` |
+| Образы | `mlscan/sandbox:2026-10-29` (`sha256:2daad033…`), `mlscan/llama-cpp:cuda` (`sha256:d854233e…`), `mlscan/llama-cpp:cpu` (`sha256:c7c0216b…`), `mlscan/nvidia-device-plugin:v0.17.0` |
+| Пиннинг | `SANDBOX_IMAGE` и движок bundle заданы **по digest** из Harbor — вернулись к целевой схеме «только digest» |
+
+Проверено сквозным прогоном:
+
+* скан pickle: песочный образ **скачан kubelet'ом из Harbor по digest** → вердикт `Malicious`, покрытие
+  `complete` (static+dynamic+behavior), находка `F-30`;
+* LLM-тест bundle: движок `192.168.20.254:30003/mlscan/llama-cpp@sha256:d854233e…`, `runtimeClassName: nvidia`
+  → вердикт `Needs review` / `block`, подписанная аттестация `sha256:64733001…`.
+
+Операционные заметки (проверено на практике):
+
+* `ctr images push` **не использует** CRI-шный `/etc/containerd/certs.d` по умолчанию — нужен
+  `--hosts-dir /etc/containerd/certs.d` либо системное доверие CA;
+* зеркалирование из публичных реестров (ghcr) в Harbor выполняется `skopeo copy` (`ctr push` удалённого
+  digest-образа падает `blob unknown to registry`);
+* admin-креды Harbor использованы **только** для создания проекта/robot'а и квоты/retention; сервисы
+  работают под robot'ом;
+* осталось: **rotation** секрета robot'а по регламенту, cosign/SBOM-подпись и admission по подписи (§9).
+
 ## 9a. Выбор реестра: отдельный ресурс, не реестр стенда AISandBox
 
 **Решение:** внутренний реестр MLScan — **отдельный ресурс**, а не проект внутри реестра стенда

@@ -104,14 +104,13 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
 
 ## 6. Следующие шаги
 
-1. **Реестр MLScan — отдельный ресурс** (решено не делить с реестром стенда AISandBox
-   `192.168.20.116:30003`: свой жизненный цикл/пересборки/приёмка). Вариант: общий корпоративный
-   реестр (farm-Harbor `192.168.20.254:30003`, проверено: отвечает `401` + Bearer `harbor-registry`,
-   TLS от внутреннего `harbor-ca`) либо собственный Harbor MLScan. Нужно: проект `mlscan` + robot-креды,
-   решение по владельцу/квотам/retention; затем `ca.crt` + `hosts.toml` в `/etc/containerd/certs.d/`
-   на узлах, push `sandbox`/`ebpf-agent`/`device-plugin` по digest → вернуть digest-pinning.
-   До появления кредов сканы работают через локальный образ (импорт + тег `:kb1`) — dynamic/behavior уже
-   включены (см. §5).
+1. ~~Реестр~~ **СДЕЛАНО**: farm-Harbor `192.168.20.254:30003`, проект `mlscan` (private, quota 50 GiB,
+   retention last-10/daily), robot `robot$mlscan+ci` (push/pull), CA на узле (system + certs.d),
+   imagePullSecret на SA `default` в четырёх namespace; опубликованы `mlscan/sandbox:2026-10-29`,
+   `mlscan/llama-cpp:cuda|cpu`, `mlscan/nvidia-device-plugin:v0.17.0`. Сканы идут **по digest из Harbor**
+   (проверено: `Malicious` + complete coverage; GPU-тест движка из Harbor → `Needs review`/`block` +
+   аттестация `sha256:64733001…`). Подробности — `17-engine-images-and-provenance.md` §9-pre.
+   Осталось: rotation секрета robot'а, cosign/SBOM.
 2. GPU: **согласовать runtime-хендлер `nvidia`** (см. §4) → RuntimeClass → LLM-тесты на CUDA-движке
    `ghcr.io/ggml-org/llama.cpp@sha256:0283744a…`.
 3. eBPF: отдельный `kata-btf` (config + runtime-хендлер) либо согласованная правка Kata-конфига →
