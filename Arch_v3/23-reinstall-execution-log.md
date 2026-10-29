@@ -113,8 +113,8 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
    Осталось: rotation секрета robot'а, cosign/SBOM.
 2. GPU: **согласовать runtime-хендлер `nvidia`** (см. §4) → RuntimeClass → LLM-тесты на CUDA-движке
    `ghcr.io/ggml-org/llama.cpp@sha256:0283744a…`.
-3. eBPF: отдельный `kata-btf` (config + runtime-хендлер) либо согласованная правка Kata-конфига →
-   включить `SANDBOX_EBPF=1`/`LLM_TEST_EBPF=1` (все пять правил `LLM-B-*`).
+3. ~~eBPF~~ **СДЕЛАНО (стенд)**: Kata с debug-ядром (BTF в госте) через отдельный runtime-хендлер `kata-btf` (drop-in `98-kata-btf.toml` + `configuration-qemu-btf.toml`), RuntimeClass `kata-btf`, namespace `mlscan-sandbox-ebpf` (PSA privileged) с netpol/RBAC/CM/sinkhole; в сервисе включены `SANDBOX_EBPF=1`, `SANDBOX_RUNTIME_CLASS=kata-btf`, `SANDBOX_EBPF_NS=mlscan-sandbox-ebpf`.
+   Проверено: скан pickle → **Malicious**, покрытие **complete**, in-guest события **LLM-B-01** (execve `sh`) и **LLM-B-03** (openat `/etc/passwd`) + harness-находка **F-30**. Воспроизводимость: `deploy/reinstall/node-kata-btf.txt`, `deploy/reinstall/ebpf-sandbox-namespace.json`. Осталось: LLM-тест bundle с `LLM_TEST_EBPF=1` и прогон e2e-скриптов сенсора.
 4. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
 5. Прогнать полный набор `tests/v3` + e2e + скриншотный UI-тест; обновить `Arch_v3/20-operator-guide.md`
    (адреса: UI NodePort 31110 на этом стенде).
