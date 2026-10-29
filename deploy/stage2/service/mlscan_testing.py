@@ -104,7 +104,13 @@ LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-test
 IMAGES_REQUIRE_SIGNED = os.environ.get("IMAGES_REQUIRE_SIGNED", "0") == "1"   # B4-lite: политика подписи
 LLM_TEST_EBPF = os.environ.get("LLM_TEST_EBPF", "0") == "1"      # B1: in-guest eBPF-агент в job'е теста
 SANDBOX_EBPF = os.environ.get("SANDBOX_EBPF", "0") == "1"        # B1: in-guest eBPF-агент в скан-джобах
+# B1: runtime для скан-джоб; "kata-btf" — Kata с debug-ядром (BTF в госте) для eBPF-сенсора.
+SANDBOX_RUNTIME_CLASS = os.environ.get("SANDBOX_RUNTIME_CLASS", "kata")
 SANDBOX_EBPF_TRIGGER = os.environ.get("SANDBOX_EBPF_TRIGGER", "0") == "1"
+# B1: при in-guest eBPF-сенсоре скан-джоба запускается в namespace с privileged PSA
+# (сенсору нужны root в госте и CAP_BPF/CAP_PERFMON; изоляция обеспечивается микро-ВМ Kata).
+if SANDBOX_EBPF:
+    SANDBOX_NS = os.environ.get("SANDBOX_EBPF_NS", SANDBOX_NS)
 EBPF_AGENT_CM = os.environ.get("EBPF_AGENT_CM", "mlscan-ebpf-agent")
 DETECTORS_VERSION = os.environ.get("MLSCAN_DETECTORS_VERSION", "det-1")
 # H1: Hugging Face (HF_MOCK=1 — встроенный mock-сервер для hermetic-тестов; иначе реальный HF)
@@ -983,21 +989,42 @@ _SCANS_TTL = 30.0   # кэш списка сканов; сбрасывается
 # ----------------------------------------------------------------------------
 # Kubernetes API
 # ----------------------------------------------------------------------------
-def k8s(method: str, path: str, body: dict | None = None, expect_json: bool = True):
-    conn = http.client.HTTPSConnection(K8S_HOST, int(K8S_PORT), context=_ssl_ctx, timeout=30)
+def k8s(method: str, path: str, body: dict | None = None, expect_json: bool = True,
+        attempts: int = 3, timeout: int = 30):
+    """Запрос к API-серверу с повторами на транспортных сбоях.
+
+    На стенде API-сервер под нагрузкой иногда не отвечает за 30 с (`TimeoutError`), из-за чего
+    скан падал в `error` (создание job'а/чтение логов). Повторяем только транспортные ошибки и
+    таймауты; HTTP-ответы (403/404/409/…) пробрасываем сразу. Создание job'а идемпотентно по имени:
+    409 (AlreadyExists) считаем успехом.
+    """
     data = json.dumps(body).encode() if body is not None else None
-    headers = {"Authorization": f"Bearer {_token}", "Accept": "application/json"}
-    if data:
-        headers["Content-Type"] = "application/json"
-    conn.request(method, path, body=data, headers=headers)
-    resp = conn.getresponse()
-    raw = resp.read()
-    conn.close()
-    if resp.status >= 400:
-        raise RuntimeError(f"k8s {method} {path} -> {resp.status}: {raw[:300]!r}")
-    if not raw:
-        return None
-    return json.loads(raw) if expect_json else raw
+    last: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            conn = http.client.HTTPSConnection(K8S_HOST, int(K8S_PORT), context=_ssl_ctx,
+                                              timeout=timeout)
+            headers = {"Authorization": f"Bearer {_token}", "Accept": "application/json"}
+            if data:
+                headers["Content-Type"] = "application/json"
+            conn.request(method, path, body=data, headers=headers)
+            resp = conn.getresponse()
+            raw = resp.read()
+            conn.close()
+            if resp.status == 409 and method in ("POST", "PATCH", "PUT"):
+                return None
+            if resp.status >= 400:
+                raise RuntimeError(f"k8s {method} {path} -> {resp.status}: {raw[:300]!r}")
+            if not raw:
+                return None
+            return json.loads(raw) if expect_json else raw
+        except RuntimeError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if i + 1 < attempts:
+                time.sleep(1.0 * (i + 1))
+    raise RuntimeError(f"k8s {method} {path} -> {type(last).__name__}: {last}")
 
 
 # ----------------------------------------------------------------------------
@@ -1150,7 +1177,7 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
             "template": {
                 "metadata": {"labels": {"app": "mlscan-sandbox"}},
                 "spec": {
-                    "runtimeClassName": "kata",
+                    "runtimeClassName": SANDBOX_RUNTIME_CLASS,
                     "automountServiceAccountToken": False,
                     "restartPolicy": "Never",
                     "securityContext": ({"fsGroup": 65532, "seccompProfile": {"type": "RuntimeDefault"}}
@@ -1277,8 +1304,22 @@ def run_sandbox(scan_id: str, name: str, fmt: str, artifact_url: str) -> dict:
     pod = pod_for_job(job)
     if pod:
         try:
-            logs = k8s("GET", f"/api/v1/namespaces/{SANDBOX_NS}/pods/{pod}/log?timestamps=false",
-                       expect_json=False)
+            # B1: в поде с eBPF-сенсором контейнеров два — kubelet требует явное имя.
+            cname = ""
+            try:
+                pd = k8s("GET", f"/api/v1/namespaces/{SANDBOX_NS}/pods/{pod}")
+                specs = ((pd or {}).get("spec") or {}).get("containers") or []
+                for c in specs:
+                    if c.get("name") in ("sandbox", "harness"):
+                        cname = c["name"]
+                        break
+                if not cname and specs:
+                    cname = specs[0].get("name", "")
+            except Exception:  # noqa: BLE001
+                cname = ""
+            sel_container = f"&container={urllib.parse.quote(cname)}" if cname else ""
+            logs = k8s("GET", f"/api/v1/namespaces/{SANDBOX_NS}/pods/{pod}/log"
+                              f"?timestamps=false{sel_container}", expect_json=False)
             if isinstance(logs, (bytes, bytearray)):
                 logs = logs.decode("utf-8", "replace")
         except Exception as exc:  # noqa: BLE001

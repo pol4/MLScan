@@ -1,0 +1,425 @@
+{
+  "apiVersion": "v1",
+  "kind": "Namespace",
+  "metadata": {
+    "labels": {
+      "app.kubernetes.io/part-of": "mlscan",
+      "kubernetes.io/metadata.name": "mlscan-sandbox-ebpf",
+      "pod-security.kubernetes.io/audit": "baseline",
+      "pod-security.kubernetes.io/enforce": "privileged",
+      "pod-security.kubernetes.io/warn": "baseline"
+    },
+    "name": "mlscan-sandbox-ebpf"
+  },
+  "spec": {
+    "finalizers": [
+      "kubernetes"
+    ]
+  }
+}
+---
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "allow-dns-egress",
+    "namespace": "mlscan-sandbox-ebpf"
+  },
+  "spec": {
+    "egress": [
+      {
+        "ports": [
+          {
+            "port": 53,
+            "protocol": "UDP"
+          },
+          {
+            "port": 53,
+            "protocol": "TCP"
+          }
+        ],
+        "to": [
+          {
+            "namespaceSelector": {},
+            "podSelector": {
+              "matchLabels": {
+                "k8s-app": "kube-dns"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "podSelector": {},
+    "policyTypes": [
+      "Egress"
+    ]
+  }
+}
+---
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "default-deny-all",
+    "namespace": "mlscan-sandbox-ebpf"
+  },
+  "spec": {
+    "podSelector": {},
+    "policyTypes": [
+      "Ingress",
+      "Egress"
+    ]
+  }
+}
+---
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "sandbox-to-sinkhole",
+    "namespace": "mlscan-sandbox-ebpf"
+  },
+  "spec": {
+    "egress": [
+      {
+        "to": [
+          {
+            "podSelector": {
+              "matchLabels": {
+                "app": "sinkhole"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "podSelector": {
+      "matchLabels": {
+        "app": "mlscan-sandbox"
+      }
+    },
+    "policyTypes": [
+      "Egress"
+    ]
+  }
+}
+---
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "sandbox-to-testing-artifacts",
+    "namespace": "mlscan-sandbox-ebpf"
+  },
+  "spec": {
+    "egress": [
+      {
+        "ports": [
+          {
+            "port": 8090,
+            "protocol": "TCP"
+          },
+          {
+            "port": 8080,
+            "protocol": "TCP"
+          }
+        ],
+        "to": [
+          {
+            "namespaceSelector": {
+              "matchLabels": {
+                "kubernetes.io/metadata.name": "mlscan-testing"
+              }
+            },
+            "podSelector": {
+              "matchLabels": {
+                "app": "mlscan-testing"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "podSelector": {
+      "matchLabels": {
+        "app": "mlscan-sandbox"
+      }
+    },
+    "policyTypes": [
+      "Egress"
+    ]
+  }
+}
+---
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "sinkhole-ingress",
+    "namespace": "mlscan-sandbox-ebpf"
+  },
+  "spec": {
+    "ingress": [
+      {
+        "from": [
+          {
+            "podSelector": {
+              "matchLabels": {
+                "app": "mlscan-sandbox"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "podSelector": {
+      "matchLabels": {
+        "app": "sinkhole"
+      }
+    },
+    "policyTypes": [
+      "Ingress"
+    ]
+  }
+}
+---
+{
+  "apiVersion": "rbac.authorization.k8s.io/v1",
+  "kind": "Role",
+  "metadata": {
+    "name": "mlscan-testing-sandbox-ebpf",
+    "namespace": "mlscan-sandbox-ebpf"
+  },
+  "rules": [
+    {
+      "apiGroups": [
+        ""
+      ],
+      "resources": [
+        "configmaps"
+      ],
+      "verbs": [
+        "create",
+        "delete",
+        "get",
+        "list"
+      ]
+    },
+    {
+      "apiGroups": [
+        ""
+      ],
+      "resources": [
+        "pods"
+      ],
+      "verbs": [
+        "get",
+        "list"
+      ]
+    },
+    {
+      "apiGroups": [
+        ""
+      ],
+      "resources": [
+        "pods/log"
+      ],
+      "verbs": [
+        "get"
+      ]
+    },
+    {
+      "apiGroups": [
+        "batch"
+      ],
+      "resources": [
+        "jobs"
+      ],
+      "verbs": [
+        "create",
+        "get",
+        "delete",
+        "list"
+      ]
+    }
+  ]
+}
+---
+{
+  "apiVersion": "rbac.authorization.k8s.io/v1",
+  "kind": "RoleBinding",
+  "metadata": {
+    "name": "mlscan-testing-sandbox-ebpf",
+    "namespace": "mlscan-sandbox-ebpf"
+  },
+  "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "Role",
+    "name": "mlscan-testing-sandbox-ebpf"
+  },
+  "subjects": [
+    {
+      "kind": "ServiceAccount",
+      "name": "mlscan-testing",
+      "namespace": "mlscan-testing"
+    }
+  ]
+}
+---
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "labels": {
+      "app": "sinkhole",
+      "app.kubernetes.io/part-of": "mlscan"
+    },
+    "name": "sinkhole",
+    "namespace": "mlscan-sandbox-ebpf"
+  },
+  "spec": {
+    "progressDeadlineSeconds": 600,
+    "replicas": 1,
+    "revisionHistoryLimit": 10,
+    "selector": {
+      "matchLabels": {
+        "app": "sinkhole"
+      }
+    },
+    "strategy": {
+      "rollingUpdate": {
+        "maxSurge": "25%",
+        "maxUnavailable": "25%"
+      },
+      "type": "RollingUpdate"
+    },
+    "template": {
+      "metadata": {
+        "creationTimestamp": null,
+        "labels": {
+          "app": "sinkhole"
+        }
+      },
+      "spec": {
+        "automountServiceAccountToken": false,
+        "containers": [
+          {
+            "command": [
+              "python",
+              "/opt/sinkhole/server.py"
+            ],
+            "image": "python:3.12-slim",
+            "imagePullPolicy": "IfNotPresent",
+            "name": "sinkhole",
+            "ports": [
+              {
+                "containerPort": 8080,
+                "name": "http",
+                "protocol": "TCP"
+              },
+              {
+                "containerPort": 4444,
+                "name": "tcp-4444",
+                "protocol": "TCP"
+              },
+              {
+                "containerPort": 9001,
+                "name": "tcp-9001",
+                "protocol": "TCP"
+              },
+              {
+                "containerPort": 1337,
+                "name": "tcp-1337",
+                "protocol": "TCP"
+              }
+            ],
+            "resources": {
+              "limits": {
+                "cpu": "500m",
+                "memory": "256Mi"
+              },
+              "requests": {
+                "cpu": "50m",
+                "memory": "64Mi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "readOnlyRootFilesystem": true
+            },
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "volumeMounts": [
+              {
+                "mountPath": "/opt/sinkhole",
+                "name": "sinkhole",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              }
+            ]
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "runAsUser": 65532,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "terminationGracePeriodSeconds": 30,
+        "volumes": [
+          {
+            "configMap": {
+              "defaultMode": 420,
+              "name": "mlscan-sinkhole"
+            },
+            "name": "sinkhole"
+          },
+          {
+            "emptyDir": {
+              "sizeLimit": "32Mi"
+            },
+            "name": "tmp"
+          }
+        ]
+      }
+    }
+  }
+}
+---
+{
+  "apiVersion": "v1",
+  "data": {
+    "server.py": "import http.server, socketserver, threading, time\n\ndef log(*a):\n    print(\"[sinkhole]\", *a, flush=True)\n\nclass H(http.server.BaseHTTPRequestHandler):\n    def _handle(self):\n        log(\"HTTP\", self.command, self.path, \"from\", self.client_address[0],\n            \"ua=\", self.headers.get(\"User-Agent\"))\n        try:\n            n = int(self.headers.get(\"Content-Length\", \"0\") or \"0\")\n            if n:\n                log(\"  body:\", self.rfile.read(min(n, 2048))[:512])\n        except Exception:\n            pass\n        body = b\"mlscan-sinkhole\"\n        self.send_response(200)\n        self.send_header(\"Content-Length\", str(len(body)))\n        self.end_headers()\n        self.wfile.write(body)\n    do_GET = do_POST = do_PUT = do_DELETE = do_HEAD = _handle\n    def log_message(self, *a):\n        pass\n\nclass TCP(socketserver.BaseRequestHandler):\n    def handle(self):\n        log(\"TCP connect on\", self.server.server_address[1], \"from\", self.client_address[0])\n        try:\n            data = self.request.recv(256)\n            if data:\n                log(\"  data:\", data[:160])\n        except Exception:\n            pass\n\ndef serve_http():\n    http.server.ThreadingHTTPServer((\"0.0.0.0\", 8080), H).serve_forever()\n\ndef serve_tcp(port):\n    socketserver.ThreadingTCPServer((\"0.0.0.0\", port), TCP).serve_forever()\n\ndef main():\n    threading.Thread(target=serve_http, daemon=True).start()\n    for p in (4444, 9001, 1337):\n        threading.Thread(target=serve_tcp, args=(p,), daemon=True).start()\n    log(\"sinkhole up: http 8080, tcp 4444/9001/1337\")\n    while True:\n        time.sleep(3600)\n\nmain()\n"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "mlscan-sinkhole",
+    "namespace": "mlscan-sandbox-ebpf"
+  }
+}
+---
+{
+  "apiVersion": "v1",
+  "data": {
+    "ebpf_agent.py": "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n\"\"\"B1: минимальный in-guest eBPF-агент для наблюдения за инференсом (Kata + BTF-ядро).\n\nПишет реальные события из гостевой ВМ (без внешних зависимостей: только stdlib + ctypes):\n  * хук 1 — raw tracepoint `sys_enter`, syscall `execve`  → событие process_exec (бинарник/путь);\n  * хук 2 — raw tracepoint `sys_enter`, syscall `connect` → событие network (dst IP:port);\n  * хук 3 — raw tracepoint `sys_enter`, syscall `openat`  → событие file (путь).\n\nСобытия складываются в JSONL-файл (`--out`, общий том пода) и/или отправляются в сервис\nтестирования (`--post URL --key KEY --scan-id ID --nonce N`) на `/llm/events`, где маппятся\nв findings `LLM-B-*` (deploy/v3/llm/tetragon.py).\n\nОграничения: x86_64-гость, чтение user-памяти ограничено 64 байтами, счётчики в ARRAY-мапе\n(без ring-buffer) — этого достаточно для детекции факта и первого значения.\n\nЗапуск:\n  python3 ebpf_agent.py --out /events/ebpf.jsonl --duration 30 \\\n      --post http://mlscan-testing.mlscan-testing.svc:8080 --key <api-key> --scan-id s1 --nonce abc\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport ctypes as C\nimport json\nimport os\nimport struct\nimport subprocess\nimport sys\nimport time\n\n# --- BPF syscall/типы -------------------------------------------------------\nSYS_BPF = 321\nBPF_MAP_CREATE = 0\nBPF_MAP_LOOKUP_ELEM = 1\nBPF_PROG_LOAD = 5\nBPF_RAW_TRACEPOINT_OPEN = 17\n\nBPF_MAP_TYPE_ARRAY = 2\nBPF_PROG_TYPE_RAW_TRACEPOINT = 17\n\nLOG_SIZE = 1 << 16\nDUMP_NR = int(os.environ.get(\"EBPF_DUMP_NR\", \"-1\"))\nEXTRA = os.environ.get(\"EBPF_EXTRA\", \"1\") == \"1\"   # хуки mmap/mprotect/module/openat (LLM-B-03/04/05)\n# honeypot-подсказки — те же, что в правиле LLM-B-03 (deploy/v3/llm/tetragon.py); прочие openat не шлём\nHONEYPOT_HINTS = (\"/.aws/\", \"/.ssh/\", \"/.kube/\", \"/etc/shadow\", \"/etc/passwd\")\n# начала honeypot-путей для BPF-фильтра (сравнение первых 8 байт, выровнено по началу пути)\nHONEYPOT_PREFIX_8 = (b\"/etc/sha\", b\"/etc/pas\", b\"/root/.a\", b\"/home/.a\", b\"/root/.s\", b\"/root/.k\")\nif os.environ.get(\"EBPF_TEST_PREFIX\") == \"1\":      # отладочный набор (проверка механизма фильтра)\n    HONEYPOT_PREFIX_8 = (b\"/proc/ne\", b\"/etc/sha\")\n# BPF-фильтр honeypot по префиксу (сравнение первых 8 байт пути) — включён по умолчанию:\n# в кольцо попадают только значимые пути, шум файловой активности его не вымывает.\n# EBPF_HONEYPOT_FILTER=0 — отключить (тогда в кольцо пишутся все пути, фильтр работает в агенте).\nHONEYPOT_FILTER = os.environ.get(\"EBPF_HONEYPOT_FILTER\", \"1\") == \"1\"\nKEY_SIZE = 4\nVALUE_SIZE = 96                      # {u64 count; u32 pid; u32 pad; u64 argptr; u64 rv; u8 buf[64]}\n\n# Кодировки инструкций eBPF (см. include/uapi/linux/bpf.h)\nOP = {\n    \"ld_map_fd\": 0x18, \"ld_imm64\": 0x18, \"ldx_dw\": 0x79, \"ldx_w\": 0x61, \"stx_w\": 0x63,\n    \"stx_dw\": 0x7B, \"st_dw\": 0x7A, \"add_imm\": 0x07, \"mov_reg\": 0xBF, \"mov_imm\": 0xB7,\n    \"jeq_imm\": 0x15, \"jne_imm\": 0x55, \"jgt_imm\": 0x25, \"call\": 0x85, \"exit\": 0x95,\n    \"jsl_imm\": 0xC5,   # BPF_JMP | BPF_JSLT | BPF_K\n    \"and_imm\": 0x57,   # BPF_ALU64 | BPF_AND | BPF_K\n    \"jle_imm\": 0xB5,   # BPF_JMP | BPF_JLE | BPF_K\n    \"jeq_reg\": 0x1D,   # BPF_JMP | BPF_JEQ | BPF_X\n    \"ja\": 0x05,        # BPF_JMP | BPF_JA\n}\n# Номера syscall (x86_64)\nNR_EXECVE, NR_CONNECT, NR_OPENAT = 59, 42, 257\nNR_MMAP, NR_MPROTECT = 9, 10\nNR_INIT_MODULE, NR_FINIT_MODULE = 175, 313\n# слоты ARRAY-карты: 0=execve, 1=connect, 2=mmap, 3=mprotect, 4=init_module, 5=finit_module\nSLOT = {NR_EXECVE: 0, NR_CONNECT: 1, NR_MMAP: 2, NR_MPROTECT: 3, NR_INIT_MODULE: 4,\n        NR_FINIT_MODULE: 5, NR_OPENAT: 6}\n# offsets в struct pt_regs (x86_64): r15..r8, ax, cx, dx, si, di, orig_ax\n#   index: 0..9 (r15..r8), 10=ax(80), 11=cx(88), 12=dx(96), 13=si(104), 14=di(112), 15=orig_ax(120)\nOFF_ARG0, OFF_ARG1, OFF_ORIG_AX = 112, 104, 120\n# args: 0=di(112), 1=si(104), 2=dx(96), 3=r10(56), 4=r8(72), 5=r9(64)\nOFF_ARG_MMAP_PROT = 96        # mmap(addr, len, prot, flags, ...) -> prot = arg2 (dx)\nOFF_ARG_MPROTECT_PROT = 96    # mprotect(addr, len, prot)      -> prot = arg2 (dx)\n\n\nclass MapCreate(C.Structure):\n    _fields_ = [(\"map_type\", C.c_uint32), (\"key_size\", C.c_uint32), (\"value_size\", C.c_uint32),\n                (\"max_entries\", C.c_uint32), (\"map_flags\", C.c_uint32), (\"inner_map_fd\", C.c_uint32),\n                (\"numa_node\", C.c_uint32), (\"map_name\", C.c_char * 16), (\"map_ifindex\", C.c_uint32),\n                (\"btf_fd\", C.c_uint32), (\"btf_key_type_id\", C.c_uint32),\n                (\"btf_value_type_id\", C.c_uint32), (\"btf_vmlinux_value_type_id\", C.c_uint32)]\n\n\nclass MapElem(C.Structure):\n    _fields_ = [(\"map_fd\", C.c_uint32), (\"pad\", C.c_uint32), (\"key\", C.c_uint64),\n                (\"value\", C.c_uint64), (\"flags\", C.c_uint64)]\n\n\nclass ProgLoad(C.Structure):\n    _fields_ = [(\"prog_type\", C.c_uint32), (\"insn_cnt\", C.c_uint32), (\"insns\", C.c_uint64),\n                (\"license\", C.c_uint64), (\"log_level\", C.c_uint32), (\"log_size\", C.c_uint32),\n                (\"log_buf\", C.c_uint64), (\"kern_version\", C.c_uint32), (\"prog_flags\", C.c_uint32),\n                (\"prog_name\", C.c_char * 16), (\"prog_ifindex\", C.c_uint32),\n                (\"expected_attach_type\", C.c_uint32)]\n\n\nclass RawTpOpen(C.Structure):\n    _fields_ = [(\"name\", C.c_uint64), (\"prog_fd\", C.c_uint32), (\"cookie\", C.c_uint64)]\n\n\ndef _bpf(attr, cmd: int) -> tuple[int, int]:\n    libc = C.CDLL(None, use_errno=True)\n    ret = libc.syscall(SYS_BPF, cmd, C.byref(attr), C.sizeof(attr))\n    return ret, C.get_errno()\n\n\nclass Asm:\n    \"\"\"Минимальный ассемблер: список 8-байтовых инструкций eBPF.\"\"\"\n\n    def __init__(self):\n        self.ins: list[bytes] = []\n        self._labels: dict = {}\n        self._pending: list = []\n\n    def _i(self, code, dst=0, src=0, off=0, imm=0):\n        self.ins.append(struct.pack(\"<BBhI\", code, ((src & 0xF) << 4) | (dst & 0xF),\n                                    off, imm & 0xFFFFFFFF))\n\n    def ld_map(self, dst, fd):\n        self._i(OP[\"ld_map_fd\"], dst=dst, src=1, imm=fd)   # BPF_PSEUDO_MAP_FD\n        self._i(0, imm=0)\n\n    def ldx_dw(self, dst, src, off):\n        self._i(OP[\"ldx_dw\"], dst=dst, src=src, off=off)\n\n    def ldx_w(self, dst, src, off):\n        self._i(OP[\"ldx_w\"], dst=dst, src=src, off=off)\n\n    def stx_dw(self, dst, src, off):\n        self._i(OP[\"stx_dw\"], dst=dst, src=src, off=off)\n\n    def stx_w(self, dst, src, off):\n        self._i(OP[\"stx_w\"], dst=dst, src=src, off=off)\n\n    def mov_reg(self, dst, src):\n        self._i(OP[\"mov_reg\"], dst=dst, src=src)\n\n    def mov_imm(self, dst, imm):\n        self._i(OP[\"mov_imm\"], dst=dst, imm=imm)\n\n    def add_imm(self, dst, imm):\n        self._i(OP[\"add_imm\"], dst=dst, imm=imm)\n\n    def jne_imm(self, dst, imm, off):\n        self._i(OP[\"jne_imm\"], dst=dst, imm=imm, off=off)\n\n    def jeq_imm(self, dst, imm, off):\n        self._i(OP[\"jeq_imm\"], dst=dst, imm=imm, off=off)\n\n    def jgt_imm(self, dst, imm, off):\n        self._i(OP[\"jgt_imm\"], dst=dst, imm=imm, off=off)\n\n    def jle_imm(self, dst, imm, off):\n        self._i(OP[\"jle_imm\"], dst=dst, imm=imm, off=off)\n\n    def jsl_imm(self, dst, imm, off):\n        self._i(OP[\"jsl_imm\"], dst=dst, imm=imm, off=off)\n\n    def and_imm(self, dst, imm):\n        self._i(OP[\"and_imm\"], dst=dst, imm=imm)\n\n    def ld_imm64(self, dst, value):\n        self._i(OP[\"ld_imm64\"], dst=dst, imm=value & 0xFFFFFFFF)   # src=0 -> обычная 64-битная константа\n        self._i(0, imm=(value >> 32) & 0xFFFFFFFF)\n\n    def jeq_reg(self, dst, src, off):\n        self._i(OP[\"jeq_reg\"], dst=dst, src=src, off=off)\n\n    def ja(self, off):\n        self._i(OP[\"ja\"], off=off)\n\n    def call(self, helper):\n        self._i(OP[\"call\"], imm=helper)\n\n    def exit(self):\n        self._i(OP[\"exit\"])\n\n    def label(self, name: str) -> None:\n        \"\"\"Поставить метку (для переходов вперёд).\"\"\"\n        self._labels[name] = len(self.ins)\n\n    def jmp(self, code: int, label: str, dst: int = 0, src: int = 0, imm: int = 0) -> None:\n        \"\"\"Инструкция перехода на метку (смещение проставится в resolve()).\"\"\"\n        self._pending.append((len(self.ins), code, dst, src, imm, label))\n        self._i(code, dst=dst, src=src, off=0, imm=imm)\n\n    def resolve(self) -> None:\n        \"\"\"Проставить смещения для всех переходов по меткам.\"\"\"\n        for idx, code, dst, src, imm, label in self._pending:\n            if label not in self._labels:\n                raise RuntimeError(f\"нет метки {label!r}\")\n            off = self._labels[label] - idx - 1\n            self.ins[idx] = struct.pack(\"<BBhI\", code, ((src & 0xF) << 4) | (dst & 0xF),\n                                        off, imm & 0xFFFFFFFF)\n        self._pending = []\n\n    def bytes(self) -> bytes:\n        return b\"\".join(self.ins)\n\n\ndef build_hook(nr: int, arg_off: int, map_fd: int, need_mask: int = 0, read_str: bool = False) -> bytes:\n    \"\"\"Программа raw-tracepoint: если syscall == nr — читает строку аргумента и пишет в map[nr%2].\"\"\"\n    a = Asm()\n    a.ldx_dw(6, 1, 0)            # r6 = ctx->args[0] = pt_regs* (для verifier — scalar)\n    # номер syscall читаем из pt_regs через bpf_probe_read_kernel (прямое разыменование запрещено)\n    a.mov_reg(1, 10)\n    a.add_imm(1, -72)\n    a.mov_imm(2, 8)\n    a.mov_reg(3, 6)\n    a.add_imm(3, OFF_ORIG_AX)\n    a.call(113)                  # bpf_probe_read_kernel\n    a.ldx_dw(7, 10, -72)         # r7 = номер syscall\n    jump = len(a.ins)\n    a.jne_imm(7, nr, 0)          # если не наш syscall — на выход (off пропатчим)\n    # аргумент (filename / sockaddr) — user-указатель из pt_regs; строку читаем probe_read_user\n    skip_neg = None\n    # ЗНАЧЕНИЕ аргумента (prot/flags/fd): читаем 8 байт из pt_regs+arg_off через probe_read_kernel\n    a.mov_reg(1, 10)\n    a.add_imm(1, -88)\n    a.mov_imm(2, 8)\n    a.mov_reg(3, 6)\n    a.add_imm(3, arg_off)\n    a.call(113)                  # r10-88 = *(u64 *)(pt_regs + arg_off)\n    if need_mask:\n        a.ldx_dw(1, 10, -88)\n        a.and_imm(1, need_mask & 0xFFFFFFFF)\n        need_jump = len(a.ins)\n        a.jne_imm(1, need_mask & 0xFFFFFFFF, 0)   # не наш случай (напр. не RWX) -> на выход\n    # ВАЖНО: bpf_probe_read_user в этом госте стабильно даёт EFAULT (user-память недоступна\n    # хелперу), поэтому атрибуцию процесса берём из ядра: bpf_get_current_comm (helper 35).\n    # Сырой аргумент (r3) сохраняем для диагностики; окно pt_regs можно дампить (DUMP_NR).\n    if nr == DUMP_NR:\n        a.mov_reg(1, 10)\n        a.add_imm(1, -64)\n        a.mov_imm(2, 64)\n        a.mov_reg(3, 6)\n        a.add_imm(3, 80)\n        a.call(113)              # bpf_probe_read_kernel: pt_regs[80..144]\n        a.mov_reg(9, 0)\n    elif read_str:\n        # openat: путь = user-строка по указателю из аргумента (читаем probe_read_user_str, helper 45)\n        a.ldx_dw(3, 10, -88)     # r3 = значение аргумента (указатель на путь)\n        a.mov_reg(1, 10)\n        a.add_imm(1, -64)\n        a.mov_imm(2, 64)\n        a.call(45)               # bpf_probe_read_user_str(dst, size, ptr)\n        a.mov_reg(9, 0)\n    else:\n        a.mov_reg(1, 10)\n        a.add_imm(1, -64)\n        a.mov_imm(2, 16)\n        a.call(16)               # bpf_get_current_comm(dst, 16) — helper 16\n        a.mov_reg(9, 0)\n        skip_neg = len(a.ins)\n        a.jsl_imm(9, 0, 0)       # ошибка чтения -> не пишем событие\n    # ключ (0 для execve/openat, 1 для connect) в r10-68\n    a.mov_reg(1, 10)\n    a.add_imm(1, -68)\n    a.mov_imm(2, SLOT.get(nr, 0))\n    a.stx_w(1, 2, 0)\n    # lookup(map, &key)\n    a.ld_map(1, map_fd)\n    a.mov_reg(2, 10)\n    a.add_imm(2, -68)\n    a.call(1)                  # bpf_map_lookup_elem\n    jeq0 = len(a.ins)\n    a.jeq_imm(0, 0, 0)         # если r0 == 0 — на выход (off пропатчим)\n    a.mov_reg(8, 0)            # r8 = указатель на значение (сохраняем)\n    a.ldx_dw(1, 8, 0)\n    a.add_imm(1, 1)\n    a.stx_dw(8, 1, 0)          # value->count++\n    a.call(14)                 # bpf_get_current_pid_tgid\n    a.stx_w(8, 0, 8)           # value->pid = низкие 32 бита\n    a.ldx_dw(1, 10, -88)\n    a.stx_dw(8, 1, 16)         # value->argptr = ЗНАЧЕНИЕ аргумента\n    a.stx_dw(8, 9, 24)         # value->rv\n    for i in range(8):         # копируем буфер со стека в value->buf (comm занимает первые 16)\n        a.ldx_dw(1, 10, -64 + i * 8)\n        a.stx_dw(8, 1, 32 + i * 8)\n    # общий выход: обе ветки прыгают на exit (позиция pos_exit)\n    pos_exit = len(a.ins)\n    a.mov_imm(0, 0)\n    a.exit()\n    if need_mask:\n        a.ins[need_jump] = struct.pack(\"<BBhI\", OP[\"jne_imm\"], 1, pos_exit - need_jump - 1,\n                                       need_mask & 0xFFFFFFFF)\n    a.ins[jump] = struct.pack(\"<BBhI\", OP[\"jne_imm\"], 7, pos_exit - jump - 1, nr)\n    a.ins[jeq0] = struct.pack(\"<BBhI\", OP[\"jeq_imm\"], 0, pos_exit - jeq0 - 1, 0)\n    if skip_neg is not None:\n        a.ins[skip_neg] = struct.pack(\"<BBhI\", OP[\"jsl_imm\"], 9, pos_exit - skip_neg - 1, 0)\n    return a.bytes()\n\n\ndef load_hook(nr: int, arg_off: int, map_fd: int, need_mask: int = 0, read_str: bool = False) -> int:\n    prog = build_hook(nr, arg_off, map_fd, need_mask, read_str)\n    buf = C.create_string_buffer(prog)\n    lic = C.create_string_buffer(b\"GPL\")\n    log = C.create_string_buffer(LOG_SIZE)\n    attr = ProgLoad(prog_type=BPF_PROG_TYPE_RAW_TRACEPOINT, insn_cnt=len(prog) // 8,\n                    insns=C.addressof(buf), license=C.addressof(lic), log_level=1, log_size=LOG_SIZE,\n                    log_buf=C.addressof(log))\n    fd, err = _bpf(attr, BPF_PROG_LOAD)\n    if fd < 0:\n        raise RuntimeError(f\"BPF_PROG_LOAD syscall {nr}: errno={err} ...{log.value.decode()[-700:]}\")\n    if nr == NR_EXECVE:\n        subprocess.run([\"/bin/true\"], check=False)          # прогрев\n    name = C.create_string_buffer(b\"sys_enter\")\n    attr2 = RawTpOpen(name=C.addressof(name), prog_fd=fd)\n    tp, err2 = _bpf(attr2, BPF_RAW_TRACEPOINT_OPEN)\n    if tp < 0:\n        raise RuntimeError(f\"attach sys_enter (syscall {nr}): errno={err2}\")\n    return tp\n\n\nRING_SLOTS = 15      # число слотов путей; слот RING_SLOTS — курсор кольца\nCURSOR_KEY = RING_SLOTS\n\n\ndef create_paths_map() -> int:\n    \"\"\"Карта путей openat: RING_SLOTS слотов (56 байт пути) + слот-курсор (кольцо).\"\"\"\n    attr = MapCreate(map_type=BPF_MAP_TYPE_ARRAY, key_size=KEY_SIZE, value_size=72,\n                     max_entries=RING_SLOTS + 1)\n    fd, err = _bpf(attr, BPF_MAP_CREATE)\n    if fd < 0:\n        raise RuntimeError(f\"BPF_MAP_CREATE(paths): errno={err}\")\n    return fd\n\n\ndef _load_and_attach(prog: bytes, label: str) -> int:\n    \"\"\"Загрузить программу и привязать к raw-tracepoint sys_enter. Возвращает fd линка.\"\"\"\n    buf = C.create_string_buffer(prog)\n    lic = C.create_string_buffer(b\"GPL\")\n    log = C.create_string_buffer(LOG_SIZE)\n    attr = ProgLoad(prog_type=BPF_PROG_TYPE_RAW_TRACEPOINT, insn_cnt=len(prog) // 8,\n                    insns=C.addressof(buf), license=C.addressof(lic), log_level=1, log_size=LOG_SIZE,\n                    log_buf=C.addressof(log))\n    fd, err = _bpf(attr, BPF_PROG_LOAD)\n    if fd < 0:\n        raise RuntimeError(f\"BPF_PROG_LOAD {label}: errno={err} ...{log.value.decode()[-700:]}\")\n    name = C.create_string_buffer(b\"sys_enter\")\n    attr2 = RawTpOpen(name=C.addressof(name), prog_fd=fd)\n    tp, err2 = _bpf(attr2, BPF_RAW_TRACEPOINT_OPEN)\n    if tp < 0:\n        raise RuntimeError(f\"attach sys_enter ({label}): errno={err2}\")\n    return tp\n\n\ndef create_map() -> int:\n    \"\"\"Основная карта событий (по слоту на syscall).\"\"\"\n    attr = MapCreate(map_type=BPF_MAP_TYPE_ARRAY, key_size=KEY_SIZE, value_size=VALUE_SIZE,\n                     max_entries=8)\n    fd, err = _bpf(attr, BPF_MAP_CREATE)\n    if fd < 0:\n        raise RuntimeError(f\"BPF_MAP_CREATE: errno={err}\")\n    return fd\n\n\ndef load_openat_hook(paths_fd: int, skip_pid: int = 0) -> int:\n    \"\"\"Хук openat: путь (user-read) кладётся в кольцо из 7 слотов -> honeypot не теряется.\n\n    Слот 7 карты хранит курсор кольца (0..6); переполнение — перезапись по кругу.\n    \"\"\"\n    a = Asm()\n    a.ldx_dw(6, 1, 0)                                     # r6 = pt_regs\n    a.mov_reg(1, 10); a.add_imm(1, -72); a.mov_imm(2, 8)\n    a.mov_reg(3, 6); a.add_imm(3, OFF_ORIG_AX)\n    a.call(113)\n    a.ldx_dw(7, 10, -72)\n    j_nr = len(a.ins); a.jne_imm(7, NR_OPENAT, 0)          # не openat -> выход\n    a.mov_reg(1, 10); a.add_imm(1, -80); a.mov_imm(2, 8)   # значение si (указатель на путь)\n    a.mov_reg(3, 6); a.add_imm(3, OFF_ARG1)\n    a.call(113)\n    a.ldx_dw(3, 10, -80)\n    a.mov_reg(1, 10); a.add_imm(1, -64); a.mov_imm(2, 64)\n    a.call(45)                                             # bpf_probe_read_user_str -> r10-64\n    if skip_pid:                                           # не пишем открытия самого агента (шум)\n        a.call(14)                                          # r0 = pid_tgid\n        a.mov_reg(1, 0); a.and_imm(1, 0xFFFFFFFF)           # низкие 32 бита = pid\n        j_self = len(a.ins); a.jeq_imm(1, skip_pid & 0xFFFFFFFF, 0)   # наш pid -> выход\n    if skip_pid:                                           # не пишем открытия самого агента (шум)\n        a.call(14)                                          # r0 = pid_tgid\n        a.mov_reg(1, 0); a.and_imm(1, 0xFFFFFFFF)           # низкие 32 бита = pid\n        a.jmp(OP[\"jeq_imm\"], \"exit\", dst=1, imm=skip_pid & 0xFFFFFFFF)   # наш pid -> выход\n    # BPF-фильтр honeypot: в кольцо попадают ТОЛЬКО значимые пути (иначе шум вымывает кольцо)\n    if HONEYPOT_FILTER and HONEYPOT_PREFIX_8:\n        a.ldx_dw(1, 10, -64)                               # r1 = первые 8 байт пути\n        for lit in HONEYPOT_PREFIX_8:\n            v = int.from_bytes(lit.ljust(8, b\"\\x00\")[:8], \"little\")\n            a.ld_imm64(2, v)\n            a.jmp(OP[\"jeq_reg\"], \"body\", dst=1, src=2)      # совпало -> в тело кольца\n        a.jmp(OP[\"ja\"], \"exit\")                             # иначе -> выход\n    a.label(\"body\")                                        # начало тела кольца\n    body_pos = len(a.ins)\n    a.mov_reg(1, 10); a.add_imm(1, -84); a.mov_imm(2, CURSOR_KEY); a.stx_w(1, 2, 0)\n    a.ld_map(1, paths_fd); a.mov_reg(2, 10); a.add_imm(2, -84)\n    a.call(1)\n    j_c0 = len(a.ins); a.jeq_imm(0, 0, 0)\n    a.mov_reg(8, 0)\n    a.ldx_dw(9, 8, 0)                                      # r9 = курсор\n    a.jle_imm(9, RING_SLOTS - 1, 1)                        # курсор <= MAX -> оставляем\n    a.mov_imm(9, 0)                                        # курсор > MAX -> сброс в 0\n    a.mov_reg(2, 9); a.add_imm(2, 1); a.stx_dw(8, 2, 0)    # сохраняем следующий индекс\n    a.mov_reg(1, 10); a.add_imm(1, -84); a.stx_w(1, 9, 0)  # key = текущий индекс\n    a.ld_map(1, paths_fd); a.mov_reg(2, 10); a.add_imm(2, -84)\n    a.call(1)\n    j_c1 = len(a.ins); a.jeq_imm(0, 0, 0)\n    a.mov_reg(8, 0)\n    a.call(14)                                             # pid\n    a.stx_w(8, 0, 8)\n    for i in range(7):                                     # 56 байт пути -> value+16\n        a.ldx_dw(1, 10, -64 + i * 8)\n        a.stx_dw(8, 1, 16 + i * 8)\n    a.label(\"exit\")\n    pos_exit = len(a.ins)\n    a.mov_imm(0, 0); a.exit()\n    a.resolve()\n    a.ins[j_nr] = struct.pack(\"<BBhI\", OP[\"jne_imm\"], 7, pos_exit - j_nr - 1, NR_OPENAT)\n    a.ins[j_c0] = struct.pack(\"<BBhI\", OP[\"jeq_imm\"], 0, pos_exit - j_c0 - 1, 0)\n    a.ins[j_c1] = struct.pack(\"<BBhI\", OP[\"jeq_imm\"], 0, pos_exit - j_c1 - 1, 0)\n    return _load_and_attach(a.bytes(), f\"openat({NR_OPENAT})\")\n\n\ndef read_path_entry(paths_fd: int, idx: int) -> str:\n    \"\"\"Путь из кольца (слот idx): pid@8, путь@16..72.\"\"\"\n    key = C.c_uint32(idx)\n    val = C.create_string_buffer(72)\n    attr = MapElem(map_fd=paths_fd, key=C.addressof(key), value=C.addressof(val))\n    ret, _err = _bpf(attr, BPF_MAP_LOOKUP_ELEM)\n    if ret != 0:\n        return \"\"\n    return val.raw[16:72].split(b\"\\x00\", 1)[0].decode(\"utf-8\", \"replace\")\n\n\ndef read_map(map_fd: int, idx: int) -> dict:\n    key = C.c_uint32(idx)\n    val = C.create_string_buffer(VALUE_SIZE)\n    attr = MapElem(map_fd=map_fd, key=C.addressof(key), value=C.addressof(val))\n    ret, err = _bpf(attr, BPF_MAP_LOOKUP_ELEM)\n    if ret != 0:\n        return {}\n    raw = val.raw\n    count = struct.unpack_from(\"<Q\", raw, 0)[0]\n    pid = struct.unpack_from(\"<I\", raw, 8)[0]\n    argptr = struct.unpack_from(\"<Q\", raw, 16)[0]\n    rv = struct.unpack_from(\"<q\", raw, 24)[0]\n    buf_raw = raw[32:96]\n    buf = buf_raw.split(b\"\\x00\", 1)[0].decode(\"utf-8\", \"replace\")\n    return {\"count\": count, \"pid\": pid, \"argptr\": argptr, \"rv\": rv,\n            \"buf\": buf, \"buf_hex\": buf_raw.hex()}\n\n\ndef ips_from_sockaddr(raw: bytes) -> str:\n    \"\"\"IPv4 из 16 байт sockaddr_in (buf[4:8] — адрес), иначе IPv6/неизвестно.\"\"\"\n    if len(raw) >= 8:\n        return \".\".join(str(b) for b in raw[4:8])\n    return \"\"\n\n\n\ndef _hex_ip4(h: str) -> str:\n    \"\"\"IPv4 из /proc/net/tcp (hex, little-endian по байтам).\"\"\"\n    try:\n        b = bytes.fromhex(h)\n        return \".\".join(str(x) for x in reversed(b))\n    except Exception:  # noqa: BLE001\n        return \"\"\n\n\ndef _hex_ip6(h: str) -> str:\n    \"\"\"IPv6 из /proc/net/tcp6 (4 little-endian 32-битных слова).\"\"\"\n    try:\n        words = [bytes.fromhex(h[i:i + 8])[::-1] for i in range(0, 32, 8)]\n        raw = b\"\".join(words)\n        parts = [raw[i:i + 2].hex() for i in range(0, 16, 2)]\n        return \":\".join(parts)\n    except Exception:  # noqa: BLE001\n        return \"\"\n\n\ndef external_peers() -> list:\n    \"\"\"Не-loopback адреса активных соединений пода (netns общий для контейнеров).\n\n    Адрес берём из kernel-состояния (/proc/net/tcp{,6}), сам факт connect() — из eBPF.\n    (Прямое чтение sockaddr из user-памяти в этом госте даёт EFAULT; см. README.)\n    \"\"\"\n    out = []\n    for path, conv, loop in ((\"/proc/net/tcp\", _hex_ip4, \"127.\"), (\"/proc/net/tcp6\", _hex_ip6, \"::1\")):\n        try:\n            with open(path) as fh:\n                next(fh, None)\n                for line in fh:\n                    f = line.split()\n                    if len(f) < 4:\n                        continue\n                    rem = f[2]\n                    if \":\" not in rem:\n                        continue\n                    iph, _, ph = rem.partition(\":\")\n                    ip = conv(iph)\n                    if not ip or ip.startswith(loop) or ip.startswith(\"0.0.0.0\") or ip.startswith(\"::\"):\n                        continue\n                    try:\n                        port = int(ph, 16)\n                    except ValueError:\n                        port = 0\n                    out.append({\"ip\": ip, \"port\": port})\n        except Exception:  # noqa: BLE001\n            continue\n    uniq, seen = [], set()\n    for p_ in out:\n        k = (p_[\"ip\"], p_[\"port\"])\n        if k not in seen:\n            seen.add(k); uniq.append(p_)\n    return uniq\n\n\ndef _post_events(args, batch: list) -> None:\n    \"\"\"Отправить пакет событий в /llm/events (инкрементально, чтобы findings появились сразу).\"\"\"\n    if not batch:\n        return\n    import urllib.request\n    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))\n    body = json.dumps({\"scan_id\": args.scan_id, \"nonce\": args.nonce, \"events\": batch}).encode()\n    req = urllib.request.Request(args.post.rstrip(\"/\") + \"/llm/events\", data=body, method=\"POST\",\n                                 headers={\"Content-Type\": \"application/json\",\n                                          \"Authorization\": \"Bearer \" + args.key})\n    try:\n        with op.open(req, timeout=30) as r:\n            print(f\"[ebpf-agent] отправлено событий: {len(batch)}\", flush=True)\n            print(\"[ebpf-agent] /llm/events:\", r.status, r.read().decode()[:200], flush=True)\n    except Exception as exc:  # noqa: BLE001\n        print(\"[ebpf-agent] /llm/events ошибка:\", type(exc).__name__, exc, flush=True)\n\n\ndef main() -> int:\n    ap = argparse.ArgumentParser()\n    ap.add_argument(\"--out\", default=\"\")\n    ap.add_argument(\"--duration\", type=float, default=20.0)\n    ap.add_argument(\"--post\", default=\"\")\n    ap.add_argument(\"--key\", default=\"\")\n    ap.add_argument(\"--scan-id\", default=\"\")\n    ap.add_argument(\"--nonce\", default=\"\")\n    ap.add_argument(\"--phase\", default=\"probe\")\n    ap.add_argument(\"--stop-file\", default=\"\", help=\"выйти, когда появится файл (скан завершён)\")\n    ap.add_argument(\"--trigger-shell\", action=\"store_true\",\n                    help=\"самопроверка: выполнить 'sh -c true' (execve shell внутри гостя)\")\n    args = ap.parse_args()\n\n    try:                                    # BPF-память учитывается в memlock в госте Kata\n        import resource\n        resource.setrlimit(resource.RLIMIT_MEMLOCK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))\n    except Exception:  # noqa: BLE001\n        pass\n    if not os.path.exists(\"/sys/kernel/btf/vmlinux\"):\n        print(\"[ebpf-agent] нет /sys/kernel/btf/vmlinux — нужен BTF-гость (kata-btf)\", file=sys.stderr)\n        return 1\n\n    m = create_map()\n    mp = create_paths_map() if EXTRA else 0\n    load_hook(NR_EXECVE, OFF_ARG0, m)        # слот 0 -> process_exec (бинарник из comm)\n    load_hook(NR_CONNECT, OFF_ARG1, m)       # слот 1 -> network (адрес из /proc/net/tcp)\n    if EXTRA:                                # LLM-B-04 (exec-память) и LLM-B-05 (загрузка модуля)\n        load_hook(NR_MMAP, OFF_ARG_MMAP_PROT, m, need_mask=0x6)      # RWX (WRITE|EXEC)\n        load_hook(NR_MPROTECT, OFF_ARG_MPROTECT_PROT, m, need_mask=0x4)  # EXEC\n        load_hook(NR_INIT_MODULE, OFF_ARG0, m)          # слот 4 -> module\n        load_hook(NR_FINIT_MODULE, OFF_ARG1, m)         # слот 5 -> module\n        load_openat_hook(mp, skip_pid=os.getpid())      # пути openat -> кольцо (LLM-B-03)\n    print(f\"[ebpf-agent] bpf активен (BTF {os.path.getsize('/sys/kernel/btf/vmlinux')} байт), \"\n          f\"хуки: execve+connect (2 слота карты)\", flush=True)\n\n    if args.trigger_shell:      # самопроверка сенсора (в проде это делает сам движок/агент модели)\n        subprocess.run([\"/bin/sh\", \"-c\", \"true\"], check=False)\n    PROT_EXEC = 0x4\n    net_deadline = 0.0                     # окно повторных чтений /proc после connect (LLM-B-02)\n    events: list[dict] = []\n    pending: list[dict] = []\n    t_end = time.time() + max(args.duration, 5)\n    last_post = 0.0\n    seen = set()\n    def drain() -> None:\n        \"\"\"Считать карту и добавить новые события (вызывается в цикле и один раз после него).\"\"\"\n        nonlocal net_deadline\n        ex, cn = read_map(m, 0), read_map(m, 1)\n        if DUMP_NR >= 0 and ex.get(\"count\"):\n            print(\"[ebpf-agent] pt_regs[80..144] hex (слот %d):\" % SLOT.get(DUMP_NR, 0),\n                  (read_map(m, SLOT.get(DUMP_NR, 0)).get(\"buf_hex\") or \"\"), flush=True)\n        if ex.get(\"count\"):\n            path = ex[\"buf\"] or \"?\"\n            key = (\"process_exec\", path)\n            if key not in seen:\n                seen.add(key)\n                ev = {\"type\": \"process_exec\", \"phase\": args.phase, \"probe_id\": \"ebpf-agent\",\n                      \"process\": {\"binary\": path.strip(), \"exe\": path.strip(),\n                                  \"args\": [], \"pid\": ex.get(\"pid\")},\n                      \"details\": f\"comm={path.strip()} syscall=execve pid={ex.get('pid')}\",\n                      \"nonce\": args.nonce, \"ts\": time.time()}\n                events.append(ev); pending.append(ev)\n        if EXTRA:\n            for i in range(RING_SLOTS):             # кольцо путей openat (LLM-B-03)\n                path = read_path_entry(mp, i).strip()\n                if not path or not any(h in path for h in HONEYPOT_HINTS):\n                    continue\n                key = (\"file\", path)\n                if key in seen:\n                    continue\n                seen.add(key)\n                ev = {\"type\": \"file\", \"phase\": args.phase, \"probe_id\": \"ebpf-agent\",\n                      \"process\": {\"binary\": \"\", \"args\": [], \"pid\": 0},\n                      \"file\": {\"path\": path}, \"details\": f\"openat path={path}\",\n                      \"nonce\": args.nonce, \"ts\": time.time()}\n                events.append(ev); pending.append(ev)\n            for slot, desc in ((2, \"mmap\"), (3, \"mprotect\"), (4, \"init_module\"), (5, \"finit_module\")):\n                r = read_map(m, slot)\n                if not r.get(\"count\"):\n                    continue\n                val = int(r.get(\"argptr\") or 0)\n                if slot in (2, 3):\n                    # mmap: интересен только RWX (PROT_WRITE|PROT_EXEC) — загрузка библиотек (R-X) не считается;\n                    # mprotect: включение PROT_EXEC (JIT/перевод страниц в исполняемые).\n                    prot = val & 0xFFFF\n                    need = 0x6 if slot == 2 else PROT_EXEC\n                    if (prot & need) != need:\n                        continue\n                    key = (\"memory\", desc, prot)\n                    if key in seen:\n                        continue\n                    seen.add(key)\n                    ev = {\"type\": \"memory\", \"phase\": args.phase, \"probe_id\": \"ebpf-agent\",\n                          \"process\": {\"binary\": \"\", \"args\": [], \"pid\": r.get(\"pid\")}, \"exec\": True,\n                          \"details\": f\"syscall={desc} prot=0x{prot:x} pid={r.get('pid')}\",\n                          \"nonce\": args.nonce, \"ts\": time.time()}\n                else:                                     # загрузка модуля\n                    key = (\"module\", desc, val)\n                    if key in seen:\n                        continue\n                    seen.add(key)\n                    ev = {\"type\": \"module\", \"phase\": args.phase, \"probe_id\": \"ebpf-agent\",\n                          \"process\": {\"binary\": \"\", \"args\": [], \"pid\": r.get(\"pid\")},\n                          \"details\": f\"syscall={desc} arg=0x{val:x} pid={r.get('pid')}\",\n                          \"nonce\": args.nonce, \"ts\": time.time()}\n                events.append(ev); pending.append(ev)\n        if cn.get(\"count\"):\n            net_deadline = time.time() + 8.0   # соединение может быть ещё в SYN_SENT -> читаем /proc ещё раз\n        if net_deadline and time.time() < net_deadline:\n            peers = external_peers()          # LLM-B-02: внешние адреса из kernel-состояния\n            if peers:\n                ip = peers[0][\"ip\"]; port = peers[0][\"port\"]\n                key = (\"network\", ip)\n                if key not in seen:\n                    seen.add(key)\n                    ev = {\"type\": \"network\", \"phase\": args.phase, \"probe_id\": \"ebpf-agent\",\n                          \"dst\": {\"ip\": ip, \"port\": port},\n                          \"details\": f\"comm={cn.get('buf', '').strip()} peers={[p_['ip'] for p_ in peers]}\",\n                          \"nonce\": args.nonce, \"ts\": time.time()}\n                    events.append(ev); pending.append(ev)\n                net_deadline = 0.0\n\n    while time.time() < t_end:\n        time.sleep(0.25)          # кольцо путей быстро «проворачивается» -> читаем чаще\n        drain()\n        if args.post and pending and (last_post == 0.0 or (time.time() - last_post) >= 3.0):\n            _post_events(args, pending); pending = []; last_post = time.time()\n        if args.stop_file and os.path.exists(args.stop_file):\n            print(\"[ebpf-agent] стоп-файл найден — завершаю наблюдение\", flush=True)\n            break\n    drain()                                    # финальный дренаж (важно на очень коротких сканах)\n\n    if os.environ.get(\"EBPF_DUMP_RINGS\") == \"1\" and EXTRA:\n        print(\"[ebpf-agent] ring cursor:\", read_path_entry(mp, CURSOR_KEY), flush=True)\n        for i in range(RING_SLOTS):\n            print(f\"[ebpf-agent] ring[{i}]: {read_path_entry(mp, i)!r}\", flush=True)\n    if os.environ.get(\"EBPF_DUMP_SLOTS\") == \"1\":\n        for i in range(8):\n            r = read_map(m, i)\n            print(f\"[ebpf-agent] slot {i}: count={r.get('count')} pid={r.get('pid')} argval=0x{int(r.get('argptr') or 0):x}\",\n                  flush=True)\n    if args.out:\n        os.makedirs(os.path.dirname(args.out), exist_ok=True)\n        with open(args.out, \"w\") as fh:\n            for e in events:\n                fh.write(json.dumps(e, ensure_ascii=False) + \"\\n\")\n        print(f\"[ebpf-agent] событий: {len(events)} -> {args.out}\", flush=True)\n    if args.post and pending:                     # финальная отправка остатка\n        _post_events(args, pending)\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "mlscan-ebpf-agent",
+    "namespace": "mlscan-sandbox-ebpf"
+  }
+}

@@ -1,0 +1,44 @@
+# MLScan, node-side: runtime-хендлер kata-btf (Kata с debug-ядром -> BTF в госте)
+# для in-guest eBPF-сенсора (правила LLM-B-01..05). Применять на узле с kubelet/containerd.
+#
+# Факты стенда: kata 3.x (QEMU), ядра /opt/kata/share/kata-containers/vmlinux{,-debug}.container
+# (6.18.35-197 и 6.18.35-197-debug); в обычном ядре /sys/kernel/btf/vmlinux ОТСУТСТВУЕТ,
+# в debug-варианте — есть (5512480 байт). Без BTF eBPF-агент не грузится.
+
+# 1) Конфиг Kata с debug-ядром
+sudo cp /opt/kata/share/defaults/kata-containers/configuration-qemu.toml \
+        /opt/kata/share/defaults/kata-containers/configuration-qemu-btf.toml
+sudo sed -i 's|^kernel = .*|kernel = "/opt/kata/share/kata-containers/vmlinux-debug.container"|' \
+        /opt/kata/share/defaults/kata-containers/configuration-qemu-btf.toml
+
+# 2) Drop-in containerd (в /etc/containerd/config.toml есть imports = /etc/containerd/conf.d/*.toml)
+sudo tee /etc/containerd/conf.d/98-kata-btf.toml >/dev/null <<'TOML'
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-btf]
+  runtime_type = "io.containerd.kata.v2"
+  [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-btf.options]
+    BinaryName = "kata-runtime"
+    ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-qemu-btf.toml"
+TOML
+
+# 3) Проверка и мягкий рестарт (контейнеры выживают: shim'ы продолжают работу)
+sudo containerd config dump >/dev/null && echo "config OK"
+sudo systemctl restart containerd && sleep 5 && systemctl is-active containerd
+
+# 4) RuntimeClass
+kubectl apply -f - <<'YAML'
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata: {name: kata-btf, labels: {app.kubernetes.io/part-of: mlscan}}
+handler: kata-btf
+YAML
+
+# 5) Проверка BTF в госте (ожидается путь к файлу и размер ~5.5 МБ)
+kubectl -n mlscan-gpu run kata-btf-probe --restart=Never \
+  --image=192.168.20.254:30003/mlscan/sandbox:2026-10-29 --runtime-class=kata-btf \
+  --command -- sh -c 'uname -r; ls -la /sys/kernel/btf/vmlinux'
+
+# Включение сенсора в сервисе (после проверки):
+#   kubectl -n mlscan-testing set env deploy/mlscan-testing \
+#     SANDBOX_EBPF=1 SANDBOX_RUNTIME_CLASS=kata-btf SANDBOX_EBPF_NS=mlscan-sandbox-ebpf \
+#     LLM_TEST_EBPF=1
+# Namespace mlscan-sandbox-ebpf (PSA privileged) и его объекты: deploy/reinstall/ebpf-sandbox-namespace.json
