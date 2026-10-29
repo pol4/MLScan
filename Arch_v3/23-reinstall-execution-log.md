@@ -130,7 +130,11 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
    и правила **LLM-B-01** (execve sh/bash) и **LLM-B-04** (mprotect PROT_EXEC) срабатывают.
    Побочно: `scan_id` bundle-теста стал уникальным на прогон — иначе события/находки разных прогонов
    одного bundle смешивались (наблюдалось 85 накопленных находок под одним ключом).
-7. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
-8. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
+7. ~~Пять правил eBPF~~ **СДЕЛАНО**: `tests/e2e/ebpf_rules_e2e.sh` — один прогон скана с триггерами
+   подтверждает **все пять** правил: LLM-B-01 (execve sh), LLM-B-02 (внешний egress), LLM-B-03 (honeypot
+   `/etc/shadow`), LLM-B-04 (mmap RWX + mprotect PROT_EXEC), LLM-B-05 (init_module, critical);
+   вердикт Malicious, покрытие complete, сенсор — `llm_events: 6`.
+8. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
+9. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
    песочница — digest из farm-Harbor, runtime `kata-btf` для сканов) и прогнать скриншотный UI-тест.
    (адреса: UI NodePort 31110 на этом стенде).
