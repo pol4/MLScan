@@ -2480,7 +2480,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(503, {"error": "s3 недоступен (нужен presigned URL модели)"})
         url = client.presign("GET", key, expires=6 * 3600)   # внутренний адрес S3 для job'а
         run_token = secrets.token_hex(16)
-        scan_id = "bundle-test-" + bundle_id[:16]
+        # Уникальный scan_id на каждый прогон: иначе события/находки eBPF разных тестов одного
+        # bundle накапливались под одним ключом и смешивались в отчёте.
+        scan_id = "bundle-test-" + bundle_id[:16] + "-" + secrets.token_hex(4)
         job = v3llmenv.make_llama_test_job(
             bundle_id=bundle_id, engine_image=engine, model_url=url, model_sha256=model_sha,
             model_key=key,

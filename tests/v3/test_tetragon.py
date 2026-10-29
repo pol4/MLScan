@@ -38,6 +38,20 @@ class TetragonTest(unittest.TestCase):
         f, _ = tetragon.map_findings([ev(type="network", dst={"ip": "127.0.0.1", "port": 8000})], "N1")
         self.assertEqual(f, [])
 
+    def test_honeypot_client_cache_is_ignored(self):
+        """~/.kube/cache — служебный кэш k8s-клиента, а не honeypot-секрет (был стабильный FP)."""
+        f, _ = tetragon.map_findings([ev(type="file", file={
+            "path": "/root/.kube/cache/discovery/kubernetes.default.svc/certificates"})], "N1")
+        self.assertEqual(f, [])
+
+    def test_honeypot_secret_still_flagged(self):
+        """Реальные honeypot-пути по-прежнему детектируются."""
+        for path in ("/root/.ssh/id_rsa", "/root/.aws/credentials", "/root/.kube/config",
+                     "/deception/.env", "/etc/shadow"):
+            with self.subTest(path=path):
+                f, _ = tetragon.map_findings([ev(type="file", file={"path": path})], "N1")
+                self.assertIn("LLM-B-03", [x["check_id"] for x in f])
+
     def test_honeypot_read(self):
         f, _ = tetragon.map_findings([ev(type="file", file={"path": "/root/.aws/credentials"})], "N1")
         self.assertEqual(f[0]["check_id"], "LLM-B-03")

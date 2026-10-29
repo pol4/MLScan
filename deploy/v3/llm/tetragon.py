@@ -9,7 +9,12 @@
 from __future__ import annotations
 
 SHELL_BINARIES = {"sh", "bash", "dash", "zsh", "python", "python3", "perl", "ruby", "curl", "wget", "nc"}
-HONEYPOT_HINTS = ("/.aws/", "/.ssh/", "/.kube/", "/etc/shadow", "/etc/passwd")
+HONEYPOT_HINTS = ("/.aws/", "/.ssh/", "/.kube/", "/etc/shadow", "/etc/passwd",
+                   "/.env", "/.netrc", "/.git-credentials")   # decoy-файлы deception-набора
+# Шум от клиентских кэшей: `kubectl` (и любой k8s-клиент) складывает discovery-кэш в
+# ~/.kube/cache/discovery/<host>/<resource>. Это не секреты, а служебный кэш клиента — такие
+# openat не считаем чтением honeypot-секретов (иначе правило стабильно ложно срабатывает).
+HONEYPOT_EXCLUDE = ("/.kube/cache/", "/.kube/http-cache/")
 ALLOWED_NET = ("127.0.0.1", "::1", "localhost")
 
 def _is_public(ip: str) -> bool:
@@ -61,6 +66,8 @@ def _is_external(e: dict) -> bool:
 
 def _is_honeypot(e: dict) -> bool:
     path = str((e.get("file") or {}).get("path") or e.get("path") or "")
+    if any(x in path for x in HONEYPOT_EXCLUDE):
+        return False           # служебный кэш клиента, не секрет (см. HONEYPOT_EXCLUDE)
     return any(h in path for h in HONEYPOT_HINTS)
 
 

@@ -123,7 +123,14 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
 5. Для внутренних клиентов (CI, скан-джобы, тесты в поде) добавлена выдача presigned-URL на **внутренний**
    адрес S3: `POST /uploads/initiate {"internal": true}` и `GET /uploads/<id>/parts?internal=1`
    (внешний UI продолжает получать публичный `S3_PUBLIC_ENDPOINT`).
-6. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
-7. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
+6. ~~Шум eBPF в инференсе~~ **СДЕЛАНО**: правило **LLM-B-03** больше не срабатывает на служебный кэш
+   k8s-клиента (`~/.kube/cache/...` — discovery-кэш `kubectl`/клиента, не секрет); список honeypot-подсказок
+   дополнен decoy-файлами deception-набора (`/.env`, `/.netrc`, `/.git-credentials`). Проверено: в новом
+   прогоне LLM-теста кэш-события исчезли, реальные honeypot-чтения (`/etc/shadow`, `/root/.ssh/authorized_keys`)
+   и правила **LLM-B-01** (execve sh/bash) и **LLM-B-04** (mprotect PROT_EXEC) срабатывают.
+   Побочно: `scan_id` bundle-теста стал уникальным на прогон — иначе события/находки разных прогонов
+   одного bundle смешивались (наблюдалось 85 накопленных находок под одним ключом).
+7. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
+8. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
    песочница — digest из farm-Harbor, runtime `kata-btf` для сканов) и прогнать скриншотный UI-тест.
    (адреса: UI NodePort 31110 на этом стенде).
