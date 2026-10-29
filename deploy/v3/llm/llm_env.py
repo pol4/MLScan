@@ -60,7 +60,8 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
                   fetcher_image: str = "", tetragon_image: str = "", probe_image: str = "",
                   namespace: str = NAMESPACE, model_volume_size: str = "500Gi",
                   runtime_class: str = "kata", mount_dev: bool = False,
-                  cuda_visible_devices: str = "") -> dict:
+                  cuda_visible_devices: str = "", s3_env: dict | None = None,
+                  s3_client_configmap: str = "mlscan-s3client") -> dict:
     res = resources or {"gpu": 1, "ram_gb": 64, "disk_gb": 120}
     limits = {"memory": f"{int(res.get('ram_gb', 64))}Gi", "cpu": "8",
               "ephemeral-storage": f"{int(res.get('disk_gb', 120))}Gi"}
@@ -96,6 +97,7 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
                     "initContainers": [{
                         "name": "model-fetcher", "image": fetcher_image,
                         "args": ["--key", model_key, "--dest", "/model", "--sha256", model_sha256],
+                        "env": [{"name": k, "value": v} for k, v in (s3_env or {}).items()],
                         "volumeMounts": ([{"name": "model", "mountPath": "/model"}]
                                      + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
                                         if (model_key and s3_env) else [])),
@@ -120,6 +122,8 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
                     ],
                     "volumes": ([{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}},
                                  {"name": "events", "emptyDir": {}}]
+                                + ([{"name": "s3client", "configMap": {"name": s3_client_configmap}}]
+                                   if (model_key and s3_env) else [])
                                 + ([{"name": "dev", "hostPath": {"path": "/dev"}}] if mount_dev else [])),
                 },
             },

@@ -116,6 +116,11 @@ class GpuEnvTest(unittest.TestCase):
                                         testing_url="http://t", api_key="k")
 
     def test_llm_test_job_containers_and_gpu(self):
+        """GPU-режим по умолчанию (runtime-хендлер nvidia): GPU даёт runtime, ресурс не запрашивается.
+
+        На стенде узел имеет containerd-хендлер `nvidia` (RuntimeClass `nvidia`), поэтому GPU
+        попадает в контейнер движка через runtime, а hostPath `/dev` не монтируется.
+        """
         job = self._llm_job(gpu=True)
         spec = job["spec"]["template"]["spec"]
         names = [c["name"] for c in spec["containers"]]
@@ -123,11 +128,35 @@ class GpuEnvTest(unittest.TestCase):
         self.assertEqual([c["name"] for c in spec["initContainers"]], ["model-fetcher"])
         engine = spec["containers"][0]
         self.assertEqual(engine["image"], "reg/llama@sha256:" + "a" * 64)
-        self.assertEqual(engine["resources"]["limits"]["nvidia.com/gpu"], 1)
         self.assertIn("99", engine["args"])
         self.assertEqual(spec["runtimeClassName"], "nvidia")
-        self.assertEqual(spec["volumes"][1]["hostPath"]["path"], "/dev")
+        self.assertNotIn("nvidia.com/gpu", engine["resources"]["limits"])
+        self.assertEqual([v["name"] for v in spec["volumes"] if "hostPath" in v], [])
+        env = {e["name"]: e["value"] for e in engine["env"]}
+        self.assertEqual(env.get("NVIDIA_VISIBLE_DEVICES"), "all")
         self.assertFalse(spec["automountServiceAccountToken"])
+
+    def test_llm_test_job_gpu_device_plugin_mode(self):
+        """MLSCAN_GPU_MODE=device-plugin -> планирование по ресурсу nvidia.com/gpu (device-plugin)."""
+        import os as _os
+        _os.environ["MLSCAN_GPU_MODE"] = "device-plugin"
+        try:
+            spec = self._llm_job(gpu=True)["spec"]["template"]["spec"]
+        finally:
+            _os.environ.pop("MLSCAN_GPU_MODE", None)
+        self.assertEqual(spec["containers"][0]["resources"]["limits"]["nvidia.com/gpu"], 1)
+        self.assertEqual([v["name"] for v in spec["volumes"] if "hostPath" in v], [])
+
+    def test_llm_test_job_gpu_hostdev_mode(self):
+        """MLSCAN_GPU_MODE=hostdev -> проброс /dev и библиотек (совместимость со старым способом)."""
+        import os as _os
+        _os.environ["MLSCAN_GPU_MODE"] = "hostdev"
+        try:
+            spec = self._llm_job(gpu=True)["spec"]["template"]["spec"]
+        finally:
+            _os.environ.pop("MLSCAN_GPU_MODE", None)
+        host = [v["hostPath"]["path"] for v in spec["volumes"] if "hostPath" in v]
+        self.assertIn("/dev", host)
 
     def test_llm_test_job_cpu_mode(self):
         spec = self._llm_job(gpu=False, runtime_class="kata")["spec"]["template"]["spec"]

@@ -115,6 +115,15 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
    `ghcr.io/ggml-org/llama.cpp@sha256:0283744a…`.
 3. ~~eBPF~~ **СДЕЛАНО (стенд)**: Kata с debug-ядром (BTF в госте) через отдельный runtime-хендлер `kata-btf` (drop-in `98-kata-btf.toml` + `configuration-qemu-btf.toml`), RuntimeClass `kata-btf`, namespace `mlscan-sandbox-ebpf` (PSA privileged) с netpol/RBAC/CM/sinkhole; в сервисе включены `SANDBOX_EBPF=1`, `SANDBOX_RUNTIME_CLASS=kata-btf`, `SANDBOX_EBPF_NS=mlscan-sandbox-ebpf`.
    Проверено: скан pickle → **Malicious**, покрытие **complete**, in-guest события **LLM-B-01** (execve `sh`) и **LLM-B-03** (openat `/etc/passwd`) + harness-находка **F-30**. Воспроизводимость: `deploy/reinstall/node-kata-btf.txt`, `deploy/reinstall/ebpf-sandbox-namespace.json`. Осталось: LLM-тест bundle с `LLM_TEST_EBPF=1` и прогон e2e-скриптов сенсора.
-4. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
-5. Прогнать полный набор `tests/v3` + e2e + скриншотный UI-тест; обновить `Arch_v3/20-operator-guide.md`
+4. ~~Дымовой E2E стенда~~ **СДЕЛАНО**: `tests/e2e/reinstall_smoke.sh` — проверяет API, RuntimeClass'ы
+   (`kata`/`kata-btf`/`nvidia`), namespaces, pinned digest песочницы из farm-Harbor, imagePullSecret на SA,
+   eBPF-контур (namespace/CM/RBAC), сквозной скан pickle из кластера (Malicious + complete + F-30),
+   CI-gate и evidence. Прогон на стенде — **все проверки пройдены**. Unit-наборы: `pytest tests/v3 tests/s3`
+   = 216+22 зелёных.
+5. Для внутренних клиентов (CI, скан-джобы, тесты в поде) добавлена выдача presigned-URL на **внутренний**
+   адрес S3: `POST /uploads/initiate {"internal": true}` и `GET /uploads/<id>/parts?internal=1`
+   (внешний UI продолжает получать публичный `S3_PUBLIC_ENDPOINT`).
+6. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
+7. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
+   песочница — digest из farm-Harbor, runtime `kata-btf` для сканов) и прогнать скриншотный UI-тест.
    (адреса: UI NodePort 31110 на этом стенде).

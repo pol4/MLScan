@@ -67,6 +67,18 @@ if S3_ENABLED:
                       timeout=600, public_endpoint=os.environ.get(
                           "S3_INTERNAL_ENDPOINT", "http://garage.mlscan-data.svc:3900"))
 
+def _s3_client_for(internal: bool):
+    """S3-клиент для выдачи presigned-URL: внутренний адрес для клиентов внутри кластера.
+
+    Внешние клиенты (браузер на АРМ) используют публичный endpoint (NodePort/Ingress),
+    внутренние (CI, скан-джобы, тесты в поде) — `S3_INTERNAL_ENDPOINT`, иначе публичное имя
+    `s3.mlscan.local` из пода не резолвится.
+    """
+    if internal and _s3_internal is not None:
+        return _s3_internal
+    return _s3
+
+
 # Multipart-загрузка в S3 (этап P0-1, docs/15 §11.6): объекты ≥ порога грузятся
 # параллельными частями вместо одиночного PUT (снимает одно-поточный потолок).
 S3_MULTIPART_THRESHOLD = int(os.environ.get("S3_MULTIPART_THRESHOLD", str(64 * 1024 ** 2)))
@@ -2002,10 +2014,12 @@ class Handler(BaseHTTPRequestHandler):
         part_size = int(info.get("part_size") or DIRECT_PART_SIZE)
         size = int(info.get("size") or 0)
         count = (size + part_size - 1) // part_size if size else len(parts)
+        internal = ("internal=1" in self.path) or ("internal=true" in self.path)
+        _cli = _s3_client_for(internal)
         urls = {}
         for i in range(1, count + 1):
             try:
-                urls[i] = _s3.presign_upload_part(info["key"], upload_id, i, expires=DIRECT_URL_TTL)
+                urls[i] = _cli.presign_upload_part(info["key"], upload_id, i, expires=DIRECT_URL_TTL)
             except Exception:  # noqa: BLE001
                 pass
         return self._json(200, {"upload_id": upload_id, "status": info.get("status", "active"),
@@ -2065,15 +2079,17 @@ class Handler(BaseHTTPRequestHandler):
             _save_session(info, "dedup")
             return self._json(200, {"dedup": True, "upload_id": uid, "key": key, "sha256": sha,
                                     "size": size, "tenant": tenant, "count": 0, "parts": []})
+        _internal_req = str(body.get("internal", "")).lower() in ("1", "true", "yes")
         part = DIRECT_PART_SIZE
         n_parts = (size + part - 1) // part
         if n_parts > 10000:                    # лимит числа частей S3
             part = (size + 9999) // 10000
             n_parts = (size + part - 1) // part
         try:
+            _cli = _s3_client_for(_internal_req)
             uid = _s3.create_multipart(key)
             parts = [{"part_number": i, "size": min(part, size - (i - 1) * part),
-                      "url": _s3.presign_upload_part(key, uid, i, expires=DIRECT_URL_TTL)}
+                      "url": _cli.presign_upload_part(key, uid, i, expires=DIRECT_URL_TTL)}
                      for i in range(1, n_parts + 1)]
         except Exception as exc:  # noqa: BLE001
             return self._json(502, {"error": f"S3: {type(exc).__name__}: {exc}"})
