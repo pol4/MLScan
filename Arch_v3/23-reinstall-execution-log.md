@@ -134,7 +134,13 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
    подтверждает **все пять** правил: LLM-B-01 (execve sh), LLM-B-02 (внешний egress), LLM-B-03 (honeypot
    `/etc/shadow`), LLM-B-04 (mmap RWX + mprotect PROT_EXEC), LLM-B-05 (init_module, critical);
    вердикт Malicious, покрытие complete, сенсор — `llm_events: 6`.
-8. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
-9. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
+8. ~~UI E2E под новый стенд~~ **СДЕЛАНО**: `tests/ui/ui_smoke_e2e.js` — вход, разделы
+   (Сканы/Загрузка/Настройки/Администрирование), список артефактов (100) и карточка (вердикт/находки/
+   история/связи), отчёт JSON, **запуск теста инференса из карточки**, подзакладки «Загрузки» + движок
+   llama.cpp, админ-панели, CI-gate и evidence — все проверки пройдены. Для АРМ без DNS-зоны добавлен
+   `MLSCAN_HOST_MAP` (Chromium `--host-resolver-rules`): `analytics.mlscan.local`/`s3.mlscan.local` →
+   адрес узла (иначе браузер не примет cookie сессии с `Domain=.mlscan.local`).
+9. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
+10. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
    песочница — digest из farm-Harbor, runtime `kata-btf` для сканов) и прогнать скриншотный UI-тест.
    (адреса: UI NodePort 31110 на этом стенде).
