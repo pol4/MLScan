@@ -61,7 +61,7 @@ def configmap(name: str, ns: str, instance: int, nodes: int, rf: int) -> str:
 
 def pvc(name: str, ns: str, size: str) -> str:
     spec = ("  accessModes: [\"ReadWriteOnce\"]\n"
-            "  storageClassName: microk8s-hostpath\n"
+            "  storageClassName: local-path\n"
             "  resources:\n    requests:\n"
             f"      storage: {size}\n")
     return TMPL.format(api="v1", kind="PersistentVolumeClaim", name=name, ns=ns, labels=_labels(),

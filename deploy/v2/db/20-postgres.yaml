@@ -63,7 +63,7 @@ spec:
     spec:
       accessModes: ["ReadWriteOnce"]
       # StorageClass локального тома; при переносе замените на свой
-      storageClassName: microk8s-hostpath
+      storageClassName: local-path
       resources:
         requests:
           storage: 20Gi

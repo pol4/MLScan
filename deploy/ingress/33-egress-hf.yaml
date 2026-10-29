@@ -17,19 +17,18 @@ spec:
   - ports:
     - {protocol: TCP, port: 443}
     to:
+    - ipBlock: {cidr: 100.56.142.51/32}
+    - ipBlock: {cidr: 100.62.203.143/32}
     - ipBlock: {cidr: 13.36.122.243/32}
     - ipBlock: {cidr: 13.36.183.231/32}
     - ipBlock: {cidr: 13.37.0.65/32}
     - ipBlock: {cidr: 13.37.65.55/32}
     - ipBlock: {cidr: 13.39.241.58/32}
     - ipBlock: {cidr: 143.204.238.109/32}
-    - ipBlock: {cidr: 143.204.238.110/32}
     - ipBlock: {cidr: 143.204.238.128/32}
-    - ipBlock: {cidr: 143.204.238.31/32}
     - ipBlock: {cidr: 143.204.238.32/32}
     - ipBlock: {cidr: 143.204.238.36/32}
     - ipBlock: {cidr: 143.204.238.43/32}
-    - ipBlock: {cidr: 143.204.238.49/32}
     - ipBlock: {cidr: 143.204.238.52/32}
     - ipBlock: {cidr: 143.204.238.79/32}
     - ipBlock: {cidr: 143.204.238.92/32}
@@ -40,25 +39,27 @@ spec:
     - ipBlock: {cidr: 15.236.85.177/32}
     - ipBlock: {cidr: 15.237.164.118/32}
     - ipBlock: {cidr: 18.213.84.241/32}
-    - ipBlock: {cidr: 184.197.194.69/32}
+    - ipBlock: {cidr: 184.192.74.114/32}
+    - ipBlock: {cidr: 3.174.2.108/32}
     - ipBlock: {cidr: 3.174.2.126/32}
+    - ipBlock: {cidr: 3.174.2.13/32}
+    - ipBlock: {cidr: 3.174.2.34/32}
     - ipBlock: {cidr: 3.174.2.6/32}
     - ipBlock: {cidr: 3.174.2.64/32}
+    - ipBlock: {cidr: 3.174.2.82/32}
     - ipBlock: {cidr: 3.174.2.99/32}
     - ipBlock: {cidr: 3.210.66.237/32}
-    - ipBlock: {cidr: 34.192.148.153/32}
+    - ipBlock: {cidr: 3.222.158.251/32}
+    - ipBlock: {cidr: 32.195.228.62/32}
+    - ipBlock: {cidr: 34.198.109.45/32}
     - ipBlock: {cidr: 34.198.14.237/32}
     - ipBlock: {cidr: 34.202.8.246/32}
     - ipBlock: {cidr: 34.204.155.59/32}
-    - ipBlock: {cidr: 35.153.97.75/32}
+    - ipBlock: {cidr: 35.170.140.117/32}
     - ipBlock: {cidr: 35.181.67.163/32}
+    - ipBlock: {cidr: 44.199.8.172/32}
     - ipBlock: {cidr: 44.212.132.255/32}
-    - ipBlock: {cidr: 52.2.245.221/32}
-    - ipBlock: {cidr: 54.152.186.57/32}
-    - ipBlock: {cidr: 54.165.153.96/32}
-    - ipBlock: {cidr: 54.237.14.97/32}
     - ipBlock: {cidr: 65.9.62.103/32}
     - ipBlock: {cidr: 65.9.62.39/32}
     - ipBlock: {cidr: 65.9.62.61/32}
     - ipBlock: {cidr: 65.9.62.67/32}
-    - ipBlock: {cidr: 98.89.124.226/32}

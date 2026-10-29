@@ -22,13 +22,13 @@ spec:
   # NB: в этом Calico egress оценивается до DNAT, поэтому правила по namespace
   # для ClusterIP не срабатывают — сужаем по портам (docs/14, P1-1).
   - to:
-    - ipBlock: {cidr: 10.152.0.0/16}
-    - ipBlock: {cidr: 10.1.0.0/16}
+    - ipBlock: {cidr: 10.96.0.0/12}
+    - ipBlock: {cidr: 10.16.0.0/12}
     ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 3900}, {protocol: TCP, port: 3903}, {protocol: TCP, port: 5432}]
   # Внутрикластерный доступ: только нужные порты (ClusterIP/pod CIDR).
   # NB: в этом Calico egress оценивается до DNAT, поэтому правила по namespace
   # для ClusterIP не срабатывают — сужаем по портам (docs/14, P1-1).
   - to:
-    - ipBlock: {cidr: 10.152.0.0/16}
-    - ipBlock: {cidr: 10.1.0.0/16}
+    - ipBlock: {cidr: 10.96.0.0/12}
+    - ipBlock: {cidr: 10.16.0.0/12}
     ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 3900}, {protocol: TCP, port: 3903}, {protocol: TCP, port: 5432}]

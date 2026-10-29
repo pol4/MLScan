@@ -19,7 +19,7 @@ metadata:
 spec:
   accessModes: ["ReadWriteOnce"]
   # StorageClass локального тома (в MicroK8s по умолчанию); при переносе замените на свой
-  storageClassName: microk8s-hostpath
+  storageClassName: local-path
   resources:
     requests:
       storage: 512Mi
