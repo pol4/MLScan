@@ -46,7 +46,39 @@ NodePort-сервисы); платформенные компоненты дру
   NodePort; перевод на Gateway — по согласованию;
 * не использовали Rook-Ceph (общий) — все PVC на `local-path`.
 
-## 4. Блокер: доставка образа песочницы (dynamic/behavior)
+## 4. GPU: статус и что нужно от платформы (проверено на стенде)
+
+Что сделано на нашей стороне (без правок платформы):
+* device-plugin NVIDIA из нашего образа (в т.ч. пересборка с `-tags cdi,nvml`) — **in-container NVML не
+  инициализируется**: `nvml init failed`, т.к. NVML/CUDA читают `/proc/driver/nvidia`, а runc **запрещает**
+  монтировать что-либо внутрь `/proc` (проверено: «cannot be mounted because it is inside /proc»);
+* CDI-инъекция (аннотация `cdi.k8s.io/...`) в этом containerd **не сработала** (в логах containerd нет
+  CDI-событий; спецификация `/var/run/cdi/nvidia.yaml` есть, но и она не содержит `/proc/driver/nvidia`);
+* прямой проброс (`hostPath` `/dev` + `/usr/lib/x86_64-linux-gnu` + `NVIDIA_VISIBLE_DEVICES`): устройства и
+  библиотеки видны ✓, но CUDA-образ llama.cpp сообщает **«Available devices: (none)»** — та же причина;
+* выяснено также, что digest `ghcr.io/ggml-org/llama.cpp@sha256:b51c2526…` (2.4 ГБ) — **CPU-only** сборка
+  (в образе только `libggml-cpu-*`); настоящий CUDA-образ — `ghcr.io/ggml-org/llama.cpp:server-cuda`,
+  загружен на узел, digest **`sha256:0283744a35a6e7698b4f7a2d63360233dc769ece51e84bdba7aa187a33978276`**.
+
+**Вывод:** GPU требует **runtime-хендлера `nvidia`** в containerd (он умеет пробросить `/proc/driver/nvidia`
+корректно; именно так работал прежний стенд). Это единственная платформенная правка — нужен ваш OK:
+
+```bash
+# на узле: добавить handler (аналог прежнего microk8s-шаблона)
+sudo tee /etc/containerd/conf.d/99-nvidia.toml >/dev/null <<'TOML'
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
+  runtime_type = 'io.containerd.runc.v2'
+  [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
+    BinaryName = '/usr/bin/nvidia-container-runtime'
+TOML
+sudo systemctl restart containerd        # контейнеры не убиваются (shims переживают), пауза ~5–10 c
+# затем RuntimeClass nvidia -> наши GPU-задачи с runtimeClassName=nvidia (LLM_TEST_RUNTIME_CLASS=nvidia)
+```
+
+После этого включаем: `MLSCAN_GPU_MODE=device-plugin` (или runtimeClass) и прогоняем GPU-инференс
+(в тесте он уже проходил на CPU: вердикт `Needs review`, `block`, аттестация ✓).
+
+## 5. Блокер: доставка образа песочницы (dynamic/behavior)
 
 В узле образ есть **только под тегом** `localhost:32000/mlscan-sandbox:latest`; kubelet не может получить
 `…@sha256:eabc4819…` (локального реестра нет, а Harbor — единственный доверенный containerd реестр).
@@ -66,12 +98,12 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
 Аналогично — `mlscan/ebpf-agent` (для сенсора, когда включим eBPF) и, при необходимости, зеркалирование
 `llama.cpp` (сейчас тянется из ghcr ✓).
 
-## 5. Следующие шаги
+## 6. Следующие шаги
 
 1. Harbor: проект + робот-креды → push `sandbox` (и `ebpf-agent`) → вернуть digest-pinning и
    **включить dynamic/behavior** (полные сканы).
-2. GPU: device-plugin (образ из `backup/…/images/nvidia-device-plugin.tar` или сборка из
-   `deploy/v3/images/nvidia-device-plugin/`) → RuntimeClass `nvidia` → LLM-тесты на GPU.
+2. GPU: **согласовать runtime-хендлер `nvidia`** (см. §4) → RuntimeClass → LLM-тесты на CUDA-движке
+   `ghcr.io/ggml-org/llama.cpp@sha256:0283744a…`.
 3. eBPF: отдельный `kata-btf` (config + runtime-хендлер) либо согласованная правка Kata-конфига →
    включить `SANDBOX_EBPF=1`/`LLM_TEST_EBPF=1` (все пять правил `LLM-B-*`).
 4. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).

@@ -1,0 +1,49 @@
+# Device-plugin NVIDIA для нового кластера (kubeadm/containerd 2.4 + CDI):
+#  * режим CDI (containerd уже с cdi_spec_dirs, /var/run/cdi/nvidia.yaml есть) — без правок containerd/рестарта;
+#  * RuntimeClass не нужен (CDI инжектит устройства напрямую);
+#  * только RTX 4000 (GTX 1050 исключён, как на прежнем стенде);
+#  * запуск в нашем namespace mlscan-build (device-plugins сокет — hostPath, namespace не важен).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin
+  namespace: mlscan-build
+  labels: {app: nvidia-device-plugin, app.kubernetes.io/part-of: mlscan}
+spec:
+  selector: {matchLabels: {name: nvidia-device-plugin-ds}}
+  updateStrategy: {type: RollingUpdate}
+  template:
+    metadata: {labels: {name: nvidia-device-plugin-ds, app: nvidia-device-plugin}}
+    spec:
+      priorityClassName: system-node-critical
+      tolerations:
+      - {key: CriticalAddonsOnly, operator: Exists}
+      - {operator: Exists, effect: NoSchedule}
+      - {operator: Exists, effect: NoExecute}
+      containers:
+      - name: nvidia-device-plugin-ctr
+        image: 192.168.20.116:32000/nvidia/k8s-device-plugin:v0.17.0-cdi
+        # NVML требует /proc/driver/nvidia: runc запрещает монтировать /proc напрямую,
+        # поэтому монтируем хостовый /proc в /run/nvidia/hostproc и делаем bind внутри контейнера.
+        command: ["sh","-c","mkdir -p /proc/driver/nvidia && mount --bind /run/nvidia/hostproc/driver/nvidia /proc/driver/nvidia && exec /usr/bin/nvidia-device-plugin --fail-on-init-error=false --mig-strategy=none --device-discovery-strategy=nvml --device-list-strategy=cdi-annotations --driver-root=/run/nvidia/driver"]
+        env:
+        - {name: NVIDIA_VISIBLE_DEVICES, value: "GPU-18485677-8456-4026-c23a-8664ef0cd19b,GPU-76dbfb60-88b0-ecb9-8183-1d466d2cfd32"}
+        securityContext:
+          allowPrivilegeEscalation: true      # нужен bind-mount /proc/driver/nvidia внутри контейнера
+          capabilities: {drop: ["ALL"], add: ["SYS_ADMIN"]}
+        volumeMounts:
+        - {name: device-plugin, mountPath: /var/lib/kubelet/device-plugins}
+        - {name: cdi, mountPath: /var/run/cdi, readOnly: true}
+        - {name: cdi-etc, mountPath: /etc/cdi, readOnly: true}
+        # NVML: корень хоста смонтирован в /run/nvidia/driver (штатная схема driver-root)
+        - {name: host-root, mountPath: /run/nvidia/driver, readOnly: true}
+        # NVML открывает устройства по абсолютным путям -> нужен /dev (монтировать /proc нельзя)
+        - {name: dev, mountPath: /dev}
+        - {name: host-proc, mountPath: /run/nvidia/hostproc, readOnly: true}
+      volumes:
+      - {name: device-plugin, hostPath: {path: /var/lib/kubelet/device-plugins}}
+      - {name: cdi, hostPath: {path: /var/run/cdi}}
+      - {name: cdi-etc, hostPath: {path: /etc/cdi}}
+      - {name: host-root, hostPath: {path: /, type: Directory}}
+      - {name: dev, hostPath: {path: /dev, type: Directory}}
+      - {name: host-proc, hostPath: {path: /proc, type: Directory}}

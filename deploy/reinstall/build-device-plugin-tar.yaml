@@ -1,0 +1,49 @@
+# Пересборка nvidia/k8s-device-plugin с build-тегами cdi,nvml (нужно для --device-list-strategy=cdi,
+# то есть инжекта GPU через CDI без правки containerd и без RuntimeClass).
+# Сборка без реестра: kaniko --no-push --tar-path -> tar импортируется в containerd узла.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: build-device-plugin-tar, namespace: mlscan-gpu}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: clone
+        image: alpine/git:2.45.2
+        command: ["sh","-c"]
+        args:
+        - |
+          set -e
+          git clone --depth 1 --branch v0.17.0 https://github.com/NVIDIA/k8s-device-plugin /work/repo
+          cat > /work/repo/Dockerfile.mlscan <<'DF'
+          FROM golang:1.22-bookworm AS build
+          WORKDIR /src
+          ENV GOFLAGS=-mod=vendor CGO_ENABLED=1
+          COPY . .
+          RUN go build -tags cdi,nvml -o /out/nvidia-device-plugin ./cmd/nvidia-device-plugin && ls -l /out
+          FROM debian:bookworm-slim
+          RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+          COPY --from=build /out/nvidia-device-plugin /usr/bin/nvidia-device-plugin
+          ENTRYPOINT ["/usr/bin/nvidia-device-plugin"]
+          DF
+          echo dockerfile-ready
+        volumeMounts: [{name: work, mountPath: /work}]
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:v1.23.2
+        args:
+        - "--context=dir:///work/repo"
+        - "--dockerfile=Dockerfile.mlscan"
+        - "--skip-unused-stages=true"
+        - "--no-push"
+        - "--tar-path=/host/device-plugin.tar"
+        - "--destination=192.168.20.116:32000/nvidia/k8s-device-plugin:v0.17.0-cdi"
+        - "--skip-tls-verify"
+        volumeMounts: [{name: work, mountPath: /work}, {name: host, mountPath: /host}]
+      volumes:
+      - {name: work, emptyDir: {}}
+      # tar пишется сразу на узел (hostPath) — потом ctr images import без копирования
+      - {name: host, hostPath: {path: /tmp/mlscan-images, type: DirectoryOrCreate}}

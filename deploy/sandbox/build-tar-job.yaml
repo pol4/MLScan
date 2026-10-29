@@ -1,0 +1,29 @@
+# Сборка образа песочницы без реестра: kaniko --no-push --tar-path, результат в /out/sandbox.tar
+# с внутренней ссылкой localhost:32000/mlscan-sandbox:kb1 (импортируется в containerd узла).
+apiVersion: batch/v1
+kind: Job
+metadata: {name: build-sandbox-tar, namespace: mlscan-build}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:v1.23.2
+        args:
+        - "--context=dir:///ctx"
+        - "--dockerfile=Dockerfile"
+        - "--no-push"
+        - "--tar-path=/out/sandbox.tar"
+        - "--destination=localhost:32000/mlscan-sandbox:kb1"
+        - "--skip-tls-verify"
+        volumeMounts:
+        - {name: ctx, mountPath: /ctx, readOnly: true}
+        - {name: out, mountPath: /out}
+      volumes:
+      - name: ctx
+        configMap: {name: mlscan-sandbox-dockerfile}
+      - name: out
+        emptyDir: {sizeLimit: 8Gi}

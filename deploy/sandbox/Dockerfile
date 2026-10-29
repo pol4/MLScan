@@ -1,11 +1,11 @@
-# Образ песочницы MLScan (Kata): python3.12-slim + torch(CPU)/numpy/joblib/dill/cloudpickle.
-# Реконструирован из истории собранного образа (deploy/export/snapshot/sandbox-image-history.txt);
-# канонический digest стенда — в deploy/export/snapshot/mlscan-sandbox-digest.
-# Harness-код в образ НЕ входит: он монтируется из ConfigMap (deploy/stage1/gen_configmaps.py) в /opt/mlscan.
+# Образ песочницы MLScan (Kata): python3.12-slim + зависимости harness.
+# Зависимости взяты из HARNESS_SRC (poc/mlscan_poc.py): torch(CPU), numpy, joblib, dill, cloudpickle,
+# safetensors, gguf, h5py, pyarrow, onnxruntime. Harness монтируется из ConfigMap в /opt/mlscan.
+# Сборка без реестра: kaniko --no-push --tar-path, затем ctr images import в узле (см. deploy/sandbox/build.md).
 FROM python:3.12-slim
 
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
- && pip install --no-cache-dir numpy joblib dill cloudpickle \
- && python -c "import torch, numpy; print('torch', torch.__version__, 'numpy', numpy.__version__)"
+ && pip install --no-cache-dir numpy joblib dill cloudpickle safetensors gguf h5py pyarrow onnxruntime \
+ && python -c "import torch, numpy, safetensors, gguf, h5py, pyarrow, onnxruntime; print('sandbox deps ok')"
 
 CMD ["python3"]

@@ -618,11 +618,13 @@ def _hf_download_worker(dl_id: str) -> None:
                         try:
                             key0 = _hf_key(repo, os.path.basename(fl[0]))
                             fmt0 = "gguf" if str(fl[0]).lower().endswith(".gguf") else "bin"
-                            db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key,source) SELECT "
-                                    + _lit(msha) + ", " + str(os.path.getsize(f0)) + ", " + _lit(fmt0) + ", "
-                                    + _lit(os.path.basename(fl[0])) + ", " + _lit(key0) + ", "
-                                    + _lit("hf-dataset" if is_dataset else "hf") + " "
-                                    "WHERE NOT EXISTS (SELECT 1 FROM artifacts WHERE sha256=" + _lit(msha) + ")")
+                            # upsert: чиним s3_key/format при повторной загрузке/восстановлении из дампа
+                            db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key,source) VALUES ("
+                                    + _lit(msha) + "," + str(os.path.getsize(f0)) + "," + _lit(fmt0) + ","
+                                    + _lit(os.path.basename(fl[0])) + "," + _lit(key0) + ","
+                                    + _lit("hf-dataset" if is_dataset else "hf") + ") "
+                                    "ON CONFLICT (sha256) DO UPDATE SET size=EXCLUDED.size, "
+                                    "format=EXCLUDED.format, filename=EXCLUDED.filename, s3_key=EXCLUDED.s3_key")
                         except Exception:  # noqa: BLE001
                             pass
                     if eng and v3binding is not None:
@@ -2377,6 +2379,12 @@ class Handler(BaseHTTPRequestHandler):
         scan_id = "bundle-test-" + bundle_id[:16]
         job = v3llmenv.make_llama_test_job(
             bundle_id=bundle_id, engine_image=engine, model_url=url, model_sha256=model_sha,
+            model_key=key,
+            s3_env={"S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""),
+                    "S3_ACCESS_KEY": os.environ.get("S3_ACCESS_KEY", ""),
+                    "S3_SECRET_KEY": os.environ.get("S3_SECRET_KEY", ""),
+                    "S3_BUCKET": os.environ.get("S3_BUCKET", ""),
+                    "S3_REGION": os.environ.get("S3_REGION", "garage")},
             prompts=[{"id": c["id"], "prompt": c["prompt"], "criticality": c.get("criticality"),
                       "reference": c.get("reference") or "", "severity": c.get("severity") or "",
                       "tolerance": c.get("tolerance")} for c in cases],

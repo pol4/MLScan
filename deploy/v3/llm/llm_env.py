@@ -96,7 +96,9 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
                     "initContainers": [{
                         "name": "model-fetcher", "image": fetcher_image,
                         "args": ["--key", model_key, "--dest", "/model", "--sha256", model_sha256],
-                        "volumeMounts": [{"name": "model", "mountPath": "/model"}],
+                        "volumeMounts": ([{"name": "model", "mountPath": "/model"}]
+                                     + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
+                                        if (model_key and s3_env) else [])),
                     }],
                     "containers": [
                         {"name": "engine", "image": engine_image,
@@ -128,15 +130,33 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
 # --- N2: запускаемый job теста bundle (реальный движок + набор вопросов -> /llm/score) ----------
 _FETCH_SRC = (
     "import hashlib,os,sys,urllib.request\n"
-    "url=os.environ['FETCH_URL']; dest=os.environ.get('FETCH_DEST','/model/model.gguf')\n"
+    "dest=os.environ.get('FETCH_DEST','/model/model.gguf')\n"
     "sha=os.environ.get('FETCH_SHA','')\n"
     "os.makedirs(os.path.dirname(dest),exist_ok=True)\n"
-    "h=hashlib.sha256(); op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
-    "with op.open(url,timeout=1800) as r, open(dest,'wb') as f:\n"
-    "    while True:\n"
-    "        b=r.read(1<<20)\n"
-    "        if not b: break\n"
-    "        h.update(b); f.write(b)\n"
+    "h=hashlib.sha256()\n"
+    "key=os.environ.get('S3_KEY','')\n"
+    "if key and os.path.exists('/opt/s3/s3client.py'):\n"
+    "    sys.path.insert(0,'/opt/s3')\n"
+    "    from s3client import S3\n"
+    "    s3=S3(os.environ['S3_ENDPOINT'],os.environ['S3_ACCESS_KEY'],os.environ['S3_SECRET_KEY'],\n"
+    "          region=os.environ.get('S3_REGION','garage'),bucket=os.environ['S3_BUCKET'],timeout=600)\n"
+    "    st,hd,resp = s3.get_stream(key)\n"
+    "    with open(dest,'wb') as f:\n"
+    "        try:\n"
+    "            while True:\n"
+    "                b=resp.read(1<<20)\n"
+    "                if not b: break\n"
+    "                h.update(b); f.write(b)\n"
+    "        finally:\n"
+    "            try: resp.close()\n"
+    "            except Exception: pass\n"
+    "else:\n"
+    "    op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
+    "    with op.open(os.environ['FETCH_URL'],timeout=1800) as r, open(dest,'wb') as f:\n"
+    "        while True:\n"
+    "            b=r.read(1<<20)\n"
+    "            if not b: break\n"
+    "            h.update(b); f.write(b)\n"
     "got=h.hexdigest()\n"
     "print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
     "if sha and got!=sha: print('SHA_MISMATCH',got,sha,flush=True); sys.exit(3)\n"
@@ -183,7 +203,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         resources: dict | None = None, model_volume_size: str = "64Gi",
                         ttl_seconds: int = 3600, max_tokens: int = 256,
                         ebpf_agent: bool = False, ebpf_configmap: str = "mlscan-ebpf-agent",
-                        ebpf_image: str = "") -> dict:
+                        ebpf_image: str = "", model_key: str = "", s3_env: dict | None = None,
+                        s3_client_configmap: str = "mlscan-s3client") -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -192,14 +213,22 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
         raise ValueError("engine image должен быть по digest")
     if not model_url:
         raise ValueError("нужен presigned URL модели")
+    # GPU без device-plugin: прямая CDI-инъекция через annotation (containerd enable_cdi).
+    # MLSCAN_GPU_MODE=cdi (по умолчанию) -> аннотация cdi.k8s.io/mlscan-gpu: nvidia.com/gpu=<uuid|index>
+    gpu_mode = os.environ.get("MLSCAN_GPU_MODE", "cdi")   # cdi | hostdev | device-plugin(limits)
+    gpu_uuid = os.environ.get("MLSCAN_GPU_UUID", "")
+    gpu_index = os.environ.get("MLSCAN_GPU_INDEX", "0")
+    gpu_cdi_devices = os.environ.get("MLSCAN_GPU_CDI_DEVICES", "nvidia.com/gpu=0")
     res = resources or {"ram_gb": 32, "disk_gb": 40, "cpu": "4"}
     limits = {"memory": f"{int(res.get('ram_gb', 32))}Gi", "cpu": str(res.get("cpu", "4")),
               "ephemeral-storage": f"{int(res.get('disk_gb', 40))}Gi"}
-    if gpu:
+    if gpu and gpu_mode == "device-plugin":
         limits["nvidia.com/gpu"] = 1
     engine_env = [{"name": "LLAMA_ARG_HOST", "value": "0.0.0.0"}]
     if gpu:
-        engine_env.append({"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"})
+        engine_env.append({"name": "NVIDIA_VISIBLE_DEVICES", "value": gpu_uuid or "all"})
+        if gpu_mode == "hostdev":
+            engine_env.append({"name": "CUDA_VISIBLE_DEVICES", "value": gpu_index})
         if cuda_visible_devices:
             engine_env.append({"name": "CUDA_VISIBLE_DEVICES", "value": str(cuda_visible_devices)})
     # Числовой non-root (образы по умолчанию root -> kubelet отклоняет runAsNonRoot без runAsUser)
@@ -215,7 +244,9 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
          "resources": {"limits": limits},
          "securityContext": dict(hardened, readOnlyRootFilesystem=False),
          "volumeMounts": [{"name": "model", "mountPath": "/model", "readOnly": True}]
-                         + ([{"name": "dev", "mountPath": "/dev"}] if gpu else []),
+                         + ([{"name": "dev", "mountPath": "/dev"},
+                             {"name": "cudalibs", "mountPath": "/usr/lib/x86_64-linux-gnu", "readOnly": True}]
+                            if (gpu and gpu_mode == "hostdev") else []),
          "readinessProbe": {"httpGet": {"path": "/v1/models", "port": 8000},
                             "initialDelaySeconds": 10, "periodSeconds": 5, "failureThreshold": 60}},
         {"name": "probe", "image": "python:3.12-slim",
@@ -251,10 +282,15 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
             "volumeMounts": ([] if _ebpf_image else
                              [{"name": "ebpf", "mountPath": "/opt/ebpf", "readOnly": True}]),
             "resources": {"limits": {"memory": "512Mi", "cpu": "1"}}})
+    annotations = {}
+    if gpu and gpu_mode == "cdi":
+        annotations["cdi.k8s.io/mlscan-gpu"] = gpu_cdi_devices    # containerd сам инжектит устройства
     spec = {
         "backoffLimit": 0, "ttlSecondsAfterFinished": int(ttl_seconds),
         "template": {
-            "metadata": {"labels": {"app": "mlscan-llm-test", "bundle": bundle_id[:40]}},
+            "metadata": ({"labels": {"app": "mlscan-llm-test", "bundle": bundle_id[:40]},
+                          "annotations": annotations} if annotations else
+                         {"labels": {"app": "mlscan-llm-test", "bundle": bundle_id[:40]}}),
             "spec": {
                 "automountServiceAccountToken": False,
                 "restartPolicy": "Never",
@@ -265,16 +301,25 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                 "initContainers": [{
                     "name": "model-fetcher", "image": "python:3.12-slim",
                     "command": ["python", "-c", _FETCH_SRC],
-                    "env": [{"name": "FETCH_URL", "value": model_url},
-                            {"name": "FETCH_SHA", "value": model_sha256},
-                            {"name": "FETCH_DEST", "value": "/model/model.gguf"}],
+                    "env": ([{"name": "FETCH_URL", "value": model_url},
+                             {"name": "FETCH_SHA", "value": model_sha256},
+                             {"name": "FETCH_DEST", "value": "/model/model.gguf"},
+                             {"name": "S3_KEY", "value": model_key}]
+                            + [{"name": k, "value": v} for k, v in (s3_env or {}).items()]),
                     "resources": {"limits": {"memory": "2Gi", "cpu": "1"}},
                     "securityContext": dict(hardened, readOnlyRootFilesystem=False),
-                    "volumeMounts": [{"name": "model", "mountPath": "/model"}],
+                    "volumeMounts": ([{"name": "model", "mountPath": "/model"}]
+                                     + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
+                                        if (model_key and s3_env) else [])),
                 }],
                 "containers": containers,
-                "volumes": [{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}}]
-                           + ([{"name": "dev", "hostPath": {"path": "/dev"}}] if gpu else [])
+                "volumes": ([{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}}]
+                            + ([{"name": "s3client", "configMap": {"name": s3_client_configmap}}]
+                               if (model_key and s3_env) else [])) 
+                           + ([{"name": "dev", "hostPath": {"path": "/dev"}}]
+                              if (gpu and gpu_mode != "cdi") else [])
+                           + ([{"name": "cudalibs", "hostPath": {"path": "/usr/lib/x86_64-linux-gnu"}}]
+                              if (gpu and gpu_mode == "hostdev") else [])
                            + ([{"name": "ebpf", "configMap": {"name": ebpf_configmap}}]
                               if (ebpf_agent and not os.environ.get("EBPF_AGENT_IMAGE")) else []),
             },

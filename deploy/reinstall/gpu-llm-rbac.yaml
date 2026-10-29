@@ -1,0 +1,25 @@
+# RBAC для нашего сервиса тестирования: создание/чтение job'ов инференса в mlscan-gpu
+# (GPU-задачи запускаются в этом namespace, т.к. только в нём разрешены hostPath-устройства GPU).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: mlscan-testing-gpu-jobs, namespace: mlscan-gpu}
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "delete", "get", "list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "delete", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: mlscan-testing-gpu-jobs, namespace: mlscan-gpu}
+subjects:
+- {kind: ServiceAccount, name: mlscan-testing, namespace: mlscan-testing}
+roleRef: {kind: Role, name: mlscan-testing-gpu-jobs, apiGroup: rbac.authorization.k8s.io}
