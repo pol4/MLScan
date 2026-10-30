@@ -7,7 +7,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NS=mlscan-v3-data
-TPOD="$(kubectl -n mlscan-testing get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+TPOD="$(kubectl -n mlscan-testing get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 KEY_ID="$(kubectl -n "$NS" exec deploy/garage-v3-0 -- /garage key list 2>/dev/null | awk '/v3prot-key/{print $1}' | head -1)"
 SECRET="$(kubectl -n "$NS" exec deploy/garage-v3-0 -- /garage key info --show-secret v3prot-key 2>/dev/null | sed -n 's/^Secret key: *//p' | head -1)"
 [ -z "$KEY_ID" ] || [ -z "$SECRET" ] && { echo "нет ключа v3prot-key"; exit 2; }

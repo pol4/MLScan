@@ -3,7 +3,7 @@
 #   bash tests/e2e/static_stream_e2e.sh
 set -uo pipefail
 NS=mlscan-testing
-POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 kubectl -n "$NS" exec -i "$POD" -- python3 - <<'PY'
 import hashlib, json, os, struct, sys, tempfile, time
 sys.path.insert(0, "/opt/s3"); sys.path.insert(0, "/opt/v3analysis")

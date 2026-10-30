@@ -6,8 +6,8 @@
 set -uo pipefail
 SIZE_MB="${1:-16}"
 NS=mlscan-testing
-POD_T=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name' )
-POD_O=$(kubectl -n mlscan-ops get pods -l app=mlscan-ops -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name' )
+POD_T=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name' )
+POD_O=$(kubectl -n mlscan-ops get pods -l app=mlscan-ops -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name' )
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 

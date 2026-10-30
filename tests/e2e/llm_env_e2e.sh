@@ -5,7 +5,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 NS=mlscan-testing
-pod() { kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name'; }
+pod() { kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name'; }
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 POD="$(pod)"
@@ -39,7 +39,7 @@ kubectl -n "$NS" rollout status deploy/mlscan-testing --timeout=150s >/dev/null
 echo "$R2" | grep -q "^rejected.*ram_gb" || { echo "[FAIL] ожидался rejected по ram_gb"; exit 1; }
 
 echo "== контракт: сгенерированный Job проходит admission Kyverno (kata + digest) =="
-DIG="$(cat /tmp/mlscan-sandbox-digest 2>/dev/null || echo localhost:32000/mlscan-sandbox@sha256:cd5e9b8c7fd7b8efec3151b598048a1a191484519985d6572afbe8d7f668a13d)"
+DIG="$(cat /tmp/mlscan-sandbox-digest 2>/dev/null || echo 192.168.20.254:30003/mlscan/sandbox@sha256:2daad033ff10306c4ebee7670d203cad3151b502ef19d3931473dd2221e70090)"
 python3 - "$ROOT" "$DIG" <<'PY' > /tmp/llm_job.json
 import json, sys
 sys.path.insert(0, sys.argv[1] + "/deploy/v3/llm")

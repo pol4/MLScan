@@ -3,7 +3,7 @@
 #   bash tests/e2e/quota_upload_e2e.sh
 set -uo pipefail
 NS=mlscan-testing
-POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 
@@ -26,7 +26,7 @@ PY
 echo "== лимит размера объекта (MAX_OBJECT_BYTES=1MiB) =="
 kubectl -n "$NS" set env deploy/mlscan-testing MAX_OBJECT_BYTES=1048576 >/dev/null
 kubectl -n "$NS" rollout status deploy/mlscan-testing --timeout=150s >/dev/null
-POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 C1="$(ask 5242880)";  echo "  size=5MiB  -> HTTP $C1 (ожидаем 403)"
 C2="$(ask 524288)";   echo "  size=512KiB-> HTTP $C2 (ожидаем 200)"
 kubectl -n "$NS" set env deploy/mlscan-testing MAX_OBJECT_BYTES- >/dev/null
@@ -35,7 +35,7 @@ kubectl -n "$NS" rollout status deploy/mlscan-testing --timeout=150s >/dev/null
 echo "== суточная квота (MAX_BYTES_PER_DAY=1MiB, throttling/deny) =="
 kubectl -n "$NS" set env deploy/mlscan-testing MAX_BYTES_PER_DAY=1048576 >/dev/null
 kubectl -n "$NS" rollout status deploy/mlscan-testing --timeout=150s >/dev/null
-POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 C3="$(ask 2097152)"; echo "  size=2MiB > суточный лимит -> HTTP $C3 (ожидаем 429)"
 kubectl -n "$NS" set env deploy/mlscan-testing MAX_BYTES_PER_DAY- >/dev/null
 kubectl -n "$NS" rollout status deploy/mlscan-testing --timeout=150s >/dev/null

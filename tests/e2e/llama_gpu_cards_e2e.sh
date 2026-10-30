@@ -6,7 +6,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
 XLSX="${1:-/home/col/Documents/Сибинтек/LLM_Sec/questions_v9.xlsx}"; N="${2:-10}"
 NS=mlscan-build; NST=mlscan-testing
-IMG="ghcr.io/ggml-org/llama.cpp:server-cuda"
+IMG="192.168.20.254:30003/mlscan/llama-cpp@sha256:d854233e9f043046f363953047ff518a9792b044cea1d53f86d299e88344cd5f"
 KEY="$(kubectl -n "$NST" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 AVAIL="$(kubectl get node -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}')"

@@ -3,7 +3,7 @@
 #   bash tests/e2e/range_get_e2e.sh
 set -uo pipefail
 NS=mlscan-testing
-POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 [ -z "$POD" ] || [ "$POD" = "null" ] && { echo "нет пода mlscan-testing"; exit 2; }
 
 kubectl -n "$NS" exec -i "$POD" -- python3 - <<'PY'

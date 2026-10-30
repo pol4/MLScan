@@ -3,9 +3,9 @@
 # Требует: LLM_TEST_EBPF=1 у сервиса, BTF-ядро Kata, свободный GPU (или LLM_TEST_GPU=0).
 #   bash tests/e2e/llm_ebpf_inference_e2e.sh
 set -uo pipefail
-CTX="${MLSCAN_KUBE_CONTEXT:-microk8s}"
+CTX="${MLSCAN_KUBE_CONTEXT:-rtx}"
 NS=mlscan-testing
-POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 KEY="$(kubectl --context "$CTX" -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 kubectl --context "$CTX" -n "$NS" exec -i "$POD" -- python3 - "$KEY" <<'PY'
 import json, sys, time, urllib.error, urllib.request

@@ -4,7 +4,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
 NS=mlscan-testing
-POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 python3 - "$ROOT" <<'PY' > /tmp/dc.b64
@@ -27,7 +27,9 @@ def api(method, path, payload=None):
     return json.loads(op.open(req, timeout=60).read() or b"{}")
 api("POST", "/domain-class", {"domain": "Правонарушение", "policy_class": "illegal_manual"})
 r = api("POST", "/prompt-sets", {"name": "dc.xlsx", "content_b64": b64})
-assert any("ручная проверка" not in w for w in r.get("warnings", [])), r
+warns = r.get("warnings", [])
+assert r.get("version"), r                                   # набор принят, версия выдана
+assert not any("ручная проверка" in w for w in warns), r    # домен уже отображён на класс -> предупреждения о ручной проверке нет
 ver = r["version"]
 print("VER", ver)
 PY

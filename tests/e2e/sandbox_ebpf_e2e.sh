@@ -4,9 +4,10 @@
 # ConfigMap mlscan-ebpf-agent в mlscan-sandbox.
 #   bash tests/e2e/sandbox_ebpf_e2e.sh
 set -uo pipefail
-CTX="${MLSCAN_KUBE_CONTEXT:-microk8s}"
+CTX="${MLSCAN_KUBE_CONTEXT:-rtx}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 NS=mlscan-testing
-POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 kubectl --context "$CTX" -n mlscan-sandbox create configmap mlscan-ebpf-agent \
   --from-file=ebpf_agent.py=deploy/v3/sandbox/kata-btf/ebpf_agent.py --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
 KEY="$(kubectl --context "$CTX" -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"

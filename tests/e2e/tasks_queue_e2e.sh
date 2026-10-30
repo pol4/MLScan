@@ -11,9 +11,9 @@ python3 -c "import sys; sys.path.insert(0,'$ROOT/deploy/v3/control'); import tas
   | kubectl -n "$NS" exec -i postgres-0 -- psql -U mlscan -d mlscan -q || exit 1
 
 echo "== enqueue + dequeue (порядок приоритетов) =="
-python3 - <<'PY' > /tmp/tasks_e2e.sql
+ROOT="$ROOT" python3 - <<'PY' > /tmp/tasks_e2e.sql
 import sys
-sys.path.insert(0, "deploy/v3/control")
+sys.path.insert(0, "%s/deploy/v3/control" % __import__("os").environ["ROOT"])
 import tasks_sql as t
 import pq
 print("DELETE FROM tasks WHERE tenant='e2e';")

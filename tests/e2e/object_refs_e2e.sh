@@ -4,6 +4,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
 NS=mlscan-data
 SHA="$(python3 -c 'print("ab"*32)')"
 
@@ -11,9 +12,9 @@ echo "== применяем схему v3 (object_refs) =="
 kubectl -n "$NS" exec -i postgres-0 -- psql -U mlscan -d mlscan -q < "$ROOT/deploy/v3/db/schema-v3.sql" || exit 1
 
 echo "== refcount: add x2 -> 2, del -> 1, drop -> 0 =="
-python3 - "$SHA" <<'PY' > /tmp/refs.sql
+ROOT="$ROOT" python3 - "$SHA" <<'PY' > /tmp/refs.sql
 import sys
-sys.path.insert(0, "deploy/v3/data")
+sys.path.insert(0, __import__("os").environ.get("ROOT", ".") + "/deploy/v3/data")
 import objectrefs as r
 sha = sys.argv[1]
 print("DELETE FROM object_refs WHERE sha256='%s';" % sha)

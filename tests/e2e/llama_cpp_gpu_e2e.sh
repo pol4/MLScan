@@ -6,7 +6,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
 XLSX="${1:-/home/col/Documents/Сибинтек/LLM_Sec/questions_v9.xlsx}"; N="${2:-10}"; CUDA_IDX="${3:-1}"; GPU_COUNT="${4:-1}"
 NS_BUILD=mlscan-build; NS_T=mlscan-testing
-IMG="ghcr.io/ggml-org/llama.cpp:server-cuda"
+IMG="192.168.20.254:30003/mlscan/llama-cpp@sha256:d854233e9f043046f363953047ff518a9792b044cea1d53f86d299e88344cd5f"
 MODEL_URL="https://huggingface.co/ggml-org/gemma-3-270m-it-GGUF/resolve/main/gemma-3-270m-it-Q8_0.gguf"
 [ -f "$XLSX" ] || { echo "нет файла вопросов: $XLSX"; exit 2; }
 KEY="$(kubectl -n "$NS_T" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \

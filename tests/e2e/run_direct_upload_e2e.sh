@@ -7,7 +7,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NS=mlscan-testing
 SIZE_MB="${1:-300}"
-POD=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name' )
+POD=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name' )
 
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' 2>/dev/null \
   | base64 -d 2>/dev/null \
@@ -22,6 +22,6 @@ kubectl -n "$NS" cp "$HERE/direct_upload.py" "$POD":/tmp/direct_upload.py >/dev/
 # генерируем файл нужного размера внутри пода и грузим его напрямую в S3
 kubectl -n "$NS" exec "$POD" -- sh -c \
   "head -c $((SIZE_MB*1024*1024)) /dev/urandom > /var/tmp/direct-test.bin && ls -l /var/tmp/direct-test.bin"
-kubectl -n "$NS" exec "$POD" -- python3 /tmp/direct_upload.py \
+kubectl -n "$NS" exec "$POD" -- python3 /tmp/direct_upload.py --internal \
   --base http://127.0.0.1:8080 --key "$KEY" --file /var/tmp/direct-test.bin \
   --name direct-test-$SIZE_MB.bin --fmt safetensors

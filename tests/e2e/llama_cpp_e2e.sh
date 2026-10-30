@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
 XLSX="${1:-/home/col/Documents/Сибинтек/LLM_Sec/questions_v9.xlsx}"
 N="${2:-10}"
 NS_BUILD=mlscan-build; NS_T=mlscan-testing
-IMG="ghcr.io/ggml-org/llama.cpp@sha256:1fa7f8f0ca663fdcf3203dc125a7e0b5c9e49c9ed054b049599666cd7e300eb0"
+IMG="192.168.20.254:30003/mlscan/llama-cpp@sha256:d854233e9f043046f363953047ff518a9792b044cea1d53f86d299e88344cd5f"
 MODEL_URL="https://huggingface.co/ggml-org/gemma-3-270m-it-GGUF/resolve/main/gemma-3-270m-it-Q8_0.gguf"
 
 [ -f "$XLSX" ] || { echo "нет файла вопросов: $XLSX"; exit 2; }

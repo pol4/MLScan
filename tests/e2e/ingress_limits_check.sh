@@ -39,9 +39,9 @@ except Exception: print("")')"
 BIG="/tmp/ingress-big-$RANDOM.bin"
 head -c $((SIZE_MB*1024*1024)) /dev/urandom > "$BIG"
 CODE="$(curl -s --noproxy '*' -o /tmp/ingress-resp.json -w '%{http_code}' --max-time 600 \
-  --resolve "api.mlscan.local:30217:$IP" \
+  --resolve "api.mlscan.local:31110:$IP" \
   -X POST -H "Authorization: Bearer $KEY" --upload-file "$BIG" \
-  "http://api.mlscan.local:30217/scans/upload?name=ingress-big.bin&fmt=safetensors")"
+  "http://api.mlscan.local:31110/scans/upload?name=ingress-big.bin&fmt=safetensors")"
 rm -f "$BIG"
 if [ "$CODE" = "202" ]; then ok "ingress принял $SIZE_MB МБ (202)"; else bad "ingress ответил $CODE: $(cat /tmp/ingress-resp.json 2>/dev/null | head -c 200)"; fi
 

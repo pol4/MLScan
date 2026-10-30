@@ -6,10 +6,10 @@
 # токеном), поэтому применяемость проверяется на уровне модуля сервиса внутри пода.
 #   bash tests/e2e/hf_token_e2e.sh
 set -uo pipefail
-CTX="${MLSCAN_KUBE_CONTEXT:-microk8s}"
+CTX="${MLSCAN_KUBE_CONTEXT:-rtx}"
 NS=mlscan-testing
 POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json \
-  | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+  | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 KEY="$(kubectl --context "$CTX" -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 TOK="hf_e2e_token_$(date +%s)"

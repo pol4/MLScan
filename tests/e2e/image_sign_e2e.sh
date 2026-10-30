@@ -2,13 +2,13 @@
 # E2E B4-lite: подпись и SBOM образов движков; политика IMAGES_REQUIRE_SIGNED.
 #   bash tests/e2e/image_sign_e2e.sh
 set -uo pipefail
-CTX="${MLSCAN_KUBE_CONTEXT:-microk8s}"; NS=mlscan-testing
-POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+CTX="${MLSCAN_KUBE_CONTEXT:-rtx}"; NS=mlscan-testing
+POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 KEY="$(kubectl --context "$CTX" -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 # политика — включаем на время теста
 kubectl --context "$CTX" -n "$NS" set env deploy/mlscan-testing IMAGES_REQUIRE_SIGNED=1 >/dev/null
 kubectl --context "$CTX" -n "$NS" rollout status deploy/mlscan-testing --timeout=240s >/dev/null
-POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 kubectl --context "$CTX" -n "$NS" exec -i "$POD" -- python3 - "$KEY" <<'PY'
 import json, sys, urllib.error, urllib.request
 key = sys.argv[1]

@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 NS=mlscan-testing
 SIZE_MB="${1:-300}"
 PART_MB="${2:-128}"
-POD=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name' )
+POD=$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name' )
 
 KEY="$(kubectl -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' 2>/dev/null \
   | base64 -d 2>/dev/null \
@@ -22,7 +22,7 @@ kubectl -n "$NS" cp "$HERE/direct_upload.py" "$POD":/tmp/direct_upload.py >/dev/
 kubectl -n "$NS" exec "$POD" -- sh -c "head -c $((SIZE_MB*1024*1024)) /dev/urandom > /var/tmp/resume-test.bin"
 
 echo "== фаза 1: частичная загрузка (ожидаем прерывание, код 42) =="
-OUT="$(kubectl -n "$NS" exec "$POD" -- python3 /tmp/direct_upload.py \
+OUT="$(kubectl -n "$NS" exec "$POD" -- python3 /tmp/direct_upload.py --internal \
   --base http://127.0.0.1:8080 --key "$KEY" --file /var/tmp/resume-test.bin \
   --name resume-test-$SIZE_MB.bin --stop-after 1 2>&1)" || true
 echo "$OUT"
@@ -32,6 +32,6 @@ UPID="${UID_LINE#RESUME_UPLOAD_ID=}"
 echo "upload_id=$UPID"
 
 echo "== фаза 2: возобновление и завершение =="
-kubectl -n "$NS" exec "$POD" -- python3 /tmp/direct_upload.py \
+kubectl -n "$NS" exec "$POD" -- python3 /tmp/direct_upload.py --internal \
   --base http://127.0.0.1:8080 --key "$KEY" --file /var/tmp/resume-test.bin \
   --upload-id "$UPID" --name resume-test-$SIZE_MB.bin

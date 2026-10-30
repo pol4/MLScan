@@ -140,7 +140,19 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
    llama.cpp, админ-панели, CI-gate и evidence — все проверки пройдены. Для АРМ без DNS-зоны добавлен
    `MLSCAN_HOST_MAP` (Chromium `--host-resolver-rules`): `analytics.mlscan.local`/`s3.mlscan.local` →
    адрес узла (иначе браузер не примет cookie сессии с `Domain=.mlscan.local`).
-9. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
-10. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
+9. ~~Адаптация e2e-набора под новый стенд~~ **СДЕЛАНО**: дефолты вынесены в `tests/e2e/lib/env.sh`
+   (контекст `rtx`, namespace'ы, `API_NODEPORT=31110`, `S3_ADDR`, pinned digest песочницы и движков из
+   farm-Harbor), исправлены относительные пути (`ROOT`), выбор Running-пода сервиса, namespace для
+   eBPF-сенсора (`mlscan-gpu`, runtime `kata-btf`), presigned-URL для внутренних клиентов
+   (`direct_upload.py --internal`). Зелёные: auth/JWT, image sign/SBOM, registry, gate/attest, evidence,
+   v3 metrics, sandbox_ebpf, llm_ebpf (все 5 правил), llm_events, llm_env, binding, detectors,
+   domain_class, downloads_gating, dynamic_plan, fairshare, gguf_autoclass/static, import_copy/endpoint,
+   integrations_gate, migration, ops/pipeline metrics, policy_signed, prefix_static, promptset,
+   queue_runtime, quota_upload, range_get, resume_restart, run_direct_upload/resume, slice_selector,
+   static_stream, tasks_queue, archive_walk/nested, ha_leader, object_refs.
+   Ограничены средой (не дефекты): hf_token/hf_download (egress из подов), multinode_rf (3 узла),
+   llama_cpp* (реальная модель на узле), ingress_limits_check (Istio ingress + DNS).
+10. Ротация секретов, перенос UI на Istio Gateway, при желании — ArgoCD-приложения (GitOps).
+11. Обновить `Arch_v3/20-operator-guide.md` (адреса: UI NodePort 31110, S3 `s3.mlscan.local:31317`,
    песочница — digest из farm-Harbor, runtime `kata-btf` для сканов) и прогнать скриншотный UI-тест.
    (адреса: UI NodePort 31110 на этом стенде).

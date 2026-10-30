@@ -3,10 +3,10 @@
 # вердикт bundle с подписанной аттестацией. Проверяет также защиту /llm/score run-token'ом.
 #   bash tests/e2e/bundle_test_e2e.sh
 set -uo pipefail
-CTX="${MLSCAN_KUBE_CONTEXT:-microk8s}"
+CTX="${MLSCAN_KUBE_CONTEXT:-rtx}"
 NS=mlscan-testing
 POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json \
-  | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+  | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 KEY="$(kubectl --context "$CTX" -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 
@@ -21,7 +21,7 @@ rows = m.db_query(
 if not rows:
     print("NONE")
 else:
-    cuda = [r for r in rows if "1fa7f8f0" in (r[2] or "")]     # реальный llama.cpp:server-cuda
+    cuda = [r for r in rows if "d854233e" in (r[2] or "")]     # реальный llama.cpp (CUDA) из farm-Harbor
     r = (cuda or rows)[0]
     cases = m.db_query("SELECT count(*) FROM llm_prompts p JOIN prompt_sets s ON s.version=p.prompt_set "
                        "WHERE s.active")

@@ -10,18 +10,21 @@
 # свободный CPU-слот (GPU не нужен).
 #   bash tests/e2e/llm_ebpf_e2e.sh
 set -uo pipefail
-CTX="${MLSCAN_KUBE_CONTEXT:-microk8s}"
+CTX="${MLSCAN_KUBE_CONTEXT:-rtx}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 NS=mlscan-testing
+# сенсору нужны root в госте и CAP_BPF/PERFMON/SYS_RESOURCE -> namespace с privileged PSA
+NS_AGENT="${NS_AGENT:-mlscan-gpu}"
 POD="$(kubectl --context "$CTX" -n "$NS" get pods -l app=mlscan-testing -o json \
-  | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+  | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 KEY="$(kubectl --context "$CTX" -n "$NS" get secret mlscan-keys -o jsonpath='{.data.MLSCAN_KEYS}' | base64 -d \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print([k for k,v in d.items() if v.get("roles")==["admin"]][0])')"
 SCAN="ebpf-e2e-$(date +%s)"; NONCE="n$(date +%s)"
 
 # 1) configmap с агентом и триггером
-kubectl --context "$CTX" -n mlscan-build create configmap kata-btf-ebpf \
-  --from-file=ebpf_smoke.py=deploy/v3/sandbox/kata-btf/ebpf_smoke.py \
-  --from-file=ebpf_agent.py=deploy/v3/sandbox/kata-btf/ebpf_agent.py \
+kubectl --context "$CTX" -n "$NS_AGENT" create configmap kata-btf-ebpf \
+  --from-file=ebpf_smoke.py="$ROOT"/deploy/v3/sandbox/kata-btf/ebpf_smoke.py \
+  --from-file=ebpf_agent.py="$ROOT"/deploy/v3/sandbox/kata-btf/ebpf_agent.py \
   --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
 cat > /tmp/ebpf-trigger.py <<'PY'
 import mmap, socket, subprocess, time
@@ -59,27 +62,29 @@ while time.time() < deadline:
         break
 subprocess.run(["/bin/cat", "/etc/hostname"], check=False)
 PY
-kubectl --context "$CTX" -n mlscan-build create configmap ebpf-trigger \
+kubectl --context "$CTX" -n "$NS_AGENT" create configmap ebpf-trigger \
   --from-file=trigger.py=/tmp/ebpf-trigger.py --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
 
 # 2) job: агент публикует события в сервис, триггер запускает shell внутри гостя
-kubectl --context "$CTX" -n mlscan-build delete jobs -l app=ebpf-e2e --ignore-not-found >/dev/null 2>&1
-sed -e "s|__SCAN__|$SCAN|g" -e "s|__NONCE__|$NONCE|g" -e "s|__KEY__|$KEY|g" <<'Y' | kubectl --context "$CTX" apply -f - >/dev/null
+kubectl --context "$CTX" -n "$NS_AGENT" delete jobs -l app=ebpf-e2e --ignore-not-found >/dev/null 2>&1
+sed -e "s|__SCAN__|$SCAN|g" -e "s|__NONCE__|$NONCE|g" -e "s|__KEY__|$KEY|g" -e "s|__NSAGENT__|$NS_AGENT|g" <<'Y' | kubectl --context "$CTX" apply -f - >/dev/null
 apiVersion: batch/v1
 kind: Job
-metadata: {name: ebpf-e2e, namespace: mlscan-build, labels: {app: ebpf-e2e}}
+metadata: {name: ebpf-e2e, namespace: __NSAGENT__, labels: {app: ebpf-e2e}}
 spec:
   backoffLimit: 0
   ttlSecondsAfterFinished: 900
   template:
     spec:
-      runtimeClassName: kata
+      runtimeClassName: kata-btf
       restartPolicy: Never
       containers:
       - name: agent
         image: python:3.12-slim
         command: ["sh","-c","python /opt/ebpf/ebpf_agent.py --duration 22 --post http://mlscan-testing.mlscan-testing.svc.cluster.local:8080 --key __KEY__ --scan-id __SCAN__ --nonce __NONCE__ & sleep 3; python /opt/trigger/trigger.py; sleep 15"]
         securityContext:
+          runAsNonRoot: false
+          runAsUser: 0
           allowPrivilegeEscalation: false
           capabilities: {drop: ["ALL"], add: ["BPF","PERFMON","SYS_RESOURCE"]}
         volumeMounts: [{name: code, mountPath: /opt/ebpf, readOnly: true},
@@ -90,13 +95,13 @@ spec:
       - name: trig
         configMap: {name: ebpf-trigger}
 Y
-if ! kubectl --context "$CTX" -n mlscan-build wait --for=condition=complete job/ebpf-e2e --timeout=180s >/dev/null 2>&1; then
-  echo "[FAIL] job агента не завершился"; kubectl --context "$CTX" -n mlscan-build logs job/ebpf-e2e 2>&1 | tail -8; exit 1
+if ! kubectl --context "$CTX" -n "$NS_AGENT" wait --for=condition=complete job/ebpf-e2e --timeout=180s >/dev/null 2>&1; then
+  echo "[FAIL] job агента не завершился"; kubectl --context "$CTX" -n "$NS_AGENT" logs job/ebpf-e2e 2>&1 | tail -8; exit 1
 fi
-kubectl --context "$CTX" -n mlscan-build logs job/ebpf-e2e 2>&1 | grep -E "bpf активен|/llm/events" | tail -3
+kubectl --context "$CTX" -n "$NS_AGENT" logs job/ebpf-e2e 2>&1 | grep -E "bpf активен|/llm/events" | tail -3
 
 # 3) проверка findings и антиподмены
-EGRESS_OK=$(kubectl --context "$CTX" -n mlscan-build logs job/ebpf-e2e 2>/dev/null | grep -c "egress-ok" || true)
+EGRESS_OK=$(kubectl --context "$CTX" -n "$NS_AGENT" logs job/ebpf-e2e 2>/dev/null | grep -c "egress-ok" || true)
 [ "${EGRESS_OK:-0}" -gt 0 ] && EGRESS_OK=1 || EGRESS_OK=0
 kubectl --context "$CTX" -n "$NS" exec -i "$POD" -- python3 - "$KEY" "$SCAN" "$NONCE" "$EGRESS_OK" <<'PY'
 import json, sys, urllib.error, urllib.request
@@ -140,5 +145,5 @@ assert st == 200 and ev.get("rejected", 0) >= 1 and not ev.get("findings"), (st,
 print("  [OK]   событие с чужим nonce отброшено (rejected=%d)" % ev["rejected"])
 PY
 RC=$?; [ "$RC" = "0" ] || { echo "[FAIL] llm ebpf e2e"; exit 1; }
-kubectl --context "$CTX" -n mlscan-build delete jobs -l app=ebpf-e2e --ignore-not-found >/dev/null 2>&1
+kubectl --context "$CTX" -n "$NS_AGENT" delete jobs -l app=ebpf-e2e --ignore-not-found >/dev/null 2>&1
 echo "B1 llm ebpf: OK"

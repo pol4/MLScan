@@ -66,6 +66,8 @@ def main():
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--upload-id", default="")
     ap.add_argument("--stop-after", type=int, default=0, help="прервать после N частей (тест resume)")
+    ap.add_argument("--internal", action="store_true",
+                    help="presigned-URL на внутренний адрес S3 (запуск из кластера)")
     args = ap.parse_args()
 
     path = args.file
@@ -80,7 +82,8 @@ def main():
         print(f"[direct] возобновление upload_id={uid}")
     else:
         st, init = _req("POST", f"{args.base}/uploads/initiate", args.key,
-                        {"name": name, "fmt": args.fmt, "sha256": sha, "size": size})
+                        {"name": name, "fmt": args.fmt, "sha256": sha, "size": size,
+                         **({"internal": True} if args.internal else {})})
         if st != 200:
             print("[direct] initiate failed:", st, init)
             sys.exit(1)
@@ -94,7 +97,8 @@ def main():
             print("[direct] OK" if st == 202 else f"[direct] FAIL complete {st} {rec}")
             return sys.exit(0 if st == 202 else 1)
 
-    st, st_info = _req("GET", f"{args.base}/uploads/{uid}/parts", args.key)
+    st, st_info = _req("GET", f"{args.base}/uploads/{uid}/parts"
+             + ("?internal=1" if args.internal else ""), args.key)
     if st != 200:
         print("[direct] parts failed:", st, st_info)
         sys.exit(1)

@@ -7,7 +7,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NS=mlscan-testing
 SIZE_MB="${1:-300}"
-API_NODEPORT="${API_NODEPORT:-30217}"
+API_NODEPORT="${API_NODEPORT:-31110}"
 API_HOST="${API_HOST:-api.mlscan.local}"
 
 NODE_IP="$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')"

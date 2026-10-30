@@ -6,7 +6,7 @@
 # Идемпотентно: существующие файлы не перезаписываются (кроме safetensors/zip — они детерминированы).
 #   bash tests/e2e/make_fixtures.sh
 set -uo pipefail
-CTX="${MLSCAN_KUBE_CONTEXT:-microk8s}"
+CTX="${MLSCAN_KUBE_CONTEXT:-rtx}"
 
 python3 - <<'PY'
 import json, os, struct, zipfile, random

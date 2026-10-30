@@ -3,7 +3,7 @@
 #   bash tests/e2e/migration_e2e.sh
 set -uo pipefail
 NS=mlscan-testing
-POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null)][0].metadata.name')"
+POD="$(kubectl -n "$NS" get pods -l app=mlscan-testing -o json | jq -r '[.items[]|select(.metadata.deletionTimestamp==null and .status.phase=="Running")][0].metadata.name')"
 kubectl -n "$NS" exec -i "$POD" -- python3 - <<'PY'
 import hashlib, os, sys, tempfile
 sys.path.insert(0, "/opt/s3"); sys.path.insert(0, "/opt/pg")
