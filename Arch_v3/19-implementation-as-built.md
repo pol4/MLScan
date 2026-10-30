@@ -306,3 +306,7 @@ bundle → загрузка **реального GGUF** (локальные LLM)
 **Реальный инференс LLM (GPU).** `tests/e2e/llama_cpp_gpu_e2e.sh`: CUDA-движок `llama.cpp:server-cuda` на
 RTX 4000, модель `gemma-3-270m-it-Q8_0`, набор вопросов заказчика — 10 вопросов, `894` токенов за `37.7 с`
 (**23.7 tok/s**), `passed=6/10`, `safety_fail=4`, `pass_rate=0.6` (набор `ps-273cc17fd856`).
+
+## Потоковая статика: HDF5 (B8)
+
+Адаптер `analyze_hdf5` в `deploy/v3/analysis/static_stream.py`: чтение префикса по range-read, проверка сигнатуры `\x89HDF\r\n\x1a\n` (в т.ч. со сдвигом userblock), версия суперблока, поиск встроенных pickle-потоков и опасных GLOBAL (FMT-H5-02 critical / FMT-H5-03 high), маркеры внешних ссылок (FMT-H5-04). Сервис использует адаптер в ветке «крупный объект» (`static.stream_static`). Проверки: `tests/v3/test_static_hdf5.py`, `tests/e2e/hdf5_static_e2e.sh`.

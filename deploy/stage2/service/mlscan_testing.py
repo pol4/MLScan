@@ -887,6 +887,13 @@ try:
 except Exception:  # noqa: BLE001
     format_adapter = None  # type: ignore
 
+# B8/P3: index-driven потоковая статика (safetensors/gguf/onnx/hdf5) через range-read S3
+sys.path.insert(0, "/opt/v3analysis")
+try:
+    import static_stream as stream_static  # noqa: E402
+except Exception:  # noqa: BLE001
+    stream_static = None  # type: ignore
+
 sys.path.insert(0, "/opt/auth")
 try:
     import authz  # noqa: E402
@@ -1606,6 +1613,24 @@ def _materialize_and_scan(scan_id: str, name: str, fmt: str, key: str, size: int
                 static.setdefault("findings", []).append(
                     {"check_id": "FMT-00", "category": "FMT", "title": "Ошибка адаптера формата",
                      "severity": "low", "confidence": 0.3, "evidence": str(exc)})
+        # P3/B8: index-driven потоковая статика (range-read по S3, без полной загрузки).
+        f = (fmt or "").lower()
+        if stream_static is not None and f in ("safetensors", "gguf", "onnx", "hdf5", "h5", "keras"):
+            try:
+                def _rng(off, ln, _key=key):
+                    return _s3.range_get(_key, off, ln)
+
+                st_out = stream_static.analyze(_rng, size, fmt=f)
+                if st_out.get("findings"):
+                    static.setdefault("findings", []).extend(st_out["findings"])
+                static["stream_static"] = {"format": st_out.get("format"),
+                                           "coverage": st_out.get("coverage"),
+                                           "details": st_out.get("details")}
+            except Exception as exc:  # noqa: BLE001
+                static.setdefault("findings", []).append(
+                    {"check_id": "FMT-01", "category": "FMT", "title": "Потоковая статика недоступна",
+                     "severity": "low", "confidence": 0.3,
+                     "evidence": f"{type(exc).__name__}: {exc}"})
         static["static_prefix_bytes"] = len(blob)
         dynamic = {"status": "skipped", "reason": "объект больше лимита локальной материализации"}
         findings = normalize(scan_id, rec.get("sha256", ""), static, dynamic)

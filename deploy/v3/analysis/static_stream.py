@@ -207,6 +207,75 @@ def analyze_onnx(reader, total_size: int, *, probe=4 * 1024 * 1024, **_) -> dict
     return {"format": "onnx", "coverage": coverage, "findings": findings, "details": details}
 
 
+HDF5_SIG = b"\x89HDF\r\n\x1a\n"
+PICKLE_STARTS = (b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05")
+# Модули, вызовы из которых при десериализации дают исполнение кода/доступ к ФС и сети.
+DANGEROUS_GLOBALS = (b"posix", b"nt", b"os", b"subprocess", b"builtins", b"system", b"eval",
+                     b"exec", b"pty", b"socket", b"pickle", b"shutil", b"__reduce__")
+
+
+def analyze_hdf5(reader, total_size: int, *, probe_bytes: int = 4 * 1024 * 1024, **_) -> dict:
+    """Статика HDF5 (h5/hdf5/keras): подпись+суперблок и поиск встроенных pickle-потоков.
+
+    HDF5/Keras-файлы часто содержат сериализованные объекты (атрибуты, конфиг Lambda-слоёв) —
+    встроенный pickle с опасными GLOBAL даёт исполнение кода при загрузке. Читаем только префикс
+    (bounded), полный обход B-деревьев не нужен: сигнатура+поиск pickle дают ранний сигнал.
+    """
+    findings: list[dict] = []
+    details: dict = {}
+    probe = min(max(probe_bytes, 4096), total_size) if total_size else probe_bytes
+    head = reader(0, min(4096, total_size or 4096)) or b""
+    base = 0
+    if not head.startswith(HDF5_SIG):                      # суперблок может быть со сдвигом (userblock)
+        for off in (512, 1024, 2048, 4096):
+            if (total_size or 0) > off + 8:
+                chunk = reader(off, 8) or b""
+                if chunk.startswith(HDF5_SIG):
+                    base = off
+                    head = reader(off, min(4096, total_size - off)) or b""
+                    break
+    coverage = {"index": False, "bytes_read": len(head), "probe_bytes": probe,
+                "index_ratio": round(len(head) / max(1, total_size), 4) if total_size else 0.0}
+    details["superblock_offset"] = base
+    if not head.startswith(HDF5_SIG):
+        findings.append(_f("FMT-H5-01", "Сигнатура HDF5 не найдена", "medium", 0.5,
+                           "нет \x89HDF\r\n\x1a\n в начале файла/по известным смещениям"))
+        return {"format": "hdf5", "coverage": coverage, "findings": findings, "details": details}
+    coverage["index"] = True
+    sb_ver = head[8] if len(head) > 8 else None
+    details["superblock_version"] = sb_ver
+
+    body = reader(base, probe) or b""
+    coverage["bytes_read"] = len(body)
+    details["probed_bytes"] = len(body)
+    hits: list[dict] = []
+    dangerous: list[str] = []
+    for mark in PICKLE_STARTS:
+        pos = body.find(mark)
+        while pos != -1 and len(hits) < 16:
+            window = body[pos:pos + 4096]
+            mods = sorted({m.decode("latin1") for m in DANGEROUS_GLOBALS if m in window})
+            if mods:
+                dangerous.extend(mods)
+            hits.append({"offset": base + pos, "protocol": mark.hex(), "modules": mods})
+            pos = body.find(mark, pos + 1)
+    details["pickle_streams"] = len(hits)
+    if hits:
+        uniq = sorted(set(dangerous))
+        if uniq:
+            findings.append(_f("FMT-H5-02", "Встроенный pickle с опасными GLOBAL в HDF5", "critical", 0.85,
+                               f"потоков: {len(hits)}, ссылки: {', '.join(uniq[:6])}"))
+        else:
+            findings.append(_f("FMT-H5-03", "Встроенный pickle-поток в HDF5", "high", 0.6,
+                               f"потоков: {len(hits)} (опасные GLOBAL не найдены)"))
+    low = body.lower()
+    if b"external" in low and b"_refs" in low:
+        findings.append(_f("FMT-H5-04", "Возможные внешние ссылки HDF5", "low", 0.4,
+                           "найдены маркеры external/_refs — данные могут лежать вне файла"))
+        details["has_external_refs"] = True
+    return {"format": "hdf5", "coverage": coverage, "findings": findings, "details": details}
+
+
 def analyze(reader, total_size: int, fmt: str = "safetensors", **kw) -> dict:
     """Диспетчер index-адаптеров по формату."""
     f = (fmt or "").lower()
@@ -214,4 +283,6 @@ def analyze(reader, total_size: int, fmt: str = "safetensors", **kw) -> dict:
         return analyze_gguf(reader, total_size, **kw)
     if f in ("onnx",):
         return analyze_onnx(reader, total_size, **kw)
+    if f in ("hdf5", "h5", "keras"):
+        return analyze_hdf5(reader, total_size, **kw)
     return analyze_safetensors(reader, total_size, **kw)

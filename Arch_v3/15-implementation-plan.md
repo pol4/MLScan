@@ -511,7 +511,7 @@ containerd-runtime-хендлеров; разные RuntimeClass → разны�
 | B5 | **Vault/AES-GCM, WORM-bucket + TSA**, mTLS | внешние сервисы PKI/KMS отсутствуют | инфраструктура KMS/PKI, object-lock bucket |
 | B6 | **Multi-node HA/DR**, GitOps-контроллер | одиночный узел; flux/argo — общий ресурс | целевой кластер + согласование GitOps |
 | B7 | **Доверенная judge-модель** для L3 | нужен отдельный инференс-хост | размещение judge-модели |
-| B8 | **HDF5-адаптер** статики, полная интеграция анализа в поток скана | приоритет/время | доработка по образцу GGUF/ONNX |
+| B8 | **HDF5-адаптер статики**, интеграция анализа в поток скана | **СДЕЛАНО**: index-driven адаптер HDF5 (`deploy/v3/analysis/static_stream.py`: сигнатура/суперблок со сдвигом userblock, поиск встроенных pickle-потоков и опасных GLOBAL → FMT-H5-01..04) и **встроен в поток скана** — ветка «крупный объект» читает по range-read S3 и добавляет `static.stream_static` (формат/coverage/details) и находки; юнит-тесты `tests/v3/test_static_hdf5.py` (7), e2e `tests/e2e/hdf5_static_e2e.sh` на реальном HDF5 (h5py, пикль в атрибуте): вердикт Dangerous, находка FMT-H5-02 |
 | B9 | **Перф-замеры 1 ТБ** | нет достаточного железа/сети | целевой стенд (≥10 Гбит/с, ТБ-диски) |
 
 **N6 закрыт:** JWT (HS256, exp/aud/iss, выдача `POST /auth/token` только admin) и rate-limit
