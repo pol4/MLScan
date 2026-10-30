@@ -1,0 +1,54 @@
+# Admission по подписи для образов MLScan из внутреннего реестра (cosign).
+#
+# Область действия — только образы проекта `mlscan` в farm-Harbor; сторонние базовые образы
+# (python:3.12-slim и т.п.) политикой не затрагиваются. Политика наша (имя mlscan-*), политики
+# соседнего продукта (aisandbox-*) не изменяются.
+#
+# Ключ подписи: deploy/reinstall/cosign.pub (приватный ключ — в Secret mlscan-cosign-key, вне git).
+# Образы подписаны: cosign sign --key cosign.key --tlog-upload=false <repo>@<digest>.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mlscan-verify-images
+  labels: {app.kubernetes.io/part-of: mlscan}
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+  - name: mlscan-images-signed
+    match:
+      any:
+      - resources:
+          kinds: [Pod]
+          namespaces:
+          - mlscan-sandbox
+          - mlscan-sandbox-ebpf
+          - mlscan-gpu
+          - mlscan-testing
+          - mlscan-build
+          - mlscan-signing-test
+    verifyImages:
+    - imageReferences:
+      - "192.168.20.254:30003/mlscan/*"
+      # проект mlscan приватный: креды берём из Secret в namespace Kyverno (v1.19: imageRegistryCredentials)
+      imageRegistryCredentials:
+        secrets:
+        - mlscan-registry-creds
+      mutateDigest: false
+      verifyDigest: true
+      required: true
+      attestors:
+      - count: 1
+        entries:
+        - keys:
+            # Подписи загружены без Rekor (cosign --tlog-upload=false), поэтому проверку
+            # прозрачности отключаем: иначе Kyverno тянет TUF-метаданные из интернета.
+            rekor:
+              ignoreTlog: true
+            ctlog:
+              ignoreSCT: true
+            publicKeys: |-
+              -----BEGIN PUBLIC KEY-----
+              MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0MmQ8mKni93d/a3ahlfGEmPxuacU
+              lz5Tcwptf9LlqU35IpCOsb2/2Fa4G7ul5sCy/Pi6lXcVdf8cM1a25mWJWQ==
+              -----END PUBLIC KEY-----

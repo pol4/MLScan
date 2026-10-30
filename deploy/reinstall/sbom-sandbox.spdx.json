@@ -1,0 +1,1165 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "mlscan/sandbox@sha256:2daad033ff10306c4ebee7670d203cad3151b502ef19d3931473dd2221e70090",
+  "documentNamespace": "https://mlscan.local/spdx/sandbox/2daad033ff10306c4ebee7670d203cad3151b502ef19d3931473dd2221e70090",
+  "creationInfo": {
+    "created": "2026-10-30T08:21:50Z",
+    "creators": [
+      "Tool: mlscan-sbomgen-1.0"
+    ]
+  },
+  "packages": [
+    {
+      "name": "mlscan/sandbox",
+      "SPDXID": "SPDXRef-Package-image",
+      "versionInfo": "sha256:2daad033ff10306c4ebee7670d203cad3151b502ef19d3931473dd2221e70090",
+      "downloadLocation": "NOASSERTION",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "2daad033ff10306c4ebee7670d203cad3151b502ef19d3931473dd2221e70090"
+        }
+      ]
+    },
+    {
+      "name": "dpkg:adduser",
+      "SPDXID": "SPDXRef-Package-2158d3851398",
+      "versionInfo": "3.152",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:apt",
+      "SPDXID": "SPDXRef-Package-1f67af57b5b4",
+      "versionInfo": "3.0.3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:base-files",
+      "SPDXID": "SPDXRef-Package-11ef1729d461",
+      "versionInfo": "13.8+deb13u7",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:base-passwd",
+      "SPDXID": "SPDXRef-Package-ef16bdd1b383",
+      "versionInfo": "3.6.7",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:bash",
+      "SPDXID": "SPDXRef-Package-056678b3cf6d",
+      "versionInfo": "5.2.37-2+b10",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:bsdutils",
+      "SPDXID": "SPDXRef-Package-eb01e52fe86e",
+      "versionInfo": "1:2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:ca-certificates",
+      "SPDXID": "SPDXRef-Package-2cc5de6e4979",
+      "versionInfo": "20250419+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:coreutils",
+      "SPDXID": "SPDXRef-Package-ccfc97a862d7",
+      "versionInfo": "9.7-3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:dash",
+      "SPDXID": "SPDXRef-Package-70f419f9ee85",
+      "versionInfo": "0.5.12-12",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:debconf",
+      "SPDXID": "SPDXRef-Package-91f8bf54aadb",
+      "versionInfo": "1.5.91",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:debian-archive-keyring",
+      "SPDXID": "SPDXRef-Package-6c92e3d1c4c9",
+      "versionInfo": "2025.1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:debianutils",
+      "SPDXID": "SPDXRef-Package-ca8dc7f65398",
+      "versionInfo": "5.23.2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:diffutils",
+      "SPDXID": "SPDXRef-Package-ac8299319d21",
+      "versionInfo": "1:3.10-4",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:dpkg",
+      "SPDXID": "SPDXRef-Package-de5832505b65",
+      "versionInfo": "1.22.22",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:findutils",
+      "SPDXID": "SPDXRef-Package-55be863ccbed",
+      "versionInfo": "4.10.0-3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:gcc-14-base",
+      "SPDXID": "SPDXRef-Package-96159351a82b",
+      "versionInfo": "14.2.0-19",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:grep",
+      "SPDXID": "SPDXRef-Package-5fe8a749cf40",
+      "versionInfo": "3.11-4",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:gzip",
+      "SPDXID": "SPDXRef-Package-3ec3dc351ffa",
+      "versionInfo": "1.13-1+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:hostname",
+      "SPDXID": "SPDXRef-Package-5acbfac1fb17",
+      "versionInfo": "3.25",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:init-system-helpers",
+      "SPDXID": "SPDXRef-Package-498167dd784d",
+      "versionInfo": "1.69~deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libacl1",
+      "SPDXID": "SPDXRef-Package-bdf0d07afda5",
+      "versionInfo": "2.3.2-2+b1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libapt-pkg7.0",
+      "SPDXID": "SPDXRef-Package-f27c9857c2cf",
+      "versionInfo": "3.0.3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libattr1",
+      "SPDXID": "SPDXRef-Package-169cb01c16df",
+      "versionInfo": "1:2.5.2-3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libaudit-common",
+      "SPDXID": "SPDXRef-Package-e21e696f8288",
+      "versionInfo": "1:4.0.2-2+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libaudit1",
+      "SPDXID": "SPDXRef-Package-84584717f5e8",
+      "versionInfo": "1:4.0.2-2+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libblkid1",
+      "SPDXID": "SPDXRef-Package-57a300a24081",
+      "versionInfo": "2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libbsd0",
+      "SPDXID": "SPDXRef-Package-05e506646949",
+      "versionInfo": "0.12.2-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libbz2-1.0",
+      "SPDXID": "SPDXRef-Package-905139849951",
+      "versionInfo": "1.0.8-6",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libc-bin",
+      "SPDXID": "SPDXRef-Package-c374eca4463a",
+      "versionInfo": "2.41-12+deb13u4",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libc6",
+      "SPDXID": "SPDXRef-Package-17d33e1a4c5d",
+      "versionInfo": "2.41-12+deb13u4",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libcap-ng0",
+      "SPDXID": "SPDXRef-Package-14acb02dbb74",
+      "versionInfo": "0.8.5-4+b1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libcap2",
+      "SPDXID": "SPDXRef-Package-f7e3dcb3a2a8",
+      "versionInfo": "1:2.75-10+deb13u1+b3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libcrypt1",
+      "SPDXID": "SPDXRef-Package-b0e4971b7dd6",
+      "versionInfo": "1:4.4.38-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libdb5.3t64",
+      "SPDXID": "SPDXRef-Package-55cac3302f63",
+      "versionInfo": "5.3.28+dfsg2-9",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libdebconfclient0",
+      "SPDXID": "SPDXRef-Package-1344492ec5cf",
+      "versionInfo": "0.280",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libffi8",
+      "SPDXID": "SPDXRef-Package-0c8d694c171c",
+      "versionInfo": "3.4.8-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libgcc-s1",
+      "SPDXID": "SPDXRef-Package-4a088cad2914",
+      "versionInfo": "14.2.0-19",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libgdbm6t64",
+      "SPDXID": "SPDXRef-Package-be52c8c35b5c",
+      "versionInfo": "1.24-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libgmp10",
+      "SPDXID": "SPDXRef-Package-4a8d123943be",
+      "versionInfo": "2:6.3.0+dfsg-3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libhogweed6t64",
+      "SPDXID": "SPDXRef-Package-2252f0fbe62b",
+      "versionInfo": "3.10.1-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:liblastlog2-2",
+      "SPDXID": "SPDXRef-Package-58664777f03e",
+      "versionInfo": "2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:liblz4-1",
+      "SPDXID": "SPDXRef-Package-4e2be66fa318",
+      "versionInfo": "1.10.0-4",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:liblzma5",
+      "SPDXID": "SPDXRef-Package-f9e9f0b75e69",
+      "versionInfo": "5.8.1-1+deb13u2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libmd0",
+      "SPDXID": "SPDXRef-Package-3ac8d9b3df2f",
+      "versionInfo": "1.1.0-2+b1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libmount1",
+      "SPDXID": "SPDXRef-Package-76a963f391dd",
+      "versionInfo": "2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libncursesw6",
+      "SPDXID": "SPDXRef-Package-c4ae875c192a",
+      "versionInfo": "6.5+20250216-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libnettle8t64",
+      "SPDXID": "SPDXRef-Package-7924ad24fd75",
+      "versionInfo": "3.10.1-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libpam-modules",
+      "SPDXID": "SPDXRef-Package-e71854d6f584",
+      "versionInfo": "1.7.0-5",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libpam-modules-bin",
+      "SPDXID": "SPDXRef-Package-f899a66ff12b",
+      "versionInfo": "1.7.0-5",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libpam-runtime",
+      "SPDXID": "SPDXRef-Package-002343cf8251",
+      "versionInfo": "1.7.0-5",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libpam0g",
+      "SPDXID": "SPDXRef-Package-d2f6721526ff",
+      "versionInfo": "1.7.0-5",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libpcre2-8-0",
+      "SPDXID": "SPDXRef-Package-3b67a6f29a3a",
+      "versionInfo": "10.46-1~deb13u3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libreadline8t64",
+      "SPDXID": "SPDXRef-Package-acaf0afa6cda",
+      "versionInfo": "8.2-6",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libseccomp2",
+      "SPDXID": "SPDXRef-Package-c515c129b2e2",
+      "versionInfo": "2.6.0-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libselinux1",
+      "SPDXID": "SPDXRef-Package-b2697676a55d",
+      "versionInfo": "3.8.1-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libsemanage-common",
+      "SPDXID": "SPDXRef-Package-83aa8c35f20c",
+      "versionInfo": "3.8.1-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libsemanage2",
+      "SPDXID": "SPDXRef-Package-dd815bc95935",
+      "versionInfo": "3.8.1-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libsepol2",
+      "SPDXID": "SPDXRef-Package-10977b55dd78",
+      "versionInfo": "3.8.1-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libsmartcols1",
+      "SPDXID": "SPDXRef-Package-b5d419ae6a08",
+      "versionInfo": "2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libsqlite3-0",
+      "SPDXID": "SPDXRef-Package-b2c59d1b6d3a",
+      "versionInfo": "3.46.1-7+deb13u2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libssl3t64",
+      "SPDXID": "SPDXRef-Package-1a092bde379d",
+      "versionInfo": "3.5.7-1~deb13u3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libstdc++6",
+      "SPDXID": "SPDXRef-Package-cbda070fd473",
+      "versionInfo": "14.2.0-19",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libsystemd0",
+      "SPDXID": "SPDXRef-Package-a4e4650cb11c",
+      "versionInfo": "257.13-1~deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libtinfo6",
+      "SPDXID": "SPDXRef-Package-303ad527824b",
+      "versionInfo": "6.5+20250216-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libudev1",
+      "SPDXID": "SPDXRef-Package-6c86a8982d9e",
+      "versionInfo": "257.13-1~deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libuuid1",
+      "SPDXID": "SPDXRef-Package-ec1de272f8b1",
+      "versionInfo": "2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libxxhash0",
+      "SPDXID": "SPDXRef-Package-736da66efbb0",
+      "versionInfo": "0.8.3-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:libzstd1",
+      "SPDXID": "SPDXRef-Package-44077a32f764",
+      "versionInfo": "1.5.7+dfsg-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:login",
+      "SPDXID": "SPDXRef-Package-98d0ab32f65b",
+      "versionInfo": "1:4.16.0-2+really2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:login.defs",
+      "SPDXID": "SPDXRef-Package-079543e52379",
+      "versionInfo": "1:4.17.4-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:mawk",
+      "SPDXID": "SPDXRef-Package-33c983936717",
+      "versionInfo": "1.3.4.20250131-1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:mount",
+      "SPDXID": "SPDXRef-Package-b37ac3819101",
+      "versionInfo": "2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:ncurses-base",
+      "SPDXID": "SPDXRef-Package-6370b73a4850",
+      "versionInfo": "6.5+20250216-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:ncurses-bin",
+      "SPDXID": "SPDXRef-Package-0d41234d18b6",
+      "versionInfo": "6.5+20250216-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:netbase",
+      "SPDXID": "SPDXRef-Package-69dbbb62c970",
+      "versionInfo": "6.5",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:openssl",
+      "SPDXID": "SPDXRef-Package-f5a68bce7ce2",
+      "versionInfo": "3.5.7-1~deb13u3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:openssl-provider-legacy",
+      "SPDXID": "SPDXRef-Package-765cb37f6a4b",
+      "versionInfo": "3.5.7-1~deb13u3",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:passwd",
+      "SPDXID": "SPDXRef-Package-9e9e5072da9e",
+      "versionInfo": "1:4.17.4-2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:perl-base",
+      "SPDXID": "SPDXRef-Package-7449e8759482",
+      "versionInfo": "5.40.1-6+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:readline-common",
+      "SPDXID": "SPDXRef-Package-beae9b4ed0e5",
+      "versionInfo": "8.2-6",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:sed",
+      "SPDXID": "SPDXRef-Package-6f89a6845b4e",
+      "versionInfo": "4.9-2+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:sqv",
+      "SPDXID": "SPDXRef-Package-bf154446e458",
+      "versionInfo": "1.3.0-3+b2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:sysvinit-utils",
+      "SPDXID": "SPDXRef-Package-3d3bb03da580",
+      "versionInfo": "3.14-4",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:tar",
+      "SPDXID": "SPDXRef-Package-f406eb5f18f5",
+      "versionInfo": "1.35+dfsg-3.1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:tzdata",
+      "SPDXID": "SPDXRef-Package-52b260a4c856",
+      "versionInfo": "2026e-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:util-linux",
+      "SPDXID": "SPDXRef-Package-7a9df21f3047",
+      "versionInfo": "2.41.5-0+deb13u1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "dpkg:zlib1g",
+      "SPDXID": "SPDXRef-Package-981d4ae97fca",
+      "versionInfo": "1:1.3.dfsg+really1.3.1-1+b1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-image"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-2158d3851398"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-1f67af57b5b4"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-11ef1729d461"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-ef16bdd1b383"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-056678b3cf6d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-eb01e52fe86e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-2cc5de6e4979"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-ccfc97a862d7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-70f419f9ee85"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-91f8bf54aadb"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-6c92e3d1c4c9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-ca8dc7f65398"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-ac8299319d21"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-de5832505b65"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-55be863ccbed"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-96159351a82b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-5fe8a749cf40"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-3ec3dc351ffa"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-5acbfac1fb17"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-498167dd784d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-bdf0d07afda5"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-f27c9857c2cf"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-169cb01c16df"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-e21e696f8288"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-84584717f5e8"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-57a300a24081"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-05e506646949"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-905139849951"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-c374eca4463a"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-17d33e1a4c5d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-14acb02dbb74"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-f7e3dcb3a2a8"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-b0e4971b7dd6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-55cac3302f63"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-1344492ec5cf"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-0c8d694c171c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-4a088cad2914"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-be52c8c35b5c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-4a8d123943be"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-2252f0fbe62b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-58664777f03e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-4e2be66fa318"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-f9e9f0b75e69"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-3ac8d9b3df2f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-76a963f391dd"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-c4ae875c192a"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-7924ad24fd75"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-e71854d6f584"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-f899a66ff12b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-002343cf8251"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-d2f6721526ff"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-3b67a6f29a3a"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-acaf0afa6cda"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-c515c129b2e2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-b2697676a55d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-83aa8c35f20c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-dd815bc95935"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-10977b55dd78"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-b5d419ae6a08"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-b2c59d1b6d3a"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-1a092bde379d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-cbda070fd473"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-a4e4650cb11c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-303ad527824b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-6c86a8982d9e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-ec1de272f8b1"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-736da66efbb0"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-44077a32f764"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-98d0ab32f65b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-079543e52379"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-33c983936717"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-b37ac3819101"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-6370b73a4850"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-0d41234d18b6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-69dbbb62c970"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-f5a68bce7ce2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-765cb37f6a4b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-9e9e5072da9e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-7449e8759482"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-beae9b4ed0e5"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-6f89a6845b4e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-bf154446e458"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-3d3bb03da580"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-f406eb5f18f5"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-52b260a4c856"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-7a9df21f3047"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-image",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-981d4ae97fca"
+    }
+  ]
+}

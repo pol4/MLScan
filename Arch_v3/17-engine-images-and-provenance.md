@@ -217,6 +217,34 @@ service="harbor-registry"` → это Harbor, анонимный pull/push за�
 на образы `192.168.20.116:30003/{dev,library,…}/*` — наши образы не блокирует, поэтому локальный обход
 (тег + импорт) рабочий, но не является целевым способом доставки.
 
+## 9b. Подпись образов (cosign) + SBOM + admission по подписи
+
+Внутренние образы MLScan подписаны и проверяются **на входе в кластер** (Kyverno), SBOM приложен как
+аттестация. Проделано на стенде (30.10.2026):
+
+| Шаг | Как |
+|---|---|
+| Ключи | `cosign generate-key-pair`; публичный ключ — в репозитории (`deploy/reinstall/cosign.pub`), приватный — только в Secret `mlscan-cosign-key` (ns `mlscan-testing`), вне git |
+| Подпись | `cosign sign --key cosign.key --tlog-upload=false --yes <repo>@<digest>` для `mlscan/sandbox`, `mlscan/llama-cpp:cuda\|cpu`, `mlscan/nvidia-device-plugin` (подпись = OCI-артефакт в Harbor, по digest) |
+| Проверка | `cosign verify --key cosign.pub --insecure-ignore-tlog <repo>@<digest>` → «signatures were verified against the specified public key» |
+| SBOM | `sbom-sandbox.spdx.json` (SPDX 2.3, 87 пакетов: dpkg+pip из реального образа) → `cosign attest --type spdxjson`; проверяется `cosign verify-attestation` |
+| Admission | наша `ClusterPolicy mlscan-verify-images` (Kyverno v1.19, `validationFailureAction: Enforce`) по образАМ `192.168.20.254:30003/mlscan/*` в наших namespace'ах (`mlscan-sandbox`, `-sandbox-ebpf`, `-gpu`, `-testing`, `-build`, `-signing-test`); политики соседнего продукта не изменяются |
+
+Обязательные детали (иначе проверка не работает):
+* подписи загружены без Rekor → в политике `keys.rekor.ignoreTlog: true` и `keys.ctlog.ignoreSCT: true`
+  (иначе Kyverno тянет TUF из интернета и падает);
+* проект `mlscan` приватный → `imageRegistryCredentials.secrets: [mlscan-registry-creds]`; Secret создаётся
+  и **в namespace `kyverno`** (проверяющий ходит в реестр сам);
+* CA реестра добавлен в доверие Kyverno (ConfigMap `farm-harbor-ca` + `SSL_CERT_FILE` в
+  `kyverno-admission-controller`) — иначе клиент уходил на plain HTTP и получал 400.
+
+Проверено: pod с **неподписанным** образом из `mlscan/*` отклоняется («no signatures found»), pod с
+подписанным digest'ом создаётся; сквозной скан (`Malicious`, покрытие complete) и LLM-тест при
+включённой политике работают.
+
+Ротация креды реестра: `deploy/reinstall/rotate-registry-secret.sh` (создаёт новый robot, обновляет
+Secret в наших namespace'ах и в `kyverno`, опционально удаляет старые; admin-креды — только через env).
+
 ## 10. Жизненный цикл и retention
 
 - Образы: TTL/карантин по политике; GC по `refcount` (образ не нужен, если нет bundles/бандлов/

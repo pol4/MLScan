@@ -110,7 +110,7 @@ kubectl -n mlscan-testing set env deploy/mlscan-testing \
    `mlscan/llama-cpp:cuda|cpu`, `mlscan/nvidia-device-plugin:v0.17.0`. Сканы идут **по digest из Harbor**
    (проверено: `Malicious` + complete coverage; GPU-тест движка из Harbor → `Needs review`/`block` +
    аттестация `sha256:64733001…`). Подробности — `17-engine-images-and-provenance.md` §9-pre.
-   Осталось: rotation секрета robot'а, cosign/SBOM.
+   ~~Осталось~~ **СДЕЛАНО**: cosign-подпись внутренних образов (sandbox, llama-cpp:cuda|cpu, nvidia-device-plugin), SBOM (SPDX, 87 пакетов) как аттестация, admission `mlscan-verify-images` (Enforce для `192.168.20.254:30003/mlscan/*` в наших namespace'ах) — неподписанный образ отклоняется, подписанный допускается; скрипт ротации robot-секрета `deploy/reinstall/rotate-registry-secret.sh`. Детали — `17-…md` §9b.
 2. GPU: **согласовать runtime-хендлер `nvidia`** (см. §4) → RuntimeClass → LLM-тесты на CUDA-движке
    `ghcr.io/ggml-org/llama.cpp@sha256:0283744a…`.
 3. ~~eBPF~~ **СДЕЛАНО (стенд)**: Kata с debug-ядром (BTF в госте) через отдельный runtime-хендлер `kata-btf` (drop-in `98-kata-btf.toml` + `configuration-qemu-btf.toml`), RuntimeClass `kata-btf`, namespace `mlscan-sandbox-ebpf` (PSA privileged) с netpol/RBAC/CM/sinkhole; в сервисе включены `SANDBOX_EBPF=1`, `SANDBOX_RUNTIME_CLASS=kata-btf`, `SANDBOX_EBPF_NS=mlscan-sandbox-ebpf`.
