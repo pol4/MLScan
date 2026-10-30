@@ -3498,11 +3498,35 @@ class Handler(BaseHTTPRequestHandler):
                            "COALESCE(v.signature,'') FROM bundles b "
                            "LEFT JOIN bundle_verdicts v ON v.bundle_id=b.bundle_id "
                            "WHERE b.model_sha256=" + _lit(sha) + " ORDER BY b.created DESC") or []
-        data = {"artifact": art, "scan": {"scan_id": (rec or {}).get("scan_id"),
+        scan_id = (rec or {}).get("scan_id")
+        findings = (rec or {}).get("findings") or []
+        # A5: детализация отчёта — находки по фазам, покрытие по модулям, песочница, eBPF-события.
+        by_phase: dict = {}
+        for f in findings:
+            ph = (f.get("phase") or f.get("category") or "other")
+            by_phase.setdefault(str(ph), []).append(
+                {"check_id": f.get("check_id"), "severity": f.get("severity"), "title": f.get("title")})
+        llm_rules: list = []
+        if DB_ENABLED and scan_id:
+            try:
+                rows_llm = db_query("SELECT check_id,severity,count(*) FROM llm_events WHERE scan_id="
+                                    + _lit(scan_id) + " GROUP BY check_id,severity ORDER BY check_id") or []
+                llm_rules = [{"check_id": r[0], "severity": r[1], "count": int(r[2] or 0)} for r in rows_llm]
+            except Exception:  # noqa: BLE001
+                llm_rules = []
+        sb = (rec or {}).get("sandbox") or {}
+        data = {"artifact": art, "scan": {"scan_id": scan_id,
                                           "state": (rec or {}).get("state"),
                                           "verdict": (rec or {}).get("verdict"),
+                                          "reason": (rec or {}).get("reason"),
                                           "coverage": (rec or {}).get("coverage"),
-                                          "findings": (rec or {}).get("findings") or []},
+                                          "findings": findings},
+                "findings_by_phase": by_phase,
+                "sandbox": {"status": sb.get("status"), "timed_out": sb.get("timed_out"),
+                            "format": sb.get("format"), "load": sb.get("load"),
+                            "behavior_findings": [f.get("check_id")
+                                                  for f in ((sb.get("behavior") or {}).get("findings") or [])]},
+                "llm_events": {"count": sum(r["count"] for r in llm_rules), "rules": llm_rules},
                 "bundles": [dict(zip(("bundle_id", "engine_image", "prompt_set", "detectors", "verdict",
                                       "action", "attestation_digest", "signature"), r)) for r in bundles]}
         if kind == "json":

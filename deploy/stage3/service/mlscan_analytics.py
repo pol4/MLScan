@@ -809,6 +809,22 @@ V3UI_SCRIPT = """
         +"<div id='v3bind-status' style='font-size:12px;color:#9aa4b2'></div>"
         +"<br><b>Находки последнего скана:</b><ul>"+(fnd||'<li>нет</li>')+"</ul>"
         +"<b>История тестов:</b><ul>"+((d.scans||[]).map(s=>"<li>"+esc(s.scan_id)+" — "+esc(s.state||'')+" / "+esc(s.verdict||'')+" ("+esc(s.finished||'')+")</li>").join('')||'<li>нет</li>')+"</ul>";
+      // A5: детализация отчёта — покрытие, находки по фазам, eBPF-правила, песочница
+      api('/v3/artifacts/'+encodeURIComponent(sha)+'/report.json').then(rep=>{
+        const cov=(rep.scan||{}).coverage||{}; const bp=rep.findings_by_phase||{};
+        const llm=rep.llm_events||{}; const sb=rep.sandbox||{};
+        const ph=Object.keys(bp).map(k=>"<b>"+esc(k)+"</b>: "+esc((bp[k]||[]).map(f=>f.check_id).join(', '))).join('; ');
+        const rules=(llm.rules||[]).map(r=>esc(r.check_id)+" ("+esc(r.severity)+"×"+esc(r.count)+")").join(', ');
+        detail.insertAdjacentHTML('beforeend',
+          "<div style='margin-top:8px;font-size:12px;color:#c8d2e0'>"
+          +"покрытие: "+(cov.complete?"<b style='color:#8fd18f'>полное</b>":"<span style='color:#e0b060'>неполное</span>")
+          +(cov.failed&&cov.failed.length?(" ("+esc(cov.failed.join(', '))+")"):"")
+          +"<br>находки по фазам: "+(ph||"—")
+          +"<br>eBPF-правила: "+(rules||"—")+" (событий: "+esc(llm.count||0)+")"
+          +"<br>песочница: "+esc(sb.status||"—")+" / "+(sb.load&&sb.load.ok?"загрузка ok":"загрузка с ошибками")
+          +" ["+esc((sb.behavior_findings||[]).join(', ')||"находок нет")+"]"
+          +"</div>");
+      }).catch(()=>{});
       api('/images/list').then(l=>{const sel=document.getElementById('v3bind-engine');
         if(sel)(l.images||[]).forEach(i=>{const o=document.createElement('option');o.value=i.digest;
           o.textContent=(i.ref||i.digest).slice(0,60)+(i.signed?' [signed]':'');sel.appendChild(o);});});

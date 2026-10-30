@@ -110,6 +110,16 @@ function tapi(p) {
       if (/вердикт/i.test(txt)) ok('карточка артефакта: показан вердикт'); else bad('карточка: нет вердикта');
       if (/Находки/i.test(txt)) ok('карточка: блок находок'); else bad('карточка: нет находок');
       if (/История тестов/i.test(txt)) ok('карточка: история тестов'); else bad('карточка: нет истории');
+      // A5: детализация отчёта в карточке (покрытие/фазы/eBPF/песочница) — дожидаемся подгрузки report.json
+      await page.waitForFunction(() => {
+        const el = document.getElementById('v3artdetail');
+        return el && /покрытие:|eBPF-правила:|песочница:/.test(el.textContent || '');
+      }, { timeout: 60000, polling: 500 }).catch(() => {});
+      const detailTxt = await page.$eval('#v3artdetail', (e) => e.textContent || '');
+      for (const [needle, name] of [['покрытие:', 'покрытие'], ['находки по фазам', 'находки по фазам'],
+                                    ['eBPF-правила', 'eBPF-правила'], ['песочница:', 'состояние песочницы']]) {
+        if (detailTxt.includes(needle)) ok('карточка: ' + name); else bad('карточка: нет блока «' + name + '»');
+      }
       const reportOk = await page.evaluate(async (s) => {
         const r = await fetch('/v3/artifacts/' + encodeURIComponent(s) + '/report.json', { cache: 'no-store' });
         if (!r.ok) return 'HTTP ' + r.status;
@@ -163,10 +173,16 @@ function tapi(p) {
     }
 
     console.log('== API: gate и evidence');
+    const ping = await tapi('/healthz');
+    if (ping.status !== 200) {
+      console.log('[skip] локальный API недоступен (' + (ping.status || 'нет соединения') +
+        ') — gate/evidence проверяются в tests/e2e/reinstall_smoke.sh');
+    } else {
     const gate = await tapi('/gate?image=' + encodeURIComponent('192.168.20.254:30003/mlscan/llama-cpp@sha256:d854233e9f043046f363953047ff518a9792b044cea1d53f86d299e88344cd5f') + '&model=sha256:0ef57d2c838458a1952664260dcba38e5bdda37494f3af732f06e4add24068e3');
     if (gate.json && gate.json.decision) ok('CI-gate: ' + gate.json.decision); else bad('CI-gate не ответил решением');
     const ev = await tapi('/v3/evidence/verify');
     if (ev.json && ev.json.ok) ok('evidence verify: ok, записей ' + ev.json.count); else bad('evidence verify не прошёл');
+    }
 
     const badHttp = httpErrors.filter((x) => !/40[13]/.test(x));
     if (badHttp.length) bad('HTTP-ошибки на странице: ' + badHttp.slice(0, 5).join(', '));
