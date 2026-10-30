@@ -514,6 +514,8 @@ containerd-runtime-хендлеров; разные RuntimeClass → разны�
 | B8 | **HDF5-адаптер статики**, интеграция анализа в поток скана | **СДЕЛАНО**: index-driven адаптер HDF5 (`deploy/v3/analysis/static_stream.py`: сигнатура/суперблок со сдвигом userblock, поиск встроенных pickle-потоков и опасных GLOBAL → FMT-H5-01..04) и **встроен в поток скана** — ветка «крупный объект» читает по range-read S3 и добавляет `static.stream_static` (формат/coverage/details) и находки; юнит-тесты `tests/v3/test_static_hdf5.py` (7), e2e `tests/e2e/hdf5_static_e2e.sh` на реальном HDF5 (h5py, пикль в атрибуте): вердикт Dangerous, находка FMT-H5-02 |
 | B9 | **Перф-замеры 1 ТБ** | нет достаточного железа/сети | целевой стенд (≥10 Гбит/с, ТБ-диски) |
 
+**A5 закрыто (детализация отчёта):** `/v3/artifacts/<sha>/report.json` отдаёт находки по фазам, покрытие по модулям, состояние песочницы и eBPF-правила (`llm_events`); карточка артефакта в UI показывает эти блоки (проверяется `tests/ui/ui_smoke_e2e.js`).
+
 **N6 закрыт:** JWT (HS256, exp/aud/iss, выдача `POST /auth/token` только admin) и rate-limit
 (429+Retry-After, per subject/IP, управление на лету); реальные DNS — внешняя зависимость (нужна зона/
 ExternalDNS). Добавлен `deploy/stage2/sync-code.sh` (безопасная синхронизация кода без сброса digest'ов).
