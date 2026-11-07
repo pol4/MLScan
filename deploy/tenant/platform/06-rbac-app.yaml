@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mlscan-testing
+  namespace: t-mlscan-app
+imagePullSecrets:
+  - name: harbor-pull

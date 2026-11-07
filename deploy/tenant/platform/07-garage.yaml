@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: garage-config
+  namespace: t-mlscan-app
+data:
+  garage.toml: |
+    metadata_dir = "/var/lib/garage/meta"
+    data_dir = "/var/lib/garage/data"
+    db_engine = "lmdb"
+    replication_factor = 1
+    rpc_bind_addr = "[::]:3901"
+    rpc_public_addr = "127.0.0.1:3901"
+    bootstrap_peers = []
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "[::]:3900"
+    root_domain = ".s3.garage.localhost"
+    [s3_web]
+    bind_addr = "[::]:3902"
+    root_domain = ".web.garage.localhost"
+    index = "index.html"
+    [admin]
+    api_bind_addr = "[::]:3903"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-headless
+  namespace: t-mlscan-app
+spec:
+  clusterIP: None
+  selector: {app: garage}
+  ports:
+    - {name: rpc, port: 3901, targetPort: 3901}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage
+  namespace: t-mlscan-app
+spec:
+  selector: {app: garage}
+  ports:
+    - {name: s3, port: 3900, targetPort: 3900}
+    - {name: admin, port: 3903, targetPort: 3903}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: garage
+  namespace: t-mlscan-app
+spec:
+  serviceName: garage-headless
+  replicas: 0
+  selector:
+    matchLabels: {app: garage}
+  template:
+    metadata:
+      labels: {app: garage}
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: garage
+          image: harbor.platform.rtx.local/proxy-dockerhub/dxflrs/garage@sha256:a5706cf1f3d7b349ac5133ec59ad8181b709270b75e5f2fa7b3e1a5c07d67137
+          imagePullPolicy: IfNotPresent
+          command: ["/garage", "server"]
+          env:
+            - name: GARAGE_CONFIG_FILE
+              value: /etc/garage/garage.toml
+            - name: GARAGE_RPC_SECRET
+              valueFrom: {secretKeyRef: {name: garage-secrets, key: RPC_SECRET}}
+            - name: GARAGE_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: garage-secrets, key: ADMIN_TOKEN}}
+          ports:
+            - {name: s3, containerPort: 3900}
+            - {name: rpc, containerPort: 3901}
+            - {name: web, containerPort: 3902}
+            - {name: admin, containerPort: 3903}
+          readinessProbe:
+            tcpSocket: {port: 3900}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: "100m", memory: "256Mi"}
+            limits: {cpu: "2", memory: "2Gi"}
+          volumeMounts:
+            - {name: config, mountPath: /etc/garage, readOnly: true}
+            - {name: data, mountPath: /var/lib/garage}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: garage-config}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: ceph-rwo
+        resources:
+          requests:
+            storage: 200Gi

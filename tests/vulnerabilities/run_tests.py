@@ -67,13 +67,20 @@ def main() -> int:
     ap.add_argument("--analytics-url", default="")
     ap.add_argument("--key", required=True)
     ap.add_argument("--out", default=os.path.join(HERE, "REPORT.md"))
-    ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--timeout", type=int, default=360)
+    ap.add_argument("--limit", type=int, default=0, help="ограничить число образцов")
+    ap.add_argument("--filter", default="", help="подстрока имени образца")
     args = ap.parse_args()
     base = args.url.rstrip("/")
 
     expected = json.load(open(EXPECTED))
+    items = sorted(expected.items())
+    if args.filter:
+        items = [(n, e) for n, e in items if args.filter in n]
+    if args.limit:
+        items = items[:args.limit]
     rows, detected_n, missed_n, fp_n = [], 0, 0, 0
-    for name, exp in sorted(expected.items()):
+    for name, exp in items:
         path = os.path.join(SAMPLES, name)
         if not os.path.isfile(path):
             continue
@@ -128,8 +135,8 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] analytics: {exc}", file=sys.stderr)
 
-    total_mal = sum(1 for v in expected.values() if v["kind"] == "malicious")
-    total_ben = sum(1 for v in expected.values() if v["kind"] == "benign")
+    total_mal = sum(1 for _, v in items if v["kind"] == "malicious")
+    total_ben = sum(1 for _, v in items if v["kind"] == "benign")
     L = ["# Отчёт: проверка системы на синтетическом корпусе уязвимостей", ""]
     L.append(f"- Дата: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     L.append(f"- Образцов: {len(rows)} (malicious={total_mal}, benign={total_ben})")

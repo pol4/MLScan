@@ -30,6 +30,8 @@ import json
 import os
 import secrets
 import re
+import shutil
+import socket
 import ssl
 import sys
 import threading
@@ -49,7 +51,27 @@ ARTIFACTS_DIR = os.environ.get("ARTIFACTS_DIR", "/artifacts")
 HARNESS_CM = os.environ.get("HARNESS_CM", "mlscan-harness")
 JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT", "600"))
 ARTIFACT_PORT = int(os.environ.get("ARTIFACT_PORT", "8090"))
-ARTIFACT_BASE = os.environ.get("ARTIFACT_BASE", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8090")
+ARTIFACT_BASE_RAW = os.environ.get("ARTIFACT_BASE", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8090")
+
+
+def _resolve_artifact_base(base: str) -> str:
+    """Резолвит hostname ARTIFACT_BASE в IP на старте сервиса.
+
+    Sandbox-поды на изолированном субнете могут не иметь рабочего DNS в момент
+    старта; артефакт доставляется по IP, чтобы не зависеть от DNS песочницы.
+    """
+    try:
+        u = urllib.parse.urlparse(base)
+        host = u.hostname or ""
+        if host and not host.replace(".", "").isdigit():
+            ip = socket.gethostbyname(host)
+            return base.replace(host, ip, 1)
+    except Exception:
+        pass
+    return base
+
+
+ARTIFACT_BASE = _resolve_artifact_base(ARTIFACT_BASE_RAW)
 DATA_TMP = os.environ.get("DATA_TMP", "/var/tmp")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
 S3_ENABLED = bool(S3_ENDPOINT)
@@ -1183,9 +1205,11 @@ def stats() -> dict:
 # ----------------------------------------------------------------------------
 def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: str, fmt: str,
                          nonce: str = "", run_token: str = "") -> dict:
-    cmd = ('python -c "import urllib.request,sys;urllib.request.urlretrieve(sys.argv[1],sys.argv[2])" '
-           '"$ARTIFACT_URL" "/tmp/$MODEL_NAME" '
-           '&& python /opt/mlscan/harness.py "$MODEL_FMT" "$MODEL_NAME" < "/tmp/$MODEL_NAME"; '
+    cmd = ('for i in $(seq 1 10); do '
+           'python -c "import urllib.request,sys;r=urllib.request.urlopen(sys.argv[1],timeout=30);open(sys.argv[2],\'wb\').write(r.read())" '
+           '"$ARTIFACT_URL" "/tmp/$MODEL_NAME" && break; sleep 3; done; '
+           '[ -s "/tmp/$MODEL_NAME" ] || { echo "artifact download failed"; exit 1; }; '
+           'python /opt/mlscan/harness.py "$MODEL_FMT" "$MODEL_NAME" < "/tmp/$MODEL_NAME"; '
            'touch /tmp/sensor-stop')   # B1: сигнал сенсору, что скан закончился
     return {
         "apiVersion": "batch/v1", "kind": "Job",
@@ -1199,6 +1223,7 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                     "runtimeClassName": SANDBOX_RUNTIME_CLASS,
                     "automountServiceAccountToken": False,
                     "restartPolicy": "Never",
+                    "imagePullSecrets": [{"name": "harbor-pull"}],
                     "securityContext": ({"fsGroup": 65532, "seccompProfile": {"type": "RuntimeDefault"}}
                                         if (SANDBOX_EBPF and run_token) else
                                         {"runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
@@ -1226,6 +1251,9 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                         "volumeMounts": [
                             {"name": "harness", "mountPath": "/opt/mlscan", "readOnly": True},
                             {"name": "deception", "mountPath": "/deception", "readOnly": True},
+                            {"name": "deception-aws", "mountPath": "/deception/.aws", "readOnly": True},
+                            {"name": "deception-ssh", "mountPath": "/deception/.ssh", "readOnly": True},
+                            {"name": "deception-kube", "mountPath": "/deception/.kube", "readOnly": True},
                             {"name": "tmp", "mountPath": "/tmp"}],
                     }] + ([{
                         "name": "ebpf-agent",
@@ -1249,6 +1277,9 @@ def sandbox_job_manifest(job_name: str, scan_id: str, artifact_url: str, name: s
                     "volumes": (
                         [{"name": "harness", "configMap": {"name": HARNESS_CM}},
                          {"name": "deception", "configMap": {"name": "mlscan-deception"}},
+                         {"name": "deception-aws", "configMap": {"name": "mlscan-deception-aws"}},
+                         {"name": "deception-ssh", "configMap": {"name": "mlscan-deception-ssh"}},
+                         {"name": "deception-kube", "configMap": {"name": "mlscan-deception-kube"}},
                          {"name": "tmp", "emptyDir": {"sizeLimit": TMP_SIZE}}]
                         + ([{"name": "ebpf", "configMap": {"name": EBPF_AGENT_CM}}]
                            if (SANDBOX_EBPF and run_token) else [])),
@@ -1456,7 +1487,7 @@ def process_scan(scan_id: str, name: str, fmt: str, path: str) -> None:
                 pass
 
         rec = load_scan(scan_id) or {}
-        artifact_url = f"{ARTIFACT_BASE}/a/{scan_id}/{rec.get('artifact_token','')}/{urllib.parse.quote(name)}"
+        artifact_url = f"{_resolve_artifact_base(ARTIFACT_BASE_RAW)}/a/{scan_id}/{rec.get('artifact_token','')}/{urllib.parse.quote(name)}"
         sandbox_fmt = fmt
         af = (static or {}).get("adapter_format")
         # Формат песочницы = формат адаптера: harness умеет загружать не только pickle,
@@ -1964,7 +1995,7 @@ class Handler(BaseHTTPRequestHandler):
                     d = os.path.join(ARTIFACTS_DIR, scan_id)
                     os.makedirs(d, exist_ok=True)
                     local = os.path.join(d, name)
-                    os.replace(tmp, local)
+                    shutil.move(tmp, local)
                     rec["local_path"] = local
                 except OSError:
                     rec["local_error"] = "локальный фолбэк недоступен (RO FS)"
@@ -1972,7 +2003,7 @@ class Handler(BaseHTTPRequestHandler):
             d = os.path.join(ARTIFACTS_DIR, scan_id)
             os.makedirs(d, exist_ok=True)
             local = os.path.join(d, name)
-            os.replace(tmp, local)
+            shutil.move(tmp, local)
             rec["local_path"] = local
         save_scan(rec)
         if DB_ENABLED:

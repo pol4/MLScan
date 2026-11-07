@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenant-mlscan
+  namespace: pf-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: tenant-mlscan
+  source:
+    repoURL: https://git.platform.rtx.local/mlscan/mlscan.git
+    targetRevision: main
+    path: deploy/tenant
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: t-mlscan-app
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=false

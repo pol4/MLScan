@@ -1,0 +1,108 @@
+CREATE TABLE IF NOT EXISTS artifacts (
+  id BIGSERIAL PRIMARY KEY,
+  sha256 TEXT UNIQUE NOT NULL,
+  blake3 TEXT,
+  size BIGINT NOT NULL,
+  format TEXT,
+  filename TEXT,
+  s3_key TEXT,
+  source TEXT,
+  uploader_id BIGINT,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS artifact_fingerprints (
+  id BIGSERIAL PRIMARY KEY,
+  artifact_id BIGINT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (artifact_id, kind, value)
+);
+CREATE TABLE IF NOT EXISTS scans (
+  id BIGSERIAL PRIMARY KEY,
+  scan_id TEXT UNIQUE NOT NULL,
+  artifact_id BIGINT REFERENCES artifacts(id) ON DELETE SET NULL,
+  status TEXT, stage TEXT, progress INT,
+  adapter TEXT, toolchain_version TEXT,
+  verdict TEXT, risk_score NUMERIC, policy_id BIGINT, reason TEXT,
+  timings JSONB,
+  started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS findings (
+  id BIGSERIAL PRIMARY KEY,
+  scan_id TEXT NOT NULL, level TEXT, check_id TEXT, category TEXT,
+  severity TEXT, confidence NUMERIC, title TEXT, evidence JSONB,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS evidence (
+  id BIGSERIAL PRIMARY KEY, scan_id TEXT,
+  prev_hash TEXT NOT NULL, hash TEXT NOT NULL, payload TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS artifact_deletions (
+  id BIGSERIAL PRIMARY KEY,
+  sha256 TEXT NOT NULL,
+  s3_key TEXT,
+  reason TEXT,
+  deleted_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS policies (
+  id BIGSERIAL PRIMARY KEY, version INT NOT NULL, body JSONB NOT NULL,
+  active BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS decisions (
+  id BIGSERIAL PRIMARY KEY, scan_id TEXT, policy_id BIGINT,
+  action TEXT, verdict TEXT, actor_id BIGINT, reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS users (
+  id BIGSERIAL PRIMARY KEY, subject TEXT UNIQUE, email TEXT, roles TEXT[],
+  password_hash TEXT, salt TEXT, iterations INT DEFAULT 200000,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS api_keys (
+  id BIGSERIAL PRIMARY KEY, user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+  key_hash TEXT UNIQUE NOT NULL, scopes TEXT[], expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY, value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS uploads (
+  id BIGSERIAL PRIMARY KEY, artifact_id BIGINT REFERENCES artifacts(id) ON DELETE SET NULL,
+  user_id BIGINT, request_id TEXT, ip TEXT, user_agent TEXT, bytes BIGINT,
+  status TEXT, started_at TIMESTAMPTZ DEFAULT now(), finished_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS upload_sessions (
+  upload_id TEXT PRIMARY KEY, s3_key TEXT, name TEXT, fmt TEXT, sha256 TEXT,
+  size BIGINT, tenant TEXT, part_size BIGINT, status TEXT, subject TEXT,
+  created TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS connections (
+  id BIGSERIAL PRIMARY KEY, user_id BIGINT, request_id TEXT, ip TEXT, user_agent TEXT,
+  path TEXT, method TEXT, status INT, ts TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ DEFAULT now(), actor_id BIGINT, action TEXT,
+  object_type TEXT, object_id TEXT, request_id TEXT, ip TEXT, details TEXT,
+  prev_hash TEXT, hash TEXT
+);
+CREATE OR REPLACE FUNCTION mlscan_deny_modify() RETURNS trigger AS $$
+BEGIN RAISE EXCEPTION 'append-only table'; END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS evidence_no_update ON evidence;
+CREATE TRIGGER evidence_no_update BEFORE UPDATE OR DELETE ON evidence
+  FOR EACH ROW EXECUTE FUNCTION mlscan_deny_modify();
+DROP TRIGGER IF EXISTS audit_no_update ON audit_log;
+CREATE TRIGGER audit_no_update BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION mlscan_deny_modify();
+CREATE INDEX IF NOT EXISTS idx_scans_artifact ON scans(artifact_id);
+CREATE INDEX IF NOT EXISTS idx_scans_verdict ON scans(verdict);
+CREATE INDEX IF NOT EXISTS idx_findings_scan ON findings(scan_id);
+CREATE INDEX IF NOT EXISTS idx_findings_sev ON findings(severity);
+CREATE INDEX IF NOT EXISTS idx_evidence_scan ON evidence(scan_id);
+CREATE INDEX IF NOT EXISTS idx_uploads_request ON uploads(request_id);
+CREATE INDEX IF NOT EXISTS idx_conn_request ON connections(request_id);
+CREATE INDEX IF NOT EXISTS idx_audit_request ON audit_log(request_id);

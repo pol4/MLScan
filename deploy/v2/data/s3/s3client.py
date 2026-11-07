@@ -116,6 +116,7 @@ class S3:
         conn = self._conn()
         if stream is not None:
             conn.putrequest(method, req_path)
+            conn.putheader("Host", headers["host"])
             for h in ("x-amz-content-sha256", "x-amz-date"):
                 conn.putheader(h, headers[h])
             if extra:
@@ -306,7 +307,9 @@ class S3:
         for k, v in (query or []):
             params.append((k, v))
         cq = self._canonical_query(params)
-        hdrs = {"host": f"{self.pub_host}:{self.pub_port}"}
+        default_port = 443 if self.pub_secure else 80
+        url_host = self.pub_host if self.pub_port == default_port else f"{self.pub_host}:{self.pub_port}"
+        hdrs = {"host": url_host}
         hdrs.update({k.lower(): v for k, v in (extra_headers or {}).items()})
         canonical_headers = "".join(f"{h}:{hdrs[h]}\n" for h in signed)
         canonical_request = "\n".join([method, path, cq, canonical_headers,
@@ -316,7 +319,7 @@ class S3:
         sig = hmac.new(_signing_key(self.secret, datestamp, self.region, "s3"),
                        string_to_sign.encode(), hashlib.sha256).hexdigest()
         scheme = "https" if self.pub_secure else "http"
-        return f"{scheme}://{self.pub_host}:{self.pub_port}{path}?{cq}&X-Amz-Signature={sig}"
+        return f"{scheme}://{url_host}{path}?{cq}&X-Amz-Signature={sig}"
 
     def presign_upload_part(self, key: str, upload_id: str, part_number: int,
                             expires: int = 3600) -> str:

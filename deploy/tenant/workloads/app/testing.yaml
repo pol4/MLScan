@@ -1,0 +1,126 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlscan-testing
+  namespace: t-mlscan-app
+  labels: {app: mlscan-testing, app.kubernetes.io/part-of: mlscan}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: mlscan-testing}
+  template:
+    metadata:
+      labels: {app: mlscan-testing}
+    spec:
+      serviceAccountName: mlscan-testing
+      automountServiceAccountToken: true
+      imagePullSecrets:
+        - name: harbor-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: testing
+          image: harbor.platform.rtx.local/mlscan/services@sha256:9e12aae9a9bd6596fd55664d94e45ee80d7026e6055618afbb146ea06b86fd12
+          imagePullPolicy: IfNotPresent
+          command: ["python", "/opt/svc/mlscan_testing.py"]
+          env:
+            - {name: SANDBOX_NS, value: t-mlscan-sandbox}
+            - {name: DATA_DIR, value: /data}
+            - {name: ARTIFACTS_DIR, value: /artifacts}
+            - {name: PORT, value: "8080"}
+            - {name: ARTIFACT_PORT, value: "8090"}
+            - {name: ARTIFACT_BASE, value: "http://mlscan-artifacts.t-mlscan-sandbox.svc.cluster.local:8090"}
+            - {name: JOB_TIMEOUT, value: "600"}
+            - {name: JOB_MEMORY, value: "3Gi"}
+            - {name: JOB_EPHEMERAL, value: "8Gi"}
+            - {name: TMP_SIZE, value: "6Gi"}
+            - name: SANDBOX_IMAGE
+              valueFrom: {configMapKeyRef: {name: mlscan-platform-config, key: SANDBOX_IMAGE}}
+            - {name: DATA_TMP, value: /var/tmp}
+            - name: S3_ENDPOINT
+              valueFrom: {secretKeyRef: {name: mlscan-s3, key: ENDPOINT}}
+            - name: S3_REGION
+              valueFrom: {secretKeyRef: {name: mlscan-s3, key: REGION}}
+            - name: S3_BUCKET
+              valueFrom: {secretKeyRef: {name: mlscan-s3, key: BUCKET}}
+            - name: S3_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-s3, key: ACCESS_KEY}}
+            - name: S3_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-s3, key: SECRET_KEY}}
+            - {name: S3_PUBLIC_ENDPOINT, value: "https://s3.platform.rtx.local"}
+            - name: PGHOST
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGHOST}}
+            - name: PGPORT
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGPORT}}
+            - name: PGUSER
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGUSER}}
+            - name: PGDATABASE
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGDATABASE}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGPASSWORD}}
+            - {name: MAX_UPLOAD, value: "1099511627776"}
+            - {name: S3_PART_SIZE, value: "67108864"}
+            - {name: S3_PART_WORKERS, value: "16"}
+            - {name: DIRECT_PART_SIZE, value: "268435456"}
+            - {name: RATE_LIMIT_RPS, value: "50"}
+            - {name: RATE_LIMIT_BURST, value: "100"}
+            - name: MLSCAN_JWT_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_EVIDENCE_KEY}}
+            - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+            - {name: MLSCAN_LANG, value: "ru"}
+            - {name: HF_MOCK, value: "0"}
+            - {name: HF_BASE_URL, value: "https://huggingface.co"}
+            - {name: HF_FLAKY, value: "0"}
+            - {name: HF_MAX_FILE_BYTES, value: "8589934592"}
+            - {name: HF_MAX_TOTAL_BYTES, value: "68719476736"}
+            - name: MLSCAN_TOKEN_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_EVIDENCE_KEY}}
+            - {name: PYTHONUTF8, value: "1"}
+            - {name: TMPDIR, value: /tmp}
+            - name: MLSCAN_KEYS
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_KEYS}}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: artifacts, containerPort: 8090}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: {cpu: "100m", memory: "256Mi", ephemeral-storage: "1Gi"}
+            limits: {cpu: "2", memory: "3Gi", ephemeral-storage: "130Gi"}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: artifacts, mountPath: /artifacts}
+            - {name: modeltmp, mountPath: /var/tmp}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: mlscan-testing-data}}
+        - {name: artifacts, persistentVolumeClaim: {claimName: mlscan-artifacts}}
+        - {name: modeltmp, emptyDir: {sizeLimit: 120Gi}}
+        - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlscan-testing
+  namespace: t-mlscan-app
+  labels: {app: mlscan-testing}
+spec:
+  selector: {app: mlscan-testing}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080}
+    - {name: artifacts, port: 8090, targetPort: 8090}

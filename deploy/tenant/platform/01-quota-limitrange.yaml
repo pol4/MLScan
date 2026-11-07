@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-quota
+  namespace: t-mlscan-app
+spec:
+  hard:
+    requests.cpu: "24"
+    requests.memory: 64Gi
+    limits.cpu: "48"
+    limits.memory: 128Gi
+    persistentvolumeclaims: "12"
+    requests.ephemeral-storage: 50Gi
+    limits.ephemeral-storage: 150Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-defaults
+  namespace: t-mlscan-app
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi

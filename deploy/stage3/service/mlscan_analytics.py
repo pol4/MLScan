@@ -898,7 +898,7 @@ def _page(title: str, body: str, script: str = "", lang: str = "ru",
     return (f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>"
             f"<title>{title} — MLScan</title>{_STYLE}</head><body>"
             f"<header><h1><a href='/'>MLScan — Analytics</a></h1>"
-            f"<a href='/login'>{T('nav.login', lang)}</a> <a href='/logout'>{T('nav.logout', lang)}</a>"
+            f"<a href='/logout'>{T('nav.logout', lang)}</a>"
             f"<a href='/api/overview'>{T('nav.json', lang)}</a>"
             f"<a href='/api/evidence/verify'>{T('nav.evidence', lang)}</a>"
             f"<a href='/policy'>{T('nav.policy', lang)}</a>{extra}"

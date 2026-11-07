@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: __JOB__
+  namespace: pf-ci
+  labels: { platform.rtx.local/part-of: ci }
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: context
+          image: harbor.platform.rtx.local/proxy-dockerhub/alpine/git:latest
+          env:
+            - { name: GIT_SSL_NO_VERIFY, value: "true" }
+            - { name: GIT_USER, valueFrom: { secretKeyRef: { name: build-git, key: username } } }
+            - { name: GIT_TOKEN, valueFrom: { secretKeyRef: { name: build-git, key: token } } }
+          command: ["sh","-c"]
+          args:
+            - set -e; git -c http.sslVerify=false clone --depth 1 --branch "__GIT_REF__" "https://$GIT_USER:$GIT_TOKEN@__GIT_URL__" /workspace/src
+          volumeMounts:
+            - { name: src, mountPath: /workspace/src }
+      containers:
+        - name: buildctl
+          image: docker.io/moby/buildkit:v0.16.0
+          command: ["sh","-c"]
+          args:
+            - |
+              set -e
+              buildctl --addr tcp://buildkitd.pf-ci.svc:1234 build \
+                --frontend dockerfile.v0 \
+                --local context=/workspace/src/__CTX_SUBDIR__ \
+                --local dockerfile=/workspace/src/__DOCKERFILE__ \
+                --output type=image,name=harbor.platform.rtx.local/__DEST__:__TAG__,push=true
+          resources: { requests: { cpu: "200m", memory: "256Mi" }, limits: { memory: "1Gi" } }
+          volumeMounts:
+            - { name: src, mountPath: /workspace/src }
+            - { name: docker, mountPath: /root/.docker }
+            - { name: ca, mountPath: /etc/ssl/certs/ca-certificates.crt, subPath: ca-certificates.crt, readOnly: true }
+      volumes:
+        - { name: src, emptyDir: {} }
+        - name: docker
+          secret: { secretName: buildkit-registry, items: [ { key: .dockerconfigjson, path: config.json } ] }
+        - name: ca
+          configMap: { name: buildkit-ca }

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-platform-config
+  namespace: t-mlscan-app
+data:
+  SANDBOX_IMAGE: "harbor.platform.rtx.local/mlscan/sandbox@sha256:cc0f6ef7e906cd5f052a3f55b70e19ea7079c9a318394395f16e8d29abe6bd31"

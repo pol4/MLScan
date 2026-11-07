@@ -1,0 +1,15 @@
+apiVersion: kubeovn.io/v1
+kind: Subnet
+metadata:
+  name: mlscan-sandbox
+spec:
+  vpc: ovn-cluster
+  protocol: IPv4
+  cidrBlock: 10.99.0.0/24
+  gateway: 10.99.0.1
+  natOutgoing: false
+  default: false
+  private: false
+  gatewayType: distributed
+  excludeIps:
+    - 10.99.0.1

@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-intel
+  namespace: t-mlscan-app
+  labels:
+    app.kubernetes.io/part-of: mlscan
+    mlscan.io/stage: '4'
+data:
+  intel.json: "{\n  \"known_bad_sha256\": [\n    \"de4e240c47bb26dc9eb77e0cae169c4798845fe4aa8929c710bc7e92bcbb88bd\"\
+    ,\n    \"7947b93d3a9ddc23c0c941599d937f7cb42a9530b0e1b09b0fbca6a20270c947\",\n\
+    \    \"470f22229c52200771baaf31971fa31a9141544cbf6511ec534ee9e8decd799a\",\n \
+    \   \"f089fe8054b78227173c64e7e6d6ca35a47dc9fc838c2697cb4648fe168163f2\",\n  \
+    \  \"a61a00194164e724db2843626e900610969f40e8c4fcba3e73e2bd7f289e8d7f\",\n   \
+    \ \"470f22229c52200771baaf31971fa31a9141544cbf6511ec534ee9e8decd799a\",\n    \"\
+    37c56d419c12dfd084670087a6f91e27d62c6595688d49f407d9817e74259640\"\n  ],\n  \"\
+    watch_checks\": [\n    \"A-01\",\n    \"F-32\",\n    \"F-31\",\n    \"F-30\"\n\
+    \  ]\n}\n"

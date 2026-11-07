@@ -1,0 +1,690 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-harness
+  namespace: t-mlscan-sandbox
+  labels:
+    app.kubernetes.io/part-of: mlscan
+    mlscan.io/stage: '1'
+data:
+  harness.py: "# -*- coding: utf-8 -*-\n\"\"\"In-container harness: \u043D\u0430\u0431\
+    \u043B\u044E\u0434\u0430\u0435\u043C\u0430\u044F \u0434\u0435\u0441\u0435\u0440\
+    \u0438\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044F + \u043F\u043E\u0432\u0435\
+    \u0434\u0435\u043D\u0447\u0435\u0441\u043A\u0438\u0439 probe.\n\n\u041C\u043E\u0434\
+    \u0435\u043B\u044C \u043F\u0440\u0438\u043D\u0438\u043C\u0430\u0435\u0442\u0441\
+    \u044F \u043F\u043E stdin (\u043D\u0438\u043A\u0430\u043A\u0438\u0445 \u0440\u0430\
+    \u0441\u0448\u0430\u0440\u0435\u043D\u043D\u044B\u0445 \u043A\u0430\u0442\u0430\
+    \u043B\u043E\u0433\u043E\u0432), \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\
+    \u0442 \u2014 \u0432 stdout\n\u0441\u0442\u0440\u043E\u043A\u043E\u0439 \u0441\
+    \ \u043C\u0430\u0440\u043A\u0435\u0440\u043E\u043C RESULT_MARKER. sys.argv: [0]='-c',\
+    \ [1]=base64-\u0431\u0443\u0442\u0441\u0442\u0440\u0430\u043F (\u043D\u0435 \u0438\
+    \u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0435\u0442\u0441\u044F\n\u0437\u0434\
+    \u0435\u0441\u044C), [2]=fmt, [3]=\u0438\u043C\u044F \u0444\u0430\u0439\u043B\u0430\
+    \ (\u0434\u043B\u044F \u043A\u043E\u0440\u0440\u0435\u043A\u0442\u043D\u043E\u0433\
+    \u043E \u0432\u044B\u0431\u043E\u0440\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\
+    \u0447\u0438\u043A\u0430 \u043F\u043E \u0440\u0430\u0441\u0448\u0438\u0440\u0435\
+    \u043D\u0438\u044E).\n\"\"\"\nimport io\nimport json\nimport os\nimport re\nimport\
+    \ shutil\nimport sys\nimport tempfile\nimport time\nimport zipfile\n\n# \u0421\
+    \u043E\u0432\u043C\u0435\u0441\u0442\u0438\u043C\u043E\u0441\u0442\u044C \u0441\
+    \ pickle \u0432 \u0441\u0442\u0438\u043B\u0435 Python 2 (\u043C\u043E\u0434\u0443\
+    \u043B\u044C __builtin__) \u2014 \u0447\u0442\u043E\u0431\u044B \u0432\u0440\u0435\
+    \u0434\u043E\u043D\u043E\u0441\u043D\u044B\u0439\n# payload \u0434\u0435\u0439\
+    \u0441\u0442\u0432\u0438\u0442\u0435\u043B\u044C\u043D\u043E \u0414\u041E\u0421\
+    \u0422\u0418\u0413 \u0438\u0441\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F\
+    \ \u0438 \u0434\u0430\u043B \u0434\u0438\u043D\u0430\u043C\u0438\u0447\u0435\u0441\
+    \u043A\u0438\u0435 \u0441\u0438\u0433\u043D\u0430\u043B\u044B.\ntry:\n    import\
+    \ builtins as _builtins\n    sys.modules.setdefault(\"__builtin__\", _builtins)\n\
+    except Exception:\n    pass\ntry:\n    import copyreg as _copyreg\n    sys.modules.setdefault(\"\
+    copy_reg\", _copyreg)\nexcept Exception:\n    pass\ntry:\n    import pickle as\
+    \ _pickle_mod\n    sys.modules.setdefault(\"cPickle\", _pickle_mod)\nexcept Exception:\n\
+    \    pass\n\n# \u041F\u043E\u0434\u0434\u0435\u0440\u0436\u043A\u0430 \u0434\u0432\
+    \u0443\u0445 \u0441\u043F\u043E\u0441\u043E\u0431\u043E\u0432 \u0437\u0430\u043F\
+    \u0443\u0441\u043A\u0430:\n#   * base64-\u0431\u0443\u0442\u0441\u0442\u0440\u0430\
+    \u043F (docker PoC): sys.argv = ['-c', <b64>, fmt, name]\n#   * \u043F\u0440\u044F\
+    \u043C\u043E\u0439 \u0437\u0430\u043F\u0443\u0441\u043A (Kubernetes Job): sys.argv\
+    \ = ['harness.py', fmt, name]\n_args = sys.argv[1:]\nNAME = _args[-1] if _args\
+    \ else \"sample.pkl\"\nFMT = _args[-2] if len(_args) >= 2 else \"pickle\"\nNONCE\
+    \ = os.environ.get(\"MLSCAN_NONCE\", \"\").strip()\n# \u041C\u0430\u0440\u043A\
+    \u0435\u0440\u044B \u0441\u043E\u0434\u0435\u0440\u0436\u0430\u0442 \u043D\u043E\
+    \u043D\u0441 \u0441\u043A\u0430\u043D\u0430: \u0441\u0435\u0440\u0432\u0438\u0441\
+    \ \u043F\u0440\u0438\u043D\u0438\u043C\u0430\u0435\u0442 \u0422\u041E\u041B\u042C\
+    \u041A\u041E \u0441\u0442\u0440\u043E\u043A\u0438 \u0441\u043E \u0441\u0432\u043E\
+    \u0438\u043C \u043D\u043E\u043D\u0441\u043E\u043C, \u043F\u043E\u044D\u0442\u043E\
+    \u043C\u0443\n# payload \u043D\u0435 \u043C\u043E\u0436\u0435\u0442 \u043F\u043E\
+    \u0434\u0434\u0435\u043B\u0430\u0442\u044C \u0440\u0435\u0437\u0443\u043B\u044C\
+    \u0442\u0430\u0442, \u043D\u0430\u043F\u0435\u0447\u0430\u0442\u0430\u0432 \xAB\
+    \u0447\u0438\u0441\u0442\u044B\u0439\xBB JSON \u0432 stdout.\nRESULT_MARKER =\
+    \ (\"MLSCAN_RESULT_JSON:\" + NONCE + \":\") if NONCE else \"MLSCAN_RESULT_JSON:\"\
+    \nSUMMARY_MARKER = (\"MLSCAN_SUMMARY:\" + NONCE + \":\") if NONCE else \"MLSCAN_SUMMARY:\"\
+    \n\n\ndef recv_target(name):\n    \"\"\"\u041F\u0440\u0438\u043D\u0438\u043C\u0430\
+    \u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C \u0438\u0437 stdin \u0438 \u0441\
+    \u043E\u0445\u0440\u0430\u043D\u044F\u0435\u0442 \u0435\u0451 \u0432 tmpfs-\u043A\
+    \u0430\u0442\u0430\u043B\u043E\u0433 \u043A\u043E\u043D\u0442\u0435\u0439\u043D\
+    \u0435\u0440\u0430.\"\"\"\n    d = tempfile.mkdtemp(prefix=\"mlscan-in-\", dir=\"\
+    /tmp\")\n    path = os.path.join(d, os.path.basename(name) or \"sample.pkl\")\n\
+    \    with open(path, \"wb\") as fh:\n        shutil.copyfileobj(sys.stdin.buffer,\
+    \ fh, 1 << 20)\n    return path\n\nphase = [\"setup\"]\n_record = True\nevents\
+    \ = []\nMAX_EVENTS = 5000\n\nINTERESTING = {\n    \"open\", \"os.system\", \"\
+    os.exec\", \"os.spawn\", \"os.posix_spawn\", \"subprocess.Popen\",\n    \"socket.connect\"\
+    , \"socket.connect_ex\", \"socket.bind\", \"socket.getaddrinfo\",\n    \"socket.gethostbyname\"\
+    , \"socket.gethostbyaddr\", \"socket.sendto\", \"socket.__new__\",\n    \"ctypes.dlopen\"\
+    , \"ctypes.dlsym\", \"ctypes.call_function\",\n    \"import\", \"exec\", \"compile\"\
+    , \"marshal.load\", \"marshal.loads\",\n    \"runpy.run_module\", \"runpy.run_path\"\
+    , \"os.chdir\",\n    \"os.mkdir\", \"os.remove\", \"os.rename\", \"os.link\",\
+    \ \"os.symlink\",\n    \"shutil.copyfile\", \"shutil.copytree\", \"shutil.move\"\
+    ,\n    \"urllib.Request\", \"ftplib.connect\", \"smtplib.connect\",\n}\n\n\ndef\
+    \ _short(x, n=300):\n    try:\n        s = repr(x)\n    except Exception:\n  \
+    \      s = \"<unrepr>\"\n    return s if len(s) <= n else s[:n] + (\"...<%d>\"\
+    \ % len(s))\n\n\nLIB_PREFIXES = tuple(p for p in (getattr(sys, \"prefix\", \"\"\
+    ), getattr(sys, \"base_prefix\", \"\")) if p)\n\n\ndef _is_lib_code(filename):\n\
+    \    \"\"\"\u041E\u0442\u043B\u0438\u0447\u0430\u0435\u0442 \u043A\u043E\u0434\
+    \ \u0431\u0438\u0431\u043B\u0438\u043E\u0442\u0435\u043A/\u0438\u043C\u043F\u043E\
+    \u0440\u0442-\u043C\u0430\u0448\u0438\u043D\u044B \u043E\u0442 \u043A\u043E\u0434\
+    \u0430 \u043F\u043E\u043B\u0435\u0437\u043D\u043E\u0439 \u043D\u0430\u0433\u0440\
+    \u0443\u0437\u043A\u0438.\"\"\"\n    try:\n        fn = str(filename or \"\")\n\
+    \    except Exception:\n        return True\n    if fn.startswith(\"<\"):\n  \
+    \      return fn not in (\"<string>\", \"<stdin>\")\n    if \"site-packages\"\
+    \ in fn or \"dist-packages\" in fn:\n        return True\n    return any(p and\
+    \ fn.startswith(p) for p in LIB_PREFIXES)\n\n\ndef _norm(event, args):\n    \"\
+    \"\"\u041D\u043E\u0440\u043C\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044F \u0430\
+    \u0440\u0433\u0443\u043C\u0435\u043D\u0442\u043E\u0432: \u0443\u0431\u0438\u0440\
+    \u0430\u0435\u043C \u0448\u0443\u043C, \u043E\u0441\u0442\u0430\u0432\u043B\u044F\
+    \u0435\u043C \u0437\u043D\u0430\u0447\u0438\u043C\u043E\u0435.\"\"\"\n    try:\n\
+    \        if event == \"open\":\n            return [_short(args[0], 200), _short(args[1],\
+    \ 16)]\n        if event == \"import\":\n            return [_short(args[0], 120),\
+    \ _short(args[1], 120)]\n        if event in (\"exec\", \"compile\"):\n      \
+    \      return [_short(args[0], 160)]\n        return [_short(a, 200) for a in\
+    \ args]\n    except Exception:\n        return [\"<norm-error>\"]\n\n\ndef hook(event,\
+    \ args):\n    if not _record or event not in INTERESTING or len(events) >= MAX_EVENTS:\n\
+    \        return\n    try:\n        if event == \"exec\":\n            co = args[0]\
+    \ if args else None\n            if co is None or _is_lib_code(getattr(co, \"\
+    co_filename\", \"\")):\n                return\n        elif event == \"compile\"\
+    :\n            if len(args) > 1 and _is_lib_code(args[1]):\n                return\n\
+    \        elif event == \"marshal.loads\":\n            return  # \u0448\u0443\u043C\
+    \ \u0437\u0430\u0433\u0440\u0443\u0437\u0447\u0438\u043A\u0430 .pyc\n        events.append({\"\
+    t\": round(time.monotonic(), 4), \"phase\": phase[0],\n                      \
+    \ \"event\": event, \"args\": _norm(event, args)})\n    except Exception:\n  \
+    \      pass\n\n\n\ndef unpickle_bytes(data, errors):\n    import pickle\n    try:\n\
+    \        return pickle.loads(data, fix_imports=True, encoding=\"latin1\")\n  \
+    \  except Exception as e:\n        errors.append(\"pickle.loads: %s: %s\" % (type(e).__name__,\
+    \ e))\n    try:\n        class Probe(pickle.Unpickler):\n            def find_class(self,\
+    \ module, name):\n                try:\n                    import importlib\n\
+    \                    return getattr(importlib.import_module(module), name)\n \
+    \               except Exception as e:\n                    raise RuntimeError(\"\
+    find_class %s.%s: %s\" % (module, name, e))\n        return Probe(io.BytesIO(data)).load()\n\
+    \    except Exception as e:\n        errors.append(\"probe.load: %s: %s\" % (type(e).__name__,\
+    \ e))\n    return None\n\n\ndef load_zip(data, errors):\n    objs = []\n    try:\n\
+    \        zf = zipfile.ZipFile(io.BytesIO(data))\n    except Exception as e:\n\
+    \        errors.append(\"zip: %s: %s\" % (type(e).__name__, e))\n        return\
+    \ None\n    for name in zf.namelist():\n        low = name.lower()\n        try:\n\
+    \            member = zf.read(name)\n        except Exception as e:\n        \
+    \    errors.append(\"member %s: %s\" % (name, e))\n            continue\n    \
+    \    if not (low.endswith((\".pkl\", \".pickle\", \".joblib\", \".pt\")) or member[:2]\
+    \ == b\"\\x80\"):\n            continue\n        objs.append({\"member\": name,\
+    \ \"value\": unpickle_bytes(member, errors)})\n    return objs or None\n\n\ndef\
+    \ npy_payload(data):\n    if not data.startswith(b\"\\x93NUMPY\") or len(data)\
+    \ < 10:\n        return data\n    if data[6] == 1:\n        off = 10 + int.from_bytes(data[8:10],\
+    \ \"little\")\n    else:\n        off = 12 + int.from_bytes(data[8:12], \"little\"\
+    )\n    return data[off:]\n\n\ndef _run_model_code(path, errors):\n    \"\"\"\u0418\
+    \u0441\u043F\u043E\u043B\u043D\u044F\u0435\u0442 entry-\u043A\u043E\u0434 model-as-code\
+    \ (handler.py/model.py) \u0432 \u043F\u0435\u0441\u043E\u0447\u043D\u0438\u0446\
+    \u0435.\"\"\"\n    import zipfile\n    code = None\n    if zipfile.is_zipfile(path):\n\
+    \        try:\n            zf = zipfile.ZipFile(path)\n            cands = [n\
+    \ for n in zf.namelist() if n.lower().endswith(\".py\")]\n            cands.sort(key=lambda\
+    \ n: (0 if \"handler\" in n.lower() else 1 if \"model\" in n.lower() else 2))\n\
+    \            if cands:\n                code = zf.read(cands[0]).decode(\"utf-8\"\
+    , \"replace\")\n        except Exception as e:\n            errors.append(\"model-as-code\
+    \ zip: %s\" % e)\n    else:\n        try:\n            code = open(path, \"rb\"\
+    ).read().decode(\"utf-8\", \"replace\")\n        except Exception as e:\n    \
+    \        errors.append(\"model-as-code read: %s\" % e)\n    if code is None:\n\
+    \        # \u041F\u0430\u043A\u0435\u0442 \u0431\u0435\u0437 entry-\u043A\u043E\
+    \u0434\u0430 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 TorchServe .mar\
+    \ \u0442\u043E\u043B\u044C\u043A\u043E \u0441 \u0432\u0435\u0441\u0430\u043C\u0438\
+    ) \u2014 \u044D\u0442\u043E \u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440\
+    ,\n        # \u0430 \u043D\u0435 \u043E\u0448\u0438\u0431\u043A\u0430 \u0437\u0430\
+    \u0433\u0440\u0443\u0437\u043A\u0438: \u043F\u0435\u0440\u0435\u0447\u0438\u0441\
+    \u043B\u044F\u0435\u043C \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u043C\u043E\
+    \u0435.\n        if zipfile.is_zipfile(path):\n            return _load_archive(path,\
+    \ errors, \"zip\")\n        errors.append(\"model-as-code: entry-\u043A\u043E\u0434\
+    \ \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\")\n        return None\n\
+    \    g = {\"__name__\": \"__main__\", \"__file__\": path}\n    exec(compile(code,\
+    \ \"<artifact>\", \"exec\"), g)  # \u043D\u0430\u043C\u0435\u0440\u0435\u043D\u043D\
+    \u043E: \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u043C \u043F\u043E\u0432\
+    \u0435\u0434\u0435\u043D\u0438\u0435 payload\n    return {\"executed\": \"model-as-code\"\
+    }\n\n\ndef _prod(seq):\n    n = 1\n    for x in seq:\n        n *= int(x)\n  \
+    \  return n\n\n\ndef _load_safetensors(path, errors):\n    \"\"\"\u0427\u0442\u0435\
+    \u043D\u0438\u0435 SafeTensors \u0447\u0435\u0440\u0435\u0437 mmap: \u043A\u043B\
+    \u044E\u0447\u0438/\u0444\u043E\u0440\u043C\u044B/dtype + \u043F\u0440\u043E\u0432\
+    \u0435\u0440\u043A\u0430 NaN/Inf.\"\"\"\n    import numpy as np\n    from safetensors\
+    \ import safe_open\n    info = {\"tensors\": {}, \"count\": 0, \"nan\": 0, \"\
+    inf\": 0}\n    with safe_open(path, framework=\"numpy\") as f:\n        keys =\
+    \ list(f.keys())\n        for k in keys[:128]:\n            t = f.get_tensor(k)\n\
+    \            info[\"tensors\"][k] = {\"shape\": list(t.shape), \"dtype\": str(t.dtype)}\n\
+    \            info[\"count\"] += 1\n            if getattr(t.dtype, \"kind\", \"\
+    \") == \"f\":\n                try:\n                    if bool(np.isnan(t).any()):\n\
+    \                        info[\"nan\"] += 1\n                    if bool(np.isinf(t).any()):\n\
+    \                        info[\"inf\"] += 1\n                except Exception:\n\
+    \                    pass\n    return info\n\n\ndef _load_onnx(path, errors):\n\
+    \    \"\"\"\u0417\u0430\u0433\u0440\u0443\u0437\u043A\u0430 ONNX \u0447\u0435\u0440\
+    \u0435\u0437 onnxruntime + \u043F\u0440\u043E\u0431\u043D\u044B\u0439 \u0438\u043D\
+    \u0444\u0435\u0440\u0435\u043D\u0441 \u043D\u0430 \u043D\u0443\u043B\u0435\u0432\
+    \u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445.\"\"\"\n    import numpy as\
+    \ np\n    import onnxruntime as ort\n    so = ort.SessionOptions()\n    so.graph_optimization_level\
+    \ = ort.GraphOptimizationLevel.ORT_DISABLE_ALL\n    sess = ort.InferenceSession(path,\
+    \ so, providers=[\"CPUExecutionProvider\"])\n    inputs = [{\"name\": i.name,\
+    \ \"shape\": list(i.shape), \"type\": i.type} for i in sess.get_inputs()]\n  \
+    \  outputs = [{\"name\": o.name, \"shape\": list(o.shape), \"type\": o.type} for\
+    \ o in sess.get_outputs()]\n    info = {\"inputs\": inputs, \"outputs\": outputs,\
+    \ \"inference\": None}\n    try:\n        feed = {}\n        for i in sess.get_inputs():\n\
+    \            if i.type != \"tensor(float)\":\n                continue\n     \
+    \       shape = [d if isinstance(d, int) and d > 0 else 1 for d in i.shape]\n\
+    \            if _prod(shape) > 1000000:\n                continue\n          \
+    \  feed[i.name] = np.zeros(shape, dtype=\"float32\")\n        if feed and len(feed)\
+    \ == len(sess.get_inputs()):\n            outs = sess.run(None, feed)\n      \
+    \      info[\"inference\"] = [{\"shape\": list(getattr(o, \"shape\", []))} for\
+    \ o in outs[:3]]\n    except Exception as e:\n        errors.append(\"onnx inference:\
+    \ %s: %s\" % (type(e).__name__, e))\n    return info\n\n\ndef _load_hdf5(path,\
+    \ errors):\n    \"\"\"\u0427\u0442\u0435\u043D\u0438\u0435 HDF5 (\u0432 \u0442\
+    .\u0447. \u0432\u0435\u0441\u043E\u0432): \u0434\u0430\u0442\u0430\u0441\u0435\
+    \u0442\u044B/\u0444\u043E\u0440\u043C\u044B/dtype + \u0430\u0442\u0440\u0438\u0431\
+    \u0443\u0442\u044B.\"\"\"\n    import h5py\n    info = {\"datasets\": [], \"count\"\
+    : 0, \"attrs\": []}\n    with h5py.File(path, \"r\") as f:\n        def visit(name,\
+    \ obj):\n            if isinstance(obj, h5py.Dataset) and info[\"count\"] < 256:\n\
+    \                info[\"datasets\"].append({\"name\": name, \"shape\": list(obj.shape),\n\
+    \                                         \"dtype\": str(obj.dtype)})\n      \
+    \          info[\"count\"] += 1\n        f.visititems(visit)\n        try:\n \
+    \           info[\"attrs\"] = sorted(list(f.attrs.keys()))[:32]\n        except\
+    \ Exception:\n            pass\n        # \u0432\u043D\u0435\u0448\u043D\u0438\
+    \u0435 \u0441\u0441\u044B\u043B\u043A\u0438 (external links) \u2014 \u0440\u0438\
+    \u0441\u043A \u043F\u043E\u0434\u0442\u044F\u0433\u0438\u0432\u0430\u043D\u0438\
+    \u044F \u0434\u0430\u043D\u043D\u044B\u0445/\u043A\u043E\u0434\u0430 \u0438\u0437\
+    \u0432\u043D\u0435\n        ext = []\n\n        def _links(group, prefix=\"\"\
+    ):\n            for key in list(group.keys()):\n                try:\n       \
+    \             link = group.get(key, getlink=True)\n                except Exception:\n\
+    \                    continue\n                if isinstance(link, h5py.ExternalLink):\n\
+    \                    ext.append(\"%s%s -> %s\" % (prefix, key, link.filename))\n\
+    \                elif isinstance(link, h5py.Group):\n                    _links(group[key],\
+    \ prefix + key + \"/\")\n\n        try:\n            _links(f)\n        except\
+    \ Exception:\n            pass\n        info[\"external_links\"] = ext[:16]\n\
+    \    return info\n\n\ndef _load_keras(path, errors):\n    \"\"\"Keras .keras \u2014\
+    \ zip-\u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440: config.json + *.weights.h5\
+    \ (\u0447\u0438\u0442\u0430\u0435\u043C \u0431\u0435\u0437 Keras).\"\"\"\n   \
+    \ import json as _json\n    import tempfile\n    if not zipfile.is_zipfile(path):\n\
+    \        errors.append(\"keras: \u043D\u0435 zip-\u043A\u043E\u043D\u0442\u0435\
+    \u0439\u043D\u0435\u0440\")\n        return None\n    info = {\"config\": None,\
+    \ \"weights\": 0, \"members\": []}\n    with zipfile.ZipFile(path) as z:\n   \
+    \     info[\"members\"] = z.namelist()[:64]\n        if \"config.json\" in info[\"\
+    members\"]:\n            try:\n                info[\"config\"] = _json.loads(z.read(\"\
+    config.json\").decode(\"utf-8\", \"replace\"))\n            except Exception as\
+    \ e:\n                errors.append(\"keras config: %s\" % e)\n        wname =\
+    \ next((n for n in info[\"members\"]\n                      if n.endswith(\".weights.h5\"\
+    ) or n.endswith(\".h5\")), None)\n        if wname:\n            try:\n      \
+    \          import h5py\n                # \u0447\u0438\u0442\u0430\u0435\u043C\
+    \ \u0432\u0435\u0441\u0430 \u0438\u0437 \u043F\u0430\u043C\u044F\u0442\u0438 (\u0431\
+    \u0435\u0437 \u0432\u0440\u0435\u043C\u0435\u043D\u043D\u044B\u0445 \u0444\u0430\
+    \u0439\u043B\u043E\u0432 \u2014 \u0438\u043D\u0430\u0447\u0435 \u0430\u0443\u0434\
+    \u0438\u0442-\u0445\u0443\u043A \u0432\u0438\u0434\u0438\u0442 \u0437\u0430\u043F\
+    \u0438\u0441\u044C \u0444\u0430\u0439\u043B\u0430)\n                cnt = [0]\n\
+    \                with h5py.File(io.BytesIO(z.read(wname)), \"r\") as f:\n    \
+    \                f.visititems(lambda n, o: cnt.__setitem__(0, cnt[0] + 1)\n  \
+    \                               if isinstance(o, h5py.Dataset) else None)\n  \
+    \              info[\"weights\"] = cnt[0]\n            except Exception as e:\n\
+    \                errors.append(\"keras weights: %s\" % e)\n    return info\n\n\
+    \ndef _load_gguf(path, errors):\n    \"\"\"GGUF: \u043C\u0435\u0442\u0430\u0434\
+    \u0430\u043D\u043D\u044B\u0435 \u0438 \u0441\u043F\u0438\u0441\u043E\u043A \u0442\
+    \u0435\u043D\u0437\u043E\u0440\u043E\u0432.\"\"\"\n    import gguf\n    r = gguf.GGUFReader(path)\n\
+    \    fields = getattr(r, \"fields\", None) or {}\n    tensors = getattr(r, \"\
+    tensors\", None) or []\n    return {\"metadata_keys\": sorted(list(fields.keys()))[:64],\n\
+    \            \"tensors\": len(tensors),\n            \"sample\": [[t.name, list(t.shape)]\
+    \ for t in tensors[:32]]}\n\n\ndef _load_dataset(path, errors):\n    \"\"\"Parquet/Arrow/Feather:\
+    \ \u0447\u0438\u0442\u0430\u0435\u043C \u0441\u0445\u0435\u043C\u0443/\u043C\u0435\
+    \u0442\u0430\u0434\u0430\u043D\u043D\u044B\u0435 (pyarrow), \u0438\u043D\u0430\
+    \u0447\u0435 \u2014 \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0443.\"\"\
+    \"\n    try:\n        import pyarrow.parquet as pq\n        md = pq.read_metadata(path)\
+    \          # \u0442\u043E\u043B\u044C\u043A\u043E \u043C\u0435\u0442\u0430\u0434\
+    \u0430\u043D\u043D\u044B\u0435, \u0431\u0435\u0437 \u0447\u0442\u0435\u043D\u0438\
+    \u044F \u0434\u0430\u043D\u043D\u044B\u0445\n        schema = md.schema.to_arrow_schema()\n\
+    \        return {\"format\": \"parquet\", \"rows\": md.num_rows, \"row_groups\"\
+    : md.num_row_groups,\n                \"columns\": [f.name for f in schema][:64]}\n\
+    \    except Exception as exc:  # noqa: BLE001\n        try:\n            data\
+    \ = open(path, \"rb\").read(64)\n            magic = {b\"PAR1\": \"parquet\",\
+    \ b\"ARROW1\": \"arrow\", b\"FEA1\": \"feather\"}\n            for m, name in\
+    \ magic.items():\n                if data.startswith(m):\n                   \
+    \ return {\"format\": name, \"size\": os.path.getsize(path)}\n            errors.append(\"\
+    dataset: %s: %s\" % (type(exc).__name__, exc))\n        except Exception as exc2:\
+    \  # noqa: BLE001\n            errors.append(\"dataset: %s\" % exc2)\n       \
+    \ return None\n\n\ndef _load_archive(path, errors, fmt=None):\n    \"\"\"\u0410\
+    \u0440\u0445\u0438\u0432\u044B: \u043F\u0435\u0440\u0435\u0447\u0438\u0441\u043B\
+    \u044F\u0435\u043C \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u043C\u043E\u0435\
+    \ (\u0431\u0435\u0437 \u0438\u0441\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u044F\
+    ).\"\"\"\n    out = {\"members\": []}\n    if (fmt == \"tar\") or path.lower().endswith((\"\
+    .tar\", \".tar.gz\", \".tgz\", \".tar.bz2\")):\n        import tarfile\n     \
+    \   try:\n            with tarfile.open(path, \"r:*\") as t:\n               \
+    \ out[\"members\"] = [m.name for m in t.getmembers()[:256]]\n        except Exception\
+    \ as e:\n            errors.append(\"tar: %s: %s\" % (type(e).__name__, e))\n\
+    \            return None\n        return out\n    try:\n        with zipfile.ZipFile(path)\
+    \ as z:\n            out[\"members\"] = z.namelist()[:256]\n    except Exception\
+    \ as e:\n        errors.append(\"zip: %s: %s\" % (type(e).__name__, e))\n    \
+    \    return None\n    return out\n\n\ndef _load_image(path, errors):\n    \"\"\
+    \"\u0418\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F: \u043F\u0440\
+    \u043E\u0432\u0435\u0440\u044F\u0435\u043C \u0441\u0438\u0433\u043D\u0430\u0442\
+    \u0443\u0440\u0443 \u0438 \u0446\u0435\u043B\u043E\u0441\u0442\u043D\u043E\u0441\
+    \u0442\u044C \u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440\u0430 (\u0441\
+    \u0442\u0440\u0443\u043A\u0442\u0443\u0440\u043D\u0430\u044F \u0437\u0430\u0433\
+    \u0440\u0443\u0437\u043A\u0430).\"\"\"\n    data = open(path, \"rb\").read()\n\
+    \    if data[:8].startswith(b\"\\x89PNG\\r\\n\\x1a\\n\"):\n        return {\"\
+    format\": \"png\", \"size\": len(data), \"has_iend\": b\"IEND\" in data[-32:]}\n\
+    \    if data[:2] == b\"\\xff\\xd8\":\n        return {\"format\": \"jpeg\", \"\
+    size\": len(data), \"has_eoi\": data[-2:] == b\"\\xff\\xd9\"}\n    if data[:6]\
+    \ in (b\"GIF87a\", b\"GIF89a\"):\n        return {\"format\": \"gif\", \"size\"\
+    : len(data)}\n    errors.append(\"image: \u043D\u0435\u0438\u0437\u0432\u0435\u0441\
+    \u0442\u043D\u0430\u044F \u0441\u0438\u0433\u043D\u0430\u0442\u0443\u0440\u0430\
+    \ \u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440\u0430\")\n    return\
+    \ None\n\n\ndef _looks_like_pickle(data: bytes) -> bool:\n    \"\"\"pickle \u043F\
+    \u043E \u0441\u0438\u0433\u043D\u0430\u0442\u0443\u0440\u0435 \u0438\u043B\u0438\
+    \ \u043F\u043E \u0442\u0435\u043A\u0441\u0442\u043E\u0432\u044B\u043C \u043E\u043F\
+    \u043A\u043E\u0434\u0430\u043C protocol 0.\"\"\"\n    if data[:2] in (b\"\\x80\\\
+    x02\", b\"\\x80\\x03\", b\"\\x80\\x04\", b\"\\x80\\x05\"):\n        return True\n\
+    \    head = data[:64]\n    if re.match(rb\"^c[\\w.]+\\n[\\w.]+\\n\", head):  \
+    \    # GLOBAL (cos\\nsystem\\n)\n        return True\n    return head.startswith((b\"\
+    (lp\", b\"(dp\", b\"(d\", b\"(l\", b\"}q\", b\"]q\", b\"(c\"))\n\n\ndef _load_compressed(path,\
+    \ errors):\n    \"\"\"\u0421\u0436\u0430\u0442\u044B\u0439 payload (.gz/.bz2/.xz):\
+    \ \u0440\u0430\u0441\u043F\u0430\u043A\u043E\u0432\u043A\u0430 \u0438 \u0437\u0430\
+    \u0433\u0440\u0443\u0437\u043A\u0430 \u0432\u043B\u043E\u0436\u0435\u043D\u043D\
+    \u043E\u0433\u043E \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u043C\u043E\u0433\
+    \u043E.\n\n    \u0415\u0441\u043B\u0438 \u0432\u043D\u0443\u0442\u0440\u0438 pickle\
+    \ \u2014 \u043E\u043D \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0442\u0435\u043B\
+    \u044C\u043D\u043E \u0434\u0435\u0441\u0435\u0440\u0438\u0430\u043B\u0438\u0437\
+    \u0443\u0435\u0442\u0441\u044F \u043F\u043E\u0434 \u0430\u0443\u0434\u0438\u0442\
+    -\u0445\u0443\u043A\u043E\u043C (payload\n    \u0434\u043E\u043B\u0436\u0435\u043D\
+    \ \u0434\u043E\u0441\u0442\u0438\u0447\u044C \u0438\u0441\u043F\u043E\u043B\u043D\
+    \u0435\u043D\u0438\u044F, \u0438\u043D\u0430\u0447\u0435 \u0434\u0438\u043D\u0430\
+    \u043C\u0438\u043A\u0430 \u0431\u0435\u0441\u0441\u043C\u044B\u0441\u043B\u0435\
+    \u043D\u043D\u0430).\n    \"\"\"\n    import bz2\n    import gzip\n    import\
+    \ lzma\n    try:\n        with open(path, \"rb\") as fh:\n            raw = fh.read(64\
+    \ * 1024 * 1024)\n        sfx = os.path.splitext(path)[1].lower()\n        data\
+    \ = (gzip.decompress(raw) if sfx == \".gz\"\n                else bz2.decompress(raw)\
+    \ if sfx == \".bz2\" else lzma.decompress(raw))\n    except Exception as exc:\
+    \  # noqa: BLE001\n        errors.append(\"compressed: %s: %s\" % (type(exc).__name__,\
+    \ exc))\n        return None\n    head = data[:8]\n    if head[:4] == b\"PK\\\
+    x03\\x04\":\n        try:\n            with zipfile.ZipFile(io.BytesIO(data))\
+    \ as z:\n                return {\"format\": \"compressed+zip\", \"size\": len(data),\n\
+    \                        \"members\": z.namelist()[:128]}\n        except Exception\
+    \ as exc:  # noqa: BLE001\n            errors.append(\"compressed zip: %s\" %\
+    \ exc)\n            return None\n    if _looks_like_pickle(data):\n        return\
+    \ unpickle_bytes(data, errors)\n    return {\"format\": \"compressed\", \"size\"\
+    : len(data),\n            \"inner_magic\": head[:4].decode(\"latin1\", \"replace\"\
+    )}\n\n\ndef _load_flatbuffer(path, errors, kind=\"tflite\"):\n    \"\"\"TFLite/CoreML:\
+    \ \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u043D\u0430\u044F \u043F\u0440\
+    \u043E\u0432\u0435\u0440\u043A\u0430 \u043A\u043E\u043D\u0442\u0435\u0439\u043D\
+    \u0435\u0440\u0430 (magic/\u0440\u0430\u0437\u043C\u0435\u0440).\"\"\"\n    data\
+    \ = open(path, \"rb\").read(64)\n    if kind == \"tflite\" and data[:4] != b\"\
+    TFL3\":\n        errors.append(\"tflite: \u043D\u0435\u0432\u0435\u0440\u043D\u0430\
+    \u044F \u0441\u0438\u0433\u043D\u0430\u0442\u0443\u0440\u0430 \u043A\u043E\u043D\
+    \u0442\u0435\u0439\u043D\u0435\u0440\u0430\")\n        return None\n    if kind\
+    \ == \"native\" and not data.startswith((b\"\\x7fELF\", b\"MZ\", b\"\\xcf\\xfa\\\
+    xed\\xfe\",\n                                                 b\"\\xca\\xfe\\\
+    xba\\xbe\")):\n        errors.append(\"native: \u043D\u0435\u0438\u0437\u0432\u0435\
+    \u0441\u0442\u043D\u0430\u044F \u0441\u0438\u0433\u043D\u0430\u0442\u0443\u0440\
+    \u0430 \u0431\u0438\u043D\u0430\u0440\u043D\u0438\u043A\u0430\")\n        return\
+    \ None\n    return {\"format\": kind, \"size\": os.path.getsize(path),\n     \
+    \       \"magic\": data[:4].decode(\"latin1\", \"replace\")}\n\n\ndef _load_text(path,\
+    \ errors):\n    \"\"\"\u0422\u0435\u043A\u0441\u0442\u043E\u0432\u044B\u0435 \u0430\
+    \u0440\u0442\u0435\u0444\u0430\u043A\u0442\u044B (config/card/tokenizer/xml/json):\
+    \ \u0447\u0438\u0442\u0430\u0435\u043C \u043E\u0433\u0440\u0430\u043D\u0438\u0447\
+    \u0435\u043D\u043D\u043E.\"\"\"\n    data = open(path, \"rb\").read(1 << 20)\n\
+    \    txt = data.decode(\"utf-8\", \"replace\")\n    out = {\"text_len\": len(data)}\n\
+    \    if path.lower().endswith(\".json\"):\n        try:\n            out[\"json\"\
+    ] = json.loads(txt)\n        except Exception as e:\n            errors.append(\"\
+    json: %s\" % e)\n    return out\n\n\ndef load_target(path, fmt, errors):\n   \
+    \ if fmt == \"safetensors\":\n        return _load_safetensors(path, errors)\n\
+    \    if fmt == \"onnx\":\n        return _load_onnx(path, errors)\n    if fmt\
+    \ == \"hdf5\":\n        return _load_hdf5(path, errors)\n    if fmt == \"keras\"\
+    :\n        return _load_keras(path, errors)\n    if fmt == \"gguf\":\n       \
+    \ return _load_gguf(path, errors)\n    if fmt in (\"tar\", \"zip\", \"torch-package\"\
+    , \"torch-zip\"):\n        return _load_archive(path, errors, \"tar\" if fmt ==\
+    \ \"tar\" else \"zip\")\n    if fmt in (\"config\", \"card\", \"tokenizer\", \"\
+    xml\", \"json\", \"yaml\", \"pmml\",\n               \"notebook\", \"script\"\
+    , \"jinja\", \"sitepath\", \"html\", \"dockerfile\",\n               \"jsonl\"\
+    , \"csv\", \"msgpack\"):\n        return _load_text(path, errors)\n    if fmt\
+    \ == \"compressed\":\n        return _load_compressed(path, errors)\n    if fmt\
+    \ == \"unsupported\":\n        errors.append(\"\u043A\u043E\u043D\u0442\u0435\u0439\
+    \u043D\u0435\u0440 \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\
+    \u0432\u0430\u0435\u0442\u0441\u044F \u0434\u043B\u044F \u043F\u0440\u043E\u0432\
+    \u0435\u0440\u043A\u0438 (7z/rar/zstd)\")\n        return None\n    if fmt ==\
+    \ \"savedmodel\":\n        return _load_archive(path, errors, None) if zipfile.is_zipfile(path)\
+    \ else \\\n            _load_flatbuffer(path, errors, \"savedmodel\")\n    if\
+    \ fmt == \"native\":\n        return _load_flatbuffer(path, errors, \"native\"\
+    )\n    if fmt == \"image\":\n        return _load_image(path, errors)\n    if\
+    \ fmt in (\"tflite\", \"coreml\"):\n        return _load_flatbuffer(path, errors,\
+    \ fmt)\n    if fmt == \"dataset\":\n        return _load_dataset(path, errors)\n\
+    \    if fmt in (\"model-as-code\", \"mar\", \"python\"):\n        return _run_model_code(path,\
+    \ errors)\n    data = open(path, \"rb\").read()\n    is_zip = data[:4] == b\"\
+    PK\\x03\\x04\"\n\n    if fmt == \"dill\":\n        try:\n            import dill\n\
+    \            return dill.loads(data)\n        except ImportError:\n          \
+    \  errors.append(\"dill \u043D\u0435 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\
+    \u043B\u0435\u043D\")\n        except Exception as e:\n            errors.append(\"\
+    dill: %s: %s\" % (type(e).__name__, e))\n    if fmt == \"cloudpickle\":\n    \
+    \    try:\n            import cloudpickle\n            return cloudpickle.loads(data)\n\
+    \        except ImportError:\n            errors.append(\"cloudpickle \u043D\u0435\
+    \ \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\")\n        except\
+    \ Exception as e:\n            errors.append(\"cloudpickle: %s: %s\" % (type(e).__name__,\
+    \ e))\n    if fmt == \"joblib\":\n        try:\n            import joblib\n  \
+    \          return joblib.load(path)\n        except ImportError:\n           \
+    \ errors.append(\"joblib \u043D\u0435 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\
+    \u043B\u0435\u043D\")\n        except Exception as e:\n            errors.append(\"\
+    joblib: %s: %s\" % (type(e).__name__, e))\n    if fmt == \"torch\":\n        try:\n\
+    \            import torch\n            try:\n                return torch.load(path,\
+    \ weights_only=False)\n            except TypeError:\n                return torch.load(path)\n\
+    \        except ImportError:\n            errors.append(\"torch \u043D\u0435 \u0443\
+    \u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\")\n        except Exception\
+    \ as e:\n            errors.append(\"torch: %s: %s\" % (type(e).__name__, e))\n\
+    \    if fmt == \"numpy\":\n        try:\n            import numpy as np\n    \
+    \        obj = np.load(path, allow_pickle=True)\n            if getattr(obj, \"\
+    shape\", None) == () and getattr(obj, \"dtype\", None) == object:\n          \
+    \      return obj.item()\n            return obj\n        except ImportError:\n\
+    \            errors.append(\"numpy \u043D\u0435 \u0443\u0441\u0442\u0430\u043D\
+    \u043E\u0432\u043B\u0435\u043D\")\n        except Exception as e:\n          \
+    \  errors.append(\"numpy: %s: %s\" % (type(e).__name__, e))\n        data = npy_payload(data)\n\
+    \    if is_zip:\n        return load_zip(data, errors)\n    return unpickle_bytes(data,\
+    \ errors)\n\n\ndef make_inputs():\n    inputs = []\n    try:\n        import numpy\
+    \ as np\n        inputs.append(np.zeros((1, 4), dtype=\"float32\"))\n        inputs.append(np.zeros((1,\
+    \ 3, 8, 8), dtype=\"float32\"))\n    except Exception:\n        pass\n    inputs.append([0.0,\
+    \ 0.0, 0.0, 0.0])\n    inputs.append(\"hello world\")\n    return inputs\n\n\n\
+    SUSPECT_STRINGS = (\"exec(\", \"eval(\", \"system(\", \"popen\", \"subprocess\"\
+    , \"socket\", \"http://\",\n                   \"https://\", \"base64\", \"__import__\"\
+    , \"urlopen\", \"os.system\", \"/etc/\",\n                   \"curl \", \"wget\
+    \ \", \"chmod \", \"powershell\", \"rm -rf\", \"marshal\")\n\n\ndef snapshot():\n\
+    \    \"\"\"\u0421\u043D\u0438\u043C\u043E\u043A \u043A\u0440\u0438\u0442\u0438\
+    \u0447\u043D\u043E\u0433\u043E \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\
+    \u044F \u043F\u0440\u043E\u0446\u0435\u0441\u0441\u0430 \u0434\u043E/\u043F\u043E\
+    \u0441\u043B\u0435 \u043E\u043F\u0435\u0440\u0430\u0446\u0438\u0439.\"\"\"\n \
+    \   import builtins\n    s = {\"builtins\": {}, \"modules\": set(), \"syspath\"\
+    : list(sys.path),\n         \"env\": dict(os.environ), \"cwd\": None, \"meta_path\"\
+    : [], \"path_hooks\": []}\n    try:\n        for k, v in vars(builtins).items():\n\
+    \            s[\"builtins\"][k] = id(v)\n    except Exception:\n        pass\n\
+    \    try:\n        s[\"modules\"] = set(sys.modules.keys())\n    except Exception:\n\
+    \        pass\n    try:\n        s[\"cwd\"] = os.getcwd()\n    except Exception:\n\
+    \        pass\n    try:\n        s[\"meta_path\"] = [getattr(x, \"__module__\"\
+    , \"?\") + \".\" + getattr(x, \"__name__\", type(x).__name__)\n              \
+    \            for x in sys.meta_path]\n    except Exception:\n        pass\n  \
+    \  try:\n        s[\"path_hooks\"] = [getattr(h, \"__module__\", \"?\") + \".\"\
+    \ + getattr(h, \"__name__\", type(h).__name__)\n                           for\
+    \ h in sys.path_hooks]\n    except Exception:\n        pass\n    return s\n\n\n\
+    def diff_snapshot(a, b):\n    \"\"\"\u0420\u0430\u0437\u043D\u0438\u0446\u0430\
+    \ \u0441\u043D\u0438\u043C\u043A\u043E\u0432: \u043C\u043E\u0434\u0438\u0444\u0438\
+    \u043A\u0430\u0446\u0438\u044F builtins, \u0438\u043C\u043F\u043E\u0440\u0442\
+    -\u0445\u0443\u043A\u043E\u0432, sys.path, \u043E\u043A\u0440\u0443\u0436\u0435\
+    \u043D\u0438\u044F, cwd.\"\"\"\n    d = {}\n    changed = sorted(k for k, v in\
+    \ b[\"builtins\"].items()\n                     if k in a[\"builtins\"] and a[\"\
+    builtins\"][k] != v)\n    added = sorted(k for k in b[\"builtins\"] if k not in\
+    \ a[\"builtins\"])\n    removed = sorted(k for k in a[\"builtins\"] if k not in\
+    \ b[\"builtins\"])\n    if changed:\n        d[\"builtins_changed\"] = changed\n\
+    \    if added:\n        d[\"builtins_added\"] = added\n    if removed:\n     \
+    \   d[\"builtins_removed\"] = removed\n    std = getattr(sys, \"stdlib_module_names\"\
+    , set())\n    mods = sorted(m for m in (set(b[\"modules\"]) - set(a[\"modules\"\
+    ]))\n                  if m.split(\".\")[0] not in std)\n    if mods:\n      \
+    \  d[\"modules_added\"] = mods[:50]\n    if a[\"env\"] != b[\"env\"]:\n      \
+    \  keys = sorted(set(a[\"env\"]) ^ set(b[\"env\"]))\n        keys += sorted(k\
+    \ for k in set(a[\"env\"]) & set(b[\"env\"]) if a[\"env\"][k] != b[\"env\"][k])\n\
+    \        d[\"env_changed\"] = keys\n    if a[\"cwd\"] != b[\"cwd\"]:\n       \
+    \ d[\"cwd_changed\"] = [a[\"cwd\"], b[\"cwd\"]]\n    if a[\"syspath\"] != b[\"\
+    syspath\"]:\n        d[\"syspath_changed\"] = True\n    if a[\"meta_path\"] !=\
+    \ b[\"meta_path\"]:\n        d[\"meta_path_changed\"] = [a[\"meta_path\"], b[\"\
+    meta_path\"]]\n    if a[\"path_hooks\"] != b[\"path_hooks\"]:\n        d[\"path_hooks_changed\"\
+    ] = True\n    return d\n\n\ndef introspect(obj, max_items=200, max_depth=3):\n\
+    \    \"\"\"\u041E\u0433\u0440\u0430\u043D\u0438\u0447\u0435\u043D\u043D\u044B\u0439\
+    \ \u043E\u0431\u0445\u043E\u0434 \u043E\u0431\u044A\u0435\u043A\u0442\u0430: \u043D\
+    \u0430\u0439\u0434\u0435\u043D\u043D\u044B\u0435 callable \u0438 \u043F\u043E\u0434\
+    \u043E\u0437\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u0441\u0442\
+    \u0440\u043E\u043A\u0438.\"\"\"\n    callables, suspicious, types = [], [], {}\n\
+    \    seen = set()\n\n    def walk(o, path, depth):\n        if len(seen) > max_items\
+    \ or depth > max_depth:\n            return\n        t = type(o).__name__\n  \
+    \      types[t] = types.get(t, 0) + 1\n        if t == \"ndarray\":\n        \
+    \    try:\n                if getattr(o, \"dtype\", None) == object:\n       \
+    \             for i, v in enumerate(list(o.ravel())[:max_items]):\n          \
+    \              walk(v, \"%s[%d]\" % (path, i), depth + 1)\n            except\
+    \ Exception:\n                pass\n            return\n        if isinstance(o,\
+    \ (str, bytes)):\n            s = o.decode(\"latin1\") if isinstance(o, bytes)\
+    \ else o\n            low = s.lower()\n            for pat in SUSPECT_STRINGS:\n\
+    \                if pat in low and len(s) < 4000:\n                    suspicious.append({\"\
+    path\": path, \"pattern\": pat, \"preview\": s[:160]})\n                    break\n\
+    \            return\n        if callable(o) and not isinstance(o, type):\n   \
+    \         callables.append({\"path\": path, \"name\": getattr(o, \"__name__\"\
+    , t)})\n            return\n        if id(o) in seen:\n            return\n  \
+    \      seen.add(id(o))\n        if isinstance(o, dict):\n            for k, v\
+    \ in list(o.items())[:max_items]:\n                walk(v, \"%s[%r]\" % (path,\
+    \ k), depth + 1)\n        elif isinstance(o, (list, tuple, set, frozenset)):\n\
+    \            for i, v in enumerate(list(o)[:max_items]):\n                walk(v,\
+    \ \"%s[%d]\" % (path, i), depth + 1)\n        elif getattr(type(o), \"__module__\"\
+    , \"builtins\") != \"builtins\":\n            try:\n                for name in\
+    \ dir(o):\n                    if name.startswith(\"__\") and name not in (\"\
+    __call__\", \"__reduce__\", \"__reduce_ex__\"):\n                        continue\n\
+    \                    try:\n                        v = getattr(o, name)\n    \
+    \                except Exception:\n                        continue\n       \
+    \             if callable(v) and not isinstance(v, type):\n                  \
+    \      callables.append({\"path\": \"%s.%s\" % (path, name),\n               \
+    \                           \"name\": getattr(v, \"__name__\", name)})\n     \
+    \       except Exception:\n                pass\n\n    if obj is not None:\n \
+    \       walk(obj, \"obj\", 0)\n    return callables, suspicious, types\n\n\ndef\
+    \ behavior_findings(state_load, state_probe, suspicious, summary=None, events=None):\n\
+    \    \"\"\"\u041D\u0430\u0431\u043B\u044E\u0434\u0451\u043D\u043D\u044B\u0435\
+    \ \u044D\u0444\u0444\u0435\u043A\u0442\u044B \u0438 \u0438\u0437\u043C\u0435\u043D\
+    \u0435\u043D\u0438\u044F \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u044F\
+    \ \u2192 \u043F\u043E\u0432\u0435\u0434\u0435\u043D\u0447\u0435\u0441\u043A\u0438\
+    \u0435 \u043D\u0430\u0445\u043E\u0434\u043A\u0438 (L3).\"\"\"\n    f = []\n  \
+    \  summary = summary or {}\n    events = events or []\n\n    def add(cid, title,\
+    \ sev, conf, ev):\n        f.append({\"check_id\": cid, \"category\": \"F\", \"\
+    title\": title,\n                  \"severity\": sev, \"confidence\": conf, \"\
+    evidence\": ev})\n\n    def ev_of(pred, limit=3):\n        out = []\n        for\
+    \ e in events:\n            if pred(e[\"event\"]):\n                out.append(e[\"\
+    event\"] + \"(\" + \", \".join(e.get(\"args\") or [])[:120] + \")\")\n       \
+    \     if len(out) >= limit:\n                break\n        return \"; \".join(out)\
+    \ or \"-\"\n\n    # 1) \u042D\u0444\u0444\u0435\u043A\u0442\u044B, \u043D\u0430\
+    \u0431\u043B\u044E\u0434\u0430\u0435\u043C\u044B\u0435 \u043F\u0440\u0438 \u0437\
+    \u0430\u0433\u0440\u0443\u0437\u043A\u0435/\u0432\u044B\u043F\u043E\u043B\u043D\
+    \u0435\u043D\u0438\u0438 (\u0438\u043D\u0442\u0435\u0440\u043F\u0440\u0435\u0442\
+    \u0430\u0446\u0438\u044F \u0442\u0440\u0430\u0441\u0441\u044B).\n    if summary.get(\"\
+    subprocess\"):\n        add(\"F-30\", f\"\u0417\u0430\u043F\u0443\u0441\u043A\
+    \ \u0432\u043D\u0435\u0448\u043D\u0438\u0445 \u043F\u0440\u043E\u0446\u0435\u0441\
+    \u0441\u043E\u0432/\u043A\u043E\u043C\u0430\u043D\u0434 \u043F\u0440\u0438 \u0437\
+    \u0430\u0433\u0440\u0443\u0437\u043A\u0435 (\xD7{summary['subprocess']})\",\n\
+    \            \"high\", 0.8, ev_of(lambda n: n in (\"os.system\", \"os.exec\",\
+    \ \"os.spawn\",\n                                               \"os.posix_spawn\"\
+    , \"subprocess.Popen\")))\n    if summary.get(\"network_attempts\"):\n       \
+    \ add(\"F-31\", f\"\u0421\u0435\u0442\u0435\u0432\u044B\u0435 \u043E\u0431\u0440\
+    \u0430\u0449\u0435\u043D\u0438\u044F \u043F\u0440\u0438 \u0437\u0430\u0433\u0440\
+    \u0443\u0437\u043A\u0435 (\xD7{summary['network_attempts']})\",\n            \"\
+    high\", 0.75, ev_of(lambda n: n.startswith(\"socket.\")\n                    \
+    \            or n in (\"ftplib.connect\", \"smtplib.connect\", \"urllib.Request\"\
+    )))\n    if summary.get(\"mem_exec\"):\n        add(\"F-32\", f\"\u0418\u0441\u043F\
+    \u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043A\u043E\u0434\u0430 \u0432 \u043F\
+    \u0430\u043C\u044F\u0442\u0438 (exec) \u043F\u0440\u0438 \u0437\u0430\u0433\u0440\
+    \u0443\u0437\u043A\u0435 (\xD7{summary['mem_exec']})\",\n            \"high\"\
+    , 0.8, \"exec \u0441 code <string>/<stdin>\")\n    if summary.get(\"file_writes\"\
+    ):\n        add(\"F-33\", f\"\u0417\u0430\u043F\u0438\u0441\u044C \u0444\u0430\
+    \u0439\u043B\u043E\u0432 \u043F\u0440\u0438 \u0437\u0430\u0433\u0440\u0443\u0437\
+    \u043A\u0435 (\xD7{summary['file_writes']})\",\n            \"medium\", 0.6, \"\
+    open(..., 'w/a/x')\")\n\n    # 2) \u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\
+    \u044F \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u044F \u043F\u0440\u043E\
+    \u0446\u0435\u0441\u0441\u0430 (tampering).\n    touched = (state_load.get(\"\
+    builtins_changed\") or []) + (state_load.get(\"builtins_added\") or [])\n    if\
+    \ touched:\n        add(\"F-20\", \"\u041C\u043E\u0434\u0438\u0444\u0438\u043A\
+    \u0430\u0446\u0438\u044F builtins \u043F\u0440\u0438 \u0437\u0430\u0433\u0440\u0443\
+    \u0437\u043A\u0435: \" + \", \".join(touched[:10]), \"high\", 0.85,\n        \
+    \    \"builtins changed/added: %s\" % touched[:10])\n    if state_load.get(\"\
+    builtins_removed\"):\n        add(\"F-21\", \"\u0423\u0434\u0430\u043B\u0435\u043D\
+    \u044B \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B builtins: \" + \", \"\
+    .join(state_load[\"builtins_removed\"][:10]),\n            \"high\", 0.8, \"builtins\
+    \ removed\")\n    if state_load.get(\"meta_path_changed\") or state_load.get(\"\
+    path_hooks_changed\"):\n        add(\"F-22\", \"\u041F\u043E\u0434\u043C\u0435\
+    \u043D\u0430 \u043C\u0435\u0445\u0430\u043D\u0438\u0437\u043C\u0430 \u0438\u043C\
+    \u043F\u043E\u0440\u0442\u0430 (sys.meta_path/path_hooks)\", \"high\", 0.8,\n\
+    \            \"import hook override\")\n    if state_load.get(\"syspath_changed\"\
+    ):\n        add(\"F-23\", \"\u0418\u0437\u043C\u0435\u043D\u0451\u043D sys.path\
+    \ \u043F\u0440\u0438 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0435\", \"medium\"\
+    , 0.6, \"sys.path changed\")\n    if state_load.get(\"env_changed\"):\n      \
+    \  add(\"F-24\", \"\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u043E \u043E\u043A\
+    \u0440\u0443\u0436\u0435\u043D\u0438\u0435 \u043F\u0440\u043E\u0446\u0435\u0441\
+    \u0441\u0430: \" + \", \".join(state_load[\"env_changed\"][:10]),\n          \
+    \  \"medium\", 0.6, \"env changed\")\n    if state_load.get(\"cwd_changed\"):\n\
+    \        add(\"F-25\", \"\u0418\u0437\u043C\u0435\u043D\u0451\u043D \u0440\u0430\
+    \u0431\u043E\u0447\u0438\u0439 \u043A\u0430\u0442\u0430\u043B\u043E\u0433\", \"\
+    low\", 0.5, \"cwd changed\")\n    if state_probe.get(\"builtins_changed\") or\
+    \ state_probe.get(\"builtins_added\"):\n        add(\"F-26\", \"\u041C\u043E\u0434\
+    \u0438\u0444\u0438\u043A\u0430\u0446\u0438\u044F builtins \u0432\u043E \u0432\u0440\
+    \u0435\u043C\u044F \u0432\u044B\u0437\u043E\u0432\u0430 \u043C\u043E\u0434\u0435\
+    \u043B\u0438\", \"high\", 0.8,\n            \"builtins changed in probe\")\n\n\
+    \    # 3) \u0421\u043E\u0434\u0435\u0440\u0436\u0438\u043C\u043E\u0435 \u0437\u0430\
+    \u0433\u0440\u0443\u0436\u0435\u043D\u043D\u043E\u0433\u043E \u043E\u0431\u044A\
+    \u0435\u043A\u0442\u0430.\n    if suspicious:\n        add(\"F-27\", \"\u041F\u043E\
+    \u0434\u043E\u0437\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u0441\
+    \u0442\u0440\u043E\u043A\u0438 \u0432 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\
+    \u043D\u043D\u043E\u043C \u043E\u0431\u044A\u0435\u043A\u0442\u0435: \" +\n  \
+    \          \", \".join(sorted({s[\"pattern\"] for s in suspicious})), \"medium\"\
+    , 0.55,\n            \"; \".join(s[\"path\"] + \":\" + s[\"pattern\"] for s in\
+    \ suspicious[:5]))\n    return f\n\n\ndef behavior_probe(obj):\n    res = {\"\
+    callables\": [], \"results\": [], \"object\": None, \"types\": {},\n         \
+    \  \"suspicious_strings\": [], \"callable_paths\": []}\n    if obj is None:\n\
+    \        res[\"object\"] = {\"type\": \"NoneType\", \"repr\": \"None\"}\n    \
+    \    return res\n    res[\"object\"] = {\"type\": type(obj).__name__, \"repr\"\
+    : _short(obj, 240)}\n    callables, suspicious, types = introspect(obj)\n    res[\"\
+    suspicious_strings\"] = suspicious\n    res[\"types\"] = types\n    res[\"callable_paths\"\
+    ] = [c[\"path\"] for c in callables[:20]]\n\n    targets, seen = [], set()\n \
+    \   for name in (\"predict\", \"__call__\", \"forward\", \"transform\", \"generate\"\
+    ):\n        if name == \"__call__\":\n            if callable(obj):\n        \
+    \        targets.append((name, obj))\n        elif hasattr(obj, name) and callable(getattr(obj,\
+    \ name)):\n            targets.append((name, getattr(obj, name)))\n    uniq =\
+    \ []\n    for n, f in targets:\n        if id(f) in seen:\n            continue\n\
+    \        seen.add(id(f))\n        uniq.append((n, f))\n    res[\"callables\"]\
+    \ = [n for n, _ in uniq]\n    for n, f in uniq:\n        for inp in make_inputs():\n\
+    \            t0 = time.monotonic()\n            try:\n                out = f(inp)\n\
+    \                res[\"results\"].append({\"callable\": n, \"input\": type(inp).__name__,\
+    \ \"ok\": True,\n                                       \"out_type\": type(out).__name__,\
+    \ \"preview\": _short(out, 200),\n                                       \"time_ms\"\
+    : round((time.monotonic() - t0) * 1000, 3)})\n            except Exception as\
+    \ e:\n                res[\"results\"].append({\"callable\": n, \"input\": type(inp).__name__,\
+    \ \"ok\": False,\n                                       \"error\": \"%s: %s\"\
+    \ % (type(e).__name__, e),\n                                       \"time_ms\"\
+    : round((time.monotonic() - t0) * 1000, 3)})\n    return res\n\n\ndef prewarm(fmt):\n\
+    \    \"\"\"\u041F\u0440\u043E\u0433\u0440\u0435\u0432 \u0431\u0438\u0431\u043B\
+    \u0438\u043E\u0442\u0435\u043A \u0414\u041E \u0443\u0441\u0442\u0430\u043D\u043E\
+    \u0432\u043A\u0438 audit-hook: \u0448\u0443\u043C \u0438\u043C\u043F\u043E\u0440\
+    \u0442\u0430 \u043D\u0435 \u043F\u0440\u0438\u043F\u0438\u0441\u044B\u0432\u0430\
+    \u0435\u0442\u0441\u044F payload.\"\"\"\n    mods = {\"numpy\": [\"numpy\"], \"\
+    torch\": [\"torch\"], \"joblib\": [\"joblib\"],\n            \"dill\": [\"dill\"\
+    ], \"cloudpickle\": [\"cloudpickle\"],\n            \"safetensors\": [\"numpy\"\
+    , \"safetensors\"], \"onnx\": [\"numpy\", \"onnxruntime\"],\n            \"hdf5\"\
+    : [\"h5py\"], \"keras\": [\"h5py\"], \"gguf\": [\"gguf\"],\n            \"tar\"\
+    : [], \"zip\": [], \"config\": [], \"card\": [], \"tokenizer\": [],\n        \
+    \    \"xml\": [], \"json\": [], \"yaml\": [], \"image\": [], \"pmml\": [], \"\
+    notebook\": [],\n            \"script\": [], \"savedmodel\": [], \"coreml\": [],\
+    \ \"tflite\": [],\n            \"dataset\": [\"pyarrow\"], \"jinja\": [], \"native\"\
+    : [],\n            \"sitepath\": [], \"savedmodel\": [], \"html\": [], \"dockerfile\"\
+    : []}.get(fmt, [])\n    for m in mods:\n        try:\n            __import__(m)\n\
+    \        except Exception:\n            pass\n\n\nDATA_ONLY_FORMATS = {\"dataset\"\
+    , \"tflite\", \"coreml\", \"image\", \"card\", \"config\", \"xml\",\n        \
+    \             \"yaml\", \"pmml\", \"notebook\", \"script\", \"gguf\", \"safetensors\"\
+    ,\n                     \"hdf5\", \"onnx\", \"keras\"}\n\n\ndef summarize(events):\n\
+    \    s = {\"network_attempts\": 0, \"subprocess\": 0, \"exec\": 0, \"mem_exec\"\
+    : 0,\n         \"file_writes\": 0, \"imports\": [], \"dlopen\": 0}\n    for e\
+    \ in events:\n        ev = e[\"event\"]\n        args = e.get(\"args\", [])\n\
+    \        if ev.startswith(\"socket.\") or ev in (\"ftplib.connect\", \"smtplib.connect\"\
+    , \"urllib.Request\"):\n            s[\"network_attempts\"] += 1\n        if ev\
+    \ in (\"os.system\", \"os.exec\", \"os.spawn\", \"os.posix_spawn\", \"subprocess.Popen\"\
+    ):\n            s[\"subprocess\"] += 1\n        if ev in (\"exec\", \"compile\"\
+    ):\n            if FMT in DATA_ONLY_FORMATS:\n                continue   # exec\
+    \ \u0431\u0438\u0431\u043B\u0438\u043E\u0442\u0435\u043A-\u043F\u0430\u0440\u0441\
+    \u0435\u0440\u043E\u0432 (pyarrow/onnxruntime \u0438 \u0442.\u043F.), \u043D\u0435\
+    \ payload\n            s[\"exec\"] += 1\n            a0 = args[0] if args else\
+    \ \"\"\n            # \u0423\u0447\u0438\u0442\u044B\u0432\u0430\u0435\u043C \u0442\
+    \u043E\u043B\u044C\u043A\u043E \u0438\u0441\u043F\u043E\u043B\u043D\u0435\u043D\
+    \u0438\u0435 \u0432 \u0444\u0430\u0437\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\
+    \u043A\u0438 (payload); \u0432 \u0444\u0430\u0437\u0435 probe\n            # \u043A\
+    \u043E\u0434 <string> \u043C\u043E\u0436\u0435\u0442 \u0433\u0435\u043D\u0435\u0440\
+    \u0438\u0440\u043E\u0432\u0430\u0442\u044C\u0441\u044F \u043B\u0435\u043D\u0438\
+    \u0432\u044B\u043C \u0438\u043C\u043F\u043E\u0440\u0442\u043E\u043C \u0431\u0438\
+    \u0431\u043B\u0438\u043E\u0442\u0435\u043A (numpy \u0438 \u0442.\u043F.).\n  \
+    \          if e.get(\"phase\") == \"load\" and (\"<string>\" in a0 or \"<stdin>\"\
+    \ in a0):\n                s[\"mem_exec\"] += 1\n        if ev == \"open\":\n\
+    \            mode = args[1] if len(args) > 1 else \"\"\n            if any(c in\
+    \ mode for c in \"wax+\"):\n                s[\"file_writes\"] += 1\n        if\
+    \ ev == \"import\":\n            s[\"imports\"].append(args[0] if args else \"\
+    ?\")\n        if ev == \"ctypes.dlopen\" and (not args or args[0] != \"None\"\
+    ):\n            s[\"dlopen\"] += 1\n    s[\"imports\"] = sorted(set(s[\"imports\"\
+    ]))\n    return s\n\n\ndef main():\n    import resource\n    info = {\"format\"\
+    : FMT, \"load\": {\"ok\": False, \"type\": None, \"errors\": []},\n          \
+    \  \"behavior\": None, \"events\": [], \"summary\": {}, \"maxrss_kb\": None}\n\
+    \    errors = info[\"load\"][\"errors\"]\n    try:\n        rss0 = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n\
+    \    except Exception:\n        rss0 = 0\n    phase[0] = \"warmup\"\n    prewarm(FMT)\n\
+    \    target = recv_target(NAME)   # \u043F\u0440\u0438\u0451\u043C \u043C\u043E\
+    \u0434\u0435\u043B\u0438 \u0438\u0437 stdin (\u0434\u043E \u0443\u0441\u0442\u0430\
+    \u043D\u043E\u0432\u043A\u0438 \u0445\u0443\u043A\u0430)\n    snap0 = snapshot()\n\
+    \    sys.addaudithook(hook)\n    phase[0] = \"load\"\n    t0 = time.monotonic()\n\
+    \    obj = None\n    n_before = len(errors)\n    try:\n        obj = load_target(target,\
+    \ FMT, errors)\n    except Exception as e:\n        errors.append(\"load: %s:\
+    \ %s\" % (type(e).__name__, e))\n    # ok = \u0437\u0430\u0433\u0440\u0443\u0437\
+    \u043A\u0430 \u043F\u0440\u043E\u0448\u043B\u0430 \u0411\u0415\u0417 \u043E\u0448\
+    \u0438\u0431\u043E\u043A: \u0438\u043D\u0430\u0447\u0435 \u043C\u043E\u0434\u0435\
+    \u043B\u044C \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u0430\
+    \ (\u043D\u0435\u0442 \u0437\u0430\u0432\u0438\u0441\u0438\u043C\u043E\u0441\u0442\
+    \u0438,\n    # \u043F\u043E\u0432\u0440\u0435\u0436\u0434\u0451\u043D \u0444\u0430\
+    \u0439\u043B, \u043D\u0435 \u0445\u0432\u0430\u0442\u0438\u043B\u043E \u0440\u0435\
+    \u0441\u0443\u0440\u0441\u043E\u0432) \u0438 \u0434\u0435\u043B\u0430\u0442\u044C\
+    \ \u0432\u044B\u0432\u043E\u0434 \u043E \u0431\u0435\u0437\u043E\u043F\u0430\u0441\
+    \u043D\u043E\u0441\u0442\u0438 \u043D\u0435\u043B\u044C\u0437\u044F\n    load_errors\
+    \ = errors[n_before:]\n    info[\"load\"][\"ok\"] = not load_errors\n    info[\"\
+    load\"][\"failed\"] = bool(load_errors)\n    info[\"load\"][\"type\"] = type(obj).__name__\
+    \ if obj is not None else None\n    info[\"load\"][\"time_s\"] = round(time.monotonic()\
+    \ - t0, 4)\n    snap1 = snapshot()\n    state_load = diff_snapshot(snap0, snap1)\n\
+    \    phase[0] = \"probe\"\n    beh_ok = True\n    try:\n        info[\"behavior\"\
+    ] = behavior_probe(obj)\n    except Exception as e:\n        beh_ok = False\n\
+    \        errors.append(\"behavior: %s\" % e)\n        info[\"behavior\"] = {\"\
+    callables\": [], \"results\": [], \"object\": None,\n                        \
+    \    \"types\": {}, \"suspicious_strings\": [], \"callable_paths\": []}\n    #\
+    \ \u043F\u043E\u0432\u0435\u0434\u0435\u043D\u0447\u0435\u0441\u043A\u0438\u0439\
+    \ \u043C\u043E\u0434\u0443\u043B\u044C (L3) \u043E\u0441\u043C\u044B\u0441\u043B\
+    \u0435\u043D \u0442\u043E\u043B\u044C\u043A\u043E \u0435\u0441\u043B\u0438 \u043E\
+    \u0431\u044A\u0435\u043A\u0442 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\
+    \n    if not info[\"load\"][\"ok\"]:\n        beh_ok = False\n    info[\"behavior\"\
+    ][\"ok\"] = beh_ok\n    snap2 = snapshot()\n    state_probe = diff_snapshot(snap1,\
+    \ snap2)\n    info[\"summary\"] = summarize(events)\n    beh = info[\"behavior\"\
+    ]\n    beh[\"state_changes\"] = {\"load\": state_load, \"probe\": state_probe}\n\
+    \    beh[\"findings\"] = behavior_findings(state_load, state_probe,\n        \
+    \                                beh.get(\"suspicious_strings\") or [],\n    \
+    \                                    info[\"summary\"], events)\n    # \u043D\u0430\
+    \u0445\u043E\u0434\u043A\u0438, \u0432\u044B\u0442\u0435\u043A\u0430\u044E\u0449\
+    \u0438\u0435 \u0438\u0437 \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u043C\u043E\
+    \u0433\u043E \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u043D\u043E\u0433\
+    \u043E \u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440\u0430\n    if isinstance(obj,\
+    \ dict):\n        for target in (obj.get(\"external_links\") or []):\n       \
+    \     beh[\"findings\"].append({\"check_id\": \"EXEC-07\", \"category\": \"EXEC\"\
+    ,\n                                    \"title\": \"HDF5: \u0432\u043D\u0435\u0448\
+    \u043D\u044F\u044F \u0441\u0441\u044B\u043B\u043A\u0430 (%s)\" % target,\n   \
+    \                                 \"severity\": \"high\", \"confidence\": 0.8,\
+    \ \"evidence\": target})\n    phase[0] = \"done\"\n    global _record\n    _record\
+    \ = False\n    try:\n        rss1 = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n\
+    \    except Exception:\n        rss1 = 0\n    info[\"maxrss_kb\"] = max(rss0,\
+    \ rss1)\n    info[\"events\"] = events\n    # \u043F\u043E\u043A\u0440\u044B\u0442\
+    \u0438\u0435 \u043C\u043E\u0434\u0443\u043B\u0435\u0439: \u0447\u0442\u043E \u0440\
+    \u0435\u0430\u043B\u044C\u043D\u043E \u0443\u0434\u0430\u043B\u043E\u0441\u044C\
+    \ \u0432\u044B\u043F\u043E\u043B\u043D\u0438\u0442\u044C \u0432 \u043F\u0435\u0441\
+    \u043E\u0447\u043D\u0438\u0446\u0435\n    dyn_reason = \"; \".join(load_errors[:2])\
+    \ if load_errors else None\n    info[\"coverage\"] = {\n        \"dynamic\": {\"\
+    ok\": bool(info[\"load\"][\"ok\"]), \"reason\": dyn_reason},\n        \"behavior\"\
+    : {\"ok\": bool(beh_ok),\n                     \"reason\": None if beh_ok else\
+    \ (dyn_reason or \"\u043F\u043E\u0432\u0435\u0434\u0435\u043D\u0447\u0435\u0441\
+    \u043A\u0438\u0439 \u043C\u043E\u0434\u0443\u043B\u044C \u043D\u0435 \u0432\u044B\
+    \u043F\u043E\u043B\u043D\u0435\u043D\")},\n    }\n    info[\"incomplete\"] = not\
+    \ (info[\"coverage\"][\"dynamic\"][\"ok\"] and info[\"coverage\"][\"behavior\"\
+    ][\"ok\"])\n    beh = info.get(\"behavior\") or {}\n    sys.stdout.write(SUMMARY_MARKER\
+    \ + json.dumps({\n        \"format\": FMT, \"load_ok\": info[\"load\"][\"ok\"\
+    ], \"load_type\": info[\"load\"][\"type\"],\n        \"summary\": info[\"summary\"\
+    ],\n        \"behavior_findings\": [f[\"check_id\"] for f in (beh.get(\"findings\"\
+    ) or [])],\n        \"object_type\": (beh.get(\"object\") or {}).get(\"type\"\
+    ),\n        \"callables\": beh.get(\"callables\"),\n    }, ensure_ascii=False)\
+    \ + \"\\n\")\n    sys.stdout.write(RESULT_MARKER + json.dumps(info, ensure_ascii=False)\
+    \ + \"\\n\")\n    sys.stdout.flush()\n\n\nif __name__ == \"__main__\":\n    try:\n\
+    \        main()\n    except Exception as exc:\n        sys.stderr.write(\"HARNESS_FATAL:\
+    \ %s\\n\" % exc)\n        raise\n"

@@ -1,0 +1,61 @@
+apiVersion: platform.rtx.local/v1
+kind: TenantRequest
+metadata:
+  name: mlscan
+spec:
+  project: mlscan
+  cluster: rtx
+  contact: "mlscan-team@example.local"
+  namespaces:
+    - t-mlscan-app
+    - t-mlscan-sandbox
+  quota:
+    requests.cpu: "24"
+    requests.memory: 64Gi
+    limits.cpu: "48"
+    limits.memory: 128Gi
+    persistentvolumeclaims: "12"
+    requests.ephemeral-storage: 200Gi
+    limits.ephemeral-storage: 400Gi
+    requests.nvidia.com/gpu: "2"
+    limits.nvidia.com/gpu: "2"
+  keycloak:
+    clients:
+      - clientId: mlscan-web
+        callbacks:
+          - https://mlscan.platform.rtx.local/*
+    groups:
+      - mlscan-users
+      - mlscan-admins
+  harbor:
+    project: mlscan
+    robot:
+      name: ci
+      push: true
+      pull: true
+  vault:
+    role: tenant-mlscan
+    kvPath: secret/tenants/mlscan/
+    keys:
+      - oidc
+      - harbor
+      - db
+      - app
+      - s3
+  postgres:
+    database: tenant_mlscan
+    owner: tenant_mlscan
+  gitops:
+    appProject: tenant-mlscan
+    repo: "https://git.platform.rtx.local/mlscan/mlscan.git"
+  observability:
+    scrape:
+      - namespace: t-mlscan-app
+        service: mlscan-testing
+        port: 8080
+        path: /v3/metrics
+      - namespace: t-mlscan-app
+        service: mlscan-ops
+        port: 8080
+        path: /metrics
+    otlp: true

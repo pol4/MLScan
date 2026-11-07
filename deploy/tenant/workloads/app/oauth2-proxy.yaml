@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlscan-ui
+  namespace: t-mlscan-app
+  labels: {app: mlscan-ui, app.kubernetes.io/part-of: mlscan}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mlscan-ui}
+  template:
+    metadata:
+      labels: {app: mlscan-ui}
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: harbor-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: oauth2-proxy
+          image: harbor.platform.rtx.local/mlscan/oauth2-proxy@sha256:f6a4aa83a27e316114bf79664302b1ffb2cc8ce697fb479273af4feb3fb16fe3
+          imagePullPolicy: IfNotPresent
+          args:
+            - --provider=keycloak-oidc
+            - --oidc-issuer-url=https://kc.platform.rtx.local/realms/tenants
+            - --client-id=$(OIDC_CLIENT_ID)
+            - --client-secret=$(OIDC_CLIENT_SECRET)
+            - --cookie-secret=$(COOKIE_SECRET)
+            - --cookie-secure=true
+            - --email-domain=*
+            - --upstream=http://mlscan-analytics.t-mlscan-app.svc.cluster.local:8080
+            - --redirect-url=https://mlscan.platform.rtx.local/oauth2/callback
+            - --reverse-proxy=true
+            - --set-xauthrequest=true
+            - --pass-user-headers=true
+            - --skip-provider-button=true
+            - --http-address=0.0.0.0:4180
+            - --provider-ca-file=/etc/ssl/certs/platform-ca.crt
+            - --session-store-type=redis
+            - --redis-connection-url=redis://mlscan-redis.t-mlscan-app.svc.cluster.local:6379
+          env:
+            - name: OIDC_CLIENT_ID
+              valueFrom: {secretKeyRef: {name: mlscan-oidc, key: OIDC_CLIENT_ID}}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: mlscan-oidc, key: OIDC_CLIENT_SECRET}}
+            - name: COOKIE_SECRET
+              valueFrom: {secretKeyRef: {name: oauth2-proxy, key: cookie-secret}}
+          ports:
+            - {name: http, containerPort: 4180}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          readinessProbe:
+            httpGet: {path: /ping, port: 4180}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /ping, port: 4180}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: {cpu: "50m", memory: "64Mi"}
+            limits: {cpu: "200m", memory: "256Mi"}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: platform-ca, mountPath: /etc/ssl/certs/platform-ca.crt, subPath: ca.crt, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 32Mi}}
+        - {name: platform-ca, configMap: {name: platform-ca}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlscan-ui
+  namespace: t-mlscan-app
+  labels: {app: mlscan-ui}
+spec:
+  selector: {app: mlscan-ui}
+  ports:
+    - {name: http, port: 4180, targetPort: 4180}

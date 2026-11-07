@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlscan-testing-data
+  namespace: t-mlscan-app
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ceph-rwo
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlscan-artifacts
+  namespace: t-mlscan-app
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ceph-rwo
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlscan-analytics-data
+  namespace: t-mlscan-app
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ceph-rwo
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlscan-integrations-data
+  namespace: t-mlscan-app
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ceph-rwo
+  resources:
+    requests:
+      storage: 5Gi

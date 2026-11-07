@@ -1,0 +1,88 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlscan-sandbox-isolation-gate
+  namespace: t-mlscan-sandbox
+  labels:
+    app: mlscan-sandbox-isolation-gate
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: mlscan-sandbox-isolation-gate
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: harbor-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gate
+          image: harbor.platform.rtx.local/proxy-dockerhub/library/python@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import os, socket, urllib.request, sys, time
+              fail = 0
+              def say(msg):
+                  print(msg, flush=True)
+              def blocked(name, host, port):
+                  global fail
+                  try:
+                      s = socket.create_connection((host, port), timeout=4); s.close()
+                      say(f"FAIL: {name} reachable (expected blocked)"); fail = 1
+                  except Exception:
+                      say(f"OK:   {name} blocked")
+              def allowed(name, host, port, path):
+                  global fail
+                  last = None
+                  for _ in range(3):
+                      try:
+                          urllib.request.urlopen(f"http://{host}:{port}{path}", timeout=6).read(64)
+                          say(f"OK:   {name} reachable"); return
+                      except Exception as e:
+                          last = e; time.sleep(2)
+                  say(f"FAIL: {name} unreachable: {last}"); fail = 1
+              def info(name, host, port):
+                  try:
+                      s = socket.create_connection((host, port), timeout=4); s.close()
+                      say(f"INFO: {name} reachable (enforced only by the isolated subnet)")
+                  except Exception:
+                      say(f"INFO: {name} blocked")
+              testing_ip = os.environ.get("TESTING_IP", "")
+              sinkhole_ip = os.environ.get("SINKHOLE_IP", "")
+              daas_ip = os.environ.get("DAAS_IP", "")
+              if not (testing_ip and sinkhole_ip and daas_ip):
+                  say("FAIL: gate targets ConfigMap (mlscan-gate-targets) is missing or incomplete")
+                  sys.exit(1)
+              blocked("external-internet-1.1.1.1", "1.1.1.1", 443)
+              blocked("daas-cross-namespace", daas_ip, 5432)
+              allowed("artifact-server", testing_ip, 8080, "/healthz")
+              allowed("sinkhole", sinkhole_ip, 8080, "/")
+              info("platform-ingress-host", "192.168.20.116", 30965)
+              info("k8s-api-host", "10.96.0.1", 443)
+              say(f"isolation_fail={fail}")
+              sys.exit(fail)
+          envFrom:
+            - configMapRef:
+                name: mlscan-gate-targets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}

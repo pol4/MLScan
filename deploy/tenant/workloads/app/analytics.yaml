@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlscan-analytics
+  namespace: t-mlscan-app
+  labels: {app: mlscan-analytics, app.kubernetes.io/part-of: mlscan}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: mlscan-analytics}
+  template:
+    metadata:
+      labels: {app: mlscan-analytics}
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: harbor-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: analytics
+          image: harbor.platform.rtx.local/mlscan/services@sha256:9e12aae9a9bd6596fd55664d94e45ee80d7026e6055618afbb146ea06b86fd12
+          imagePullPolicy: IfNotPresent
+          command: ["python", "/opt/svc/mlscan_analytics.py"]
+          env:
+            - {name: TESTING_URL, value: "http://mlscan-testing.t-mlscan-app.svc.cluster.local:8080"}
+            - {name: DATA_DIR, value: /data}
+            - {name: POLICY_PATH, value: /etc/mlscan/policy.json}
+            - {name: PORT, value: "8080"}
+            - {name: POLL_INTERVAL, value: "3600"}
+            - {name: RATE_LIMIT_RPS, value: "100"}
+            - {name: RATE_LIMIT_BURST, value: "300"}
+            - name: MLSCAN_JWT_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_EVIDENCE_KEY}}
+            - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+            - {name: MLSCAN_LANG, value: "ru"}
+            - {name: PYTHONUTF8, value: "1"}
+            - {name: TMPDIR, value: /tmp}
+            - name: MLSCAN_KEYS
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_KEYS}}
+            - name: INTERNAL_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: INTERNAL_KEY}}
+            - name: MLSCAN_SESSION_SECRET
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: SESSION_SECRET}}
+            - name: MLSCAN_EVIDENCE_KEY
+              valueFrom: {secretKeyRef: {name: mlscan-keys, key: MLSCAN_EVIDENCE_KEY}}
+            - {name: MLSCAN_COOKIE_DOMAIN, value: ".platform.rtx.local"}
+            - {name: MLSCAN_TRUST_PROXY, value: "1"}
+            - name: PGHOST
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGHOST}}
+            - name: PGPORT
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGPORT}}
+            - name: PGUSER
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGUSER}}
+            - name: PGDATABASE
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGDATABASE}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: mlscan-pg, key: PGPASSWORD}}
+          ports:
+            - {name: http, containerPort: 8080}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+          volumeMounts:
+            - {name: policy, mountPath: /etc/mlscan, readOnly: true}
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: policy, configMap: {name: mlscan-policy}}
+        - {name: data, persistentVolumeClaim: {claimName: mlscan-analytics-data}}
+        - {name: tmp, emptyDir: {sizeLimit: 128Mi, medium: Memory}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlscan-analytics
+  namespace: t-mlscan-app
+  labels: {app: mlscan-analytics}
+spec:
+  type: ClusterIP
+  selector: {app: mlscan-analytics}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080}

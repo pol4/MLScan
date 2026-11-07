@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: t-mlscan-app
+resources:
+  - 01-quota-limitrange.yaml
+  - 02-netpol-app.yaml
+  - 03-secretstore-externalsecrets.yaml
+  - 04-storage.yaml
+  - 05-config.yaml
+  - 06-rbac-app.yaml
+  - 07-garage.yaml
+  - 10-ingress.yaml
+  - 20-db-migrate.yaml
+configMapGenerator:
+  - name: mlscan-pg-init
+    files:
+      - 01-schema.sql=schema/01-schema.sql
+  - name: mlscan-pg-schema-v3
+    files:
+      - schema-v3.sql=schema/schema-v3.sql

@@ -1,0 +1,55 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mlscan-ui
+  namespace: t-mlscan-app
+  annotations:
+    cert-manager.io/cluster-issuer: platform-ca
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mlscan.platform.rtx.local
+      secretName: mlscan-ui-tls
+  rules:
+    - host: mlscan.platform.rtx.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mlscan-ui
+                port:
+                  number: 4180
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mlscan-api
+  namespace: t-mlscan-app
+  annotations:
+    cert-manager.io/cluster-issuer: platform-ca
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mlscan-api.platform.rtx.local
+      secretName: mlscan-api-tls
+  rules:
+    - host: mlscan-api.platform.rtx.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mlscan-testing
+                port:
+                  number: 8080

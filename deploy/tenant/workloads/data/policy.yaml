@@ -1,0 +1,104 @@
+# Policy Engine (Этап 3): декларативные правила (JSON) → действие и вердикт.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlscan-policy
+  namespace: t-mlscan-app
+  labels: {app.kubernetes.io/part-of: mlscan, mlscan.io/stage: "3"}
+data:
+  policy.json: |
+    {
+      "rules": [
+        {
+          "id": "block-rce",
+          "when": {"check_id_in": ["A-01", "A-13", "A-14", "A-15", "A-16", "A-17"], "min_confidence": 0.8},
+          "action": "block", "verdict": "Malicious",
+          "reason": "RCE-конструкции десериализации (опасные глобалы/форматы)"
+        },
+        {
+          "id": "block-code-exec",
+          "when": {"check_id_in": ["A-05", "F-32"], "min_confidence": 0.8},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Исполнение кода при загрузке (exec/compile в памяти)"
+        },
+        {
+          "id": "block-process-egress",
+          "when": {"check_id_in": ["F-30", "F-31"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Запуск процессов или сетевые обращения при загрузке"
+        },
+        {
+          "id": "block-tamper",
+          "when": {"check_id_in": ["F-20", "F-21", "F-22", "F-26"], "min_confidence": 0.8},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Модификация состояния процесса (builtins/import-хуки)"
+        },
+        {
+          "id": "block-code-artifact",
+          "when": {"check_id_in": ["EXEC-01", "EXEC-02", "EXEC-03", "EXEC-04", "EXEC-05", "EXEC-06", "EXEC-07"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Исполняемый код или ссылки на код в артефакте (model-as-code / Lambda / custom ops)"
+        },
+        {
+          "id": "block-native-risk",
+          "when": {"check_id_in": ["FMT-03", "FMT-05", "FMT-06"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Нативный риск: path traversal/symlink/XXE/unsafe-YAML"
+        },
+        {
+          "id": "block-template-injection",
+          "when": {"check_id_in": ["INJ-01"], "min_confidence": 0.6},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Опасные конструкции в Jinja chat_template (SSTI)"
+        },
+        {
+          "id": "block-agent",
+          "when": {"check_id_in": ["AGT-01"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Agent/MCP-манифест с запуском команд"
+        },
+        {
+          "id": "block-prompt-injection",
+          "when": {"check_id_in": ["INJ-03", "INJ-04", "INJ-05"], "min_confidence": 0.55},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Prompt-injection/XSS в карточках и tool-схемах"
+        },
+        {
+          "id": "block-tokenizer-backdoor",
+          "when": {"check_id_in": ["BD-02"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Переопределение спец-токенов / ReDoS в токенизаторе"
+        },
+        {
+          "id": "block-install-hooks",
+          "when": {"check_id_in": ["INT-04"], "min_confidence": 0.7},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Install-файлы в архиве (выполнение кода при установке)"
+        },
+        {
+          "id": "block-steg-polyglot",
+          "when": {"check_id_in": ["STEG-03"], "min_confidence": 0.6},
+          "action": "block", "verdict": "Malicious",
+          "reason": "Полиглот-контейнер со скрытым кодом"
+        },
+        {
+          "id": "allow-clean",
+          "when": {"max_severity_at_most": "info"},
+          "action": "allow", "verdict": "Safe",
+          "reason": "Опасных признаков не обнаружено"
+        },
+        {
+          "id": "quarantine-medium",
+          "when": {"min_severity": "medium"},
+          "action": "quarantine", "verdict": "Needs review",
+          "reason": "Находки среднего уровня требуют разбора"
+        },
+        {
+          "id": "allow-low",
+          "when": {"min_severity": "low"},
+          "action": "allow", "verdict": "Safe",
+          "reason": "Только низкоуровневые замечания"
+        }
+      ],
+      "default": {"action": "quarantine", "verdict": "Needs review", "reason": "Недостаточно данных"}
+    }

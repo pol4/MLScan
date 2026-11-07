@@ -34,6 +34,7 @@ try:
 except Exception:  # noqa: BLE001
     KEYS = {}
 AUTH_ENABLED = os.environ.get("MLSCAN_AUTH", "on").lower() not in ("off", "0", "false")
+TRUST_PROXY = os.environ.get("MLSCAN_TRUST_PROXY", "0").lower() in ("1", "on", "true")
 
 
 SESSION_SECRET = os.environ.get("MLSCAN_SESSION_SECRET", "")
@@ -149,6 +150,13 @@ def authenticate(headers):
     """Вернёт dict(subject, roles) при успехе, иначе None."""
     if not AUTH_ENABLED:
         return {"subject": "anonymous", "roles": ["admin"]}
+    if TRUST_PROXY:
+        user = (headers.get("X-Auth-Request-User") or "").strip()
+        if user:
+            groups = (headers.get("X-Auth-Request-Groups") or "").strip()
+            gl = {g.strip() for g in groups.split(",") if g.strip()}
+            roles = ["admin"] if ("mlscan-admins" in gl or "admin" in gl) else ["viewer"]
+            return {"subject": user, "roles": roles}
     auth = (headers.get("Authorization") or "")
     key = ""
     if auth.lower().startswith("bearer "):

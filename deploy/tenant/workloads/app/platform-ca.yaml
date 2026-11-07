@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-ca
+  namespace: t-mlscan-app
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBlTCCATygAwIBAgIUa7SupHrV7rJOBgC75/L0mpjpIQAwCgYIKoZIzj0EAwIw
+    KTEnMCUGA1UEAxMecGxhdGZvcm0tY2EucGxhdGZvcm0ucnR4LmxvY2FsMB4XDTI2
+    MTEwMzE5MjAyNFoXDTM2MTAzMTE5MjAyNFowKTEnMCUGA1UEAxMecGxhdGZvcm0t
+    Y2EucGxhdGZvcm0ucnR4LmxvY2FsMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
+    iD5tpjd/b1XUNPcWLOAuiY1KrFknSjcax2HD2gtedL609/A5NHPDHk7SL3AULnUK
+    ElVK5JkhEdAna/bfYW5I5aNCMEAwDgYDVR0PAQH/BAQDAgKkMA8GA1UdEwEB/wQF
+    MAMBAf8wHQYDVR0OBBYEFKa+QNLgivtdA88V7ZkBgHt08efwMAoGCCqGSM49BAMC
+    A0cAMEQCIA2imKBiCr2DGa/Tn8pPBj6Ham8+kL5xo1UyqlE7JD5JAiBSsEXSh9KR
+    0jZt9y2jC6E6HxBoUIq8KNuVJPFiJatOLA==
+    -----END CERTIFICATE-----
