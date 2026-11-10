@@ -683,17 +683,15 @@ V3UI_MARKUP = """
 <div id='v3nav' style='margin:10px 0 6px'>
   <button type='button' class='v3tab' data-v3='scans'>Сканы</button>
   <button type='button' class='v3tab' data-v3='upload'>Загрузка</button>
+  <button type='button' class='v3tab' data-v3='ops'>История операций</button>
   <button type='button' class='v3tab' data-v3='settings'>Настройки</button>
   <button type='button' class='v3tab' data-v3='admin' id='v3admin-tab'>Администрирование</button>
 </div>
 <div class='v3sect' id='sec-scans'>
-  <div class='upload' style='margin-top:0'><b>Сканы: артефакты</b>
-    <button type='button' id='v3art-refresh'>Обновить</button>
-    <div id='v3artlist' style='margin-top:6px;font-size:12px'></div>
-  </div>
   <div class='upload' id='v3artdetail' style='display:none'></div>
 </div>
-<div class='v3sect' id='sec-upload' style='display:none'>
+<div class='v3sect' id='sec-upload' style='display:none'></div>
+<div class='v3sect' id='sec-ops' style='display:none'>
   <div class='upload' style='margin-top:0'><b>История операций</b>
     <select id='v3ops-kind'><option value='uploads'>загрузки артефактов</option>
       <option value='hf'>HF-загрузки</option><option value='engines'>движки</option></select>
@@ -702,8 +700,13 @@ V3UI_MARKUP = """
   </div>
 </div>
 <div class='v3sect' id='sec-settings' style='display:none'>
-  <div class='upload' style='margin-top:0' id='v3set-token'><b>HF-токен (личный)</b> <span id='v3set-token-slot'></span></div>
+  <div class='upload' style='margin-top:0' id='v3set-token'><b>HF-токен (личный)</b>
+    <input id='hftoken' type='password' placeholder='hf_…' style='width:28%'>
+    <button id='hftokensave' type='button'>Сохранить токен</button>
+    <span id='hftokenstatus' style='color:#9aa4b2;font-size:12px'></span></div>
   <div class='upload' style='margin-top:0' id='v3set-ps'><b>Набор тестов (XLSX)</b> <span id='v3set-ps-slot'></span></div>
+  <div class='upload' style='margin-top:0' id='v3set-ps-history'><b>История наборов тестов (XLSX)</b>
+    <div id='v3ps-history' style='margin-top:6px;font-size:12px'></div></div>
 </div>
 <div class='v3sect' id='sec-admin' style='display:none'>
   <div class='upload' style='margin-top:0'><b>Квоты HF (per-tenant)</b>
@@ -731,6 +734,7 @@ V3UI_SCRIPT = """
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   // --- навигация и перенос существующих блоков в разделы ---
   const secs={scans:document.getElementById('sec-scans'),upload:document.getElementById('sec-upload'),
+              ops:document.getElementById('sec-ops'),
               settings:document.getElementById('sec-settings'),admin:document.getElementById('sec-admin')};
   const dl=document.getElementById('downloads');
   if(dl&&secs.upload){secs.upload.insertBefore(dl,secs.upload.firstChild);}
@@ -757,17 +761,69 @@ V3UI_SCRIPT = """
       +"<input id='v3br-task' type='text' placeholder='назначение (pipeline/task)' style='width:18%'> "
       +"<select id='v3br-sort'><option value='downloads'>по загрузкам</option><option value='likes'>по лайкам</option><option value='lastModified'>по дате</option></select> "
       +"<button type='button' id='v3br-btn'>Обзор</button> <span id='v3br-status' style='font-size:12px;color:#9aa4b2'></span>"
-      +"<div id='v3br-list' style='margin-top:6px;font-size:12px'></div>";
+      +"<div id='v3br-list' style='margin-top:6px;font-size:12px'></div>"
+      +"<div style='margin-top:12px'><b>Загрузки</b><div id='v3dl-list' style='margin-top:4px;font-size:12px'></div></div>";
     hf.insertBefore(box,hf.firstChild);}
+  let dlTimer=null;
+  function renderDownloads(){
+    const box=document.getElementById('v3dl-list'); if(!box)return;
+    Promise.all([api('/hf/downloads').catch(()=>({downloads:[]})),
+                 api('/v3/artifacts?limit=500').catch(()=>({artifacts:[]}))]).then(([d,arts])=>{
+      const items=(d&&d.downloads)||[];
+      const amap={};((arts&&arts.artifacts)||[]).forEach(a=>{amap[a.sha256]=a;});
+      if(!items.length){box.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th align="left">Модель</th><th>Загрузка</th><th>Проверка</th><th>Инференс</th><th></th><th>Ошибка</th></tr></table><i>нет загрузок</i>';return;}
+      const fmtSize=b=>{let n=Number(b)||0;if(!n)return '—';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(1)+' '+u[i];};
+      box.innerHTML="<table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th align='left'>Модель</th><th>Загрузка</th><th>Проверка</th><th>Инференс</th><th></th><th>Ошибка</th></tr>"
+        +items.map(x=>{const pct=x.bytes_total?Math.round((x.bytes_done||0)/x.bytes_total*100):0;
+          const a=amap[x.model_sha256]||{};
+          const scan=a.verdict||((a.scan_state&&a.scan_state!=='uploaded'&&a.scan_state!=='queued')?a.scan_state:(a.scan_state||'—'));
+          const done=x.status==='done'&&x.model_sha256;
+          const engSel=done?("<select class='v3dl-eng'><option value=''>engine: (выберите)</option></select>"):'—';
+          const runBtn=done?("<button type='button' class='v3dl-run' data-sha='"+esc(x.model_sha256)+"'>Запустить сканирование</button>"):'';
+          const link=x.model_sha256?("<a href='#' class='v3art' data-sha='"+esc(x.model_sha256)+"'>"+esc(x.repo_id)+"</a>"):esc(x.repo_id);
+          return "<tr><td>"+link+"</td>"
+            +"<td>"+esc(x.status||'')+(x.bytes_total?(" ("+pct+"%, "+fmtSize(x.bytes_done)+" / "+fmtSize(x.bytes_total)+")"):'')+"</td>"
+            +"<td>"+esc(scan)+"</td><td>"+engSel+"</td><td>"+runBtn+"</td><td>"+esc(x.error||'')+"</td></tr>";}).join('')+"</table>";
+      api('/images/list').then(l=>{const opts=((l&&l.images)||[]).map(i=>{const ref=(i.ref||i.digest); const t=i.type||'—';
+        return "<option value='"+esc(i.digest)+"'>"+esc(ref.slice(0,50))+" ["+t+"]</option>";}).join('');
+        box.querySelectorAll('.v3dl-eng').forEach(s=>{s.innerHTML="<option value=''>engine: (выберите)</option>"+opts;});}).catch(()=>{});
+      box.querySelectorAll('.v3dl-run').forEach(b=>b.addEventListener('click',()=>{
+        const row=b.closest('tr'); const sel=row&&row.querySelector('.v3dl-eng');
+        const eng=sel?sel.value:'';
+        if(!eng){if(sel)sel.style.outline='1px solid #e0b060';return;}
+        b.disabled=true; b.textContent='запуск…';
+        api('/v3/artifacts/'+encodeURIComponent(b.dataset.sha)+'/test',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({engine_image:eng})}).then(r=>{b.textContent='запущено'; setTimeout(renderDownloads,2000);})
+          .catch(e=>{b.disabled=false;b.textContent='ERR '+e.message;});}));
+      const active=items.some(x=>['queued','running','downloading','pending'].includes(x.status))
+        || Object.values(amap).some(a=>a.scan_state==='running'||a.scan_state==='queued');
+      if(active && !dlTimer){dlTimer=setInterval(renderDownloads,5000);}
+      if(!active && dlTimer){clearInterval(dlTimer);dlTimer=null;}
+    }).catch(e=>{box.innerHTML='<i style="color:#e0b060">ERR '+esc((e&&e.message)||e)+'</i>';});
+  }
+  renderDownloads(); setTimeout(renderDownloads,1500);
   document.getElementById('v3br-btn')&&document.getElementById('v3br-btn').addEventListener('click',()=>{
     const st=document.getElementById('v3br-status'); st.textContent='запрос…';
     api('/hf/browse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       kind:document.getElementById('v3br-kind').value, author:document.getElementById('v3br-author').value.trim(),
       task:document.getElementById('v3br-task').value.trim(), sort:document.getElementById('v3br-sort').value, limit:20})})
       .then(d=>{st.textContent='найдено: '+d.count;
-        document.getElementById('v3br-list').innerHTML=(d.items||[]).map(i=>
-          "<div>"+esc(i.id)+" <span style='color:#9aa4b2'>(↓"+i.downloads+")</span> "
-          +"<button type='button' data-repo='"+esc(i.id)+"' data-kind='"+esc(d.kind)+"' class='v3br-queue'>В очередь</button></div>").join('')})
+        const fmtSize=b=>{let n=Number(b)||0;if(!n)return '—';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(1)+' '+u[i];};
+        document.getElementById('v3br-list').innerHTML="<table style='width:100%;border-collapse:collapse;font-size:12px'>"
+          +"<tr><th></th><th align='left'>Модель</th><th>Размер</th><th align='left'>Описание</th><th>Формат</th><th>Квантование</th><th align='left'>Инференсы</th></tr>"
+          +(d.items||[]).map(i=>"<tr><td><input type='checkbox' class='v3br-sel' value='"+esc(i.id)+"'></td>"
+            +"<td>"+esc(i.id)+"</td><td align='center'>"+esc(fmtSize(i.size))+"</td>"
+            +"<td>"+esc(i.description||'')+"</td><td align='center'>"+esc(i.format||'—')+"</td>"
+            +"<td align='center'>"+esc(i.quantization||'—')+"</td>"
+            +"<td>"+esc((i.supported_inferences||[]).join(', ')||'—')+"</td></tr>").join('')
+          +"</table><div style='margin-top:6px'><button type='button' id='v3br-download'>Скачать выбранные</button></div>";
+        const dl=document.getElementById('v3br-download');
+        dl&&dl.addEventListener('click',()=>{const sel=[...document.querySelectorAll('.v3br-sel:checked')].map(x=>x.value);
+          if(!sel.length){st.textContent='выберите модели';return;}
+          st.textContent='в очереди: '+sel.length;
+          Promise.all(sel.map(id=>api('/hf/downloads',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({repo_id:id,quantization:'',kind:'nonllm'})}).catch(()=>null)))
+            .then(()=>{renderDownloads(); setTimeout(renderDownloads,2000);});});})
       .catch(e=>{st.textContent='ERR '+e.message;});});
   document.addEventListener('click',ev=>{const b=ev.target.closest&&ev.target.closest('.v3br-queue'); if(!b)return;
     const kind=b.dataset.kind==='datasets'?'dataset':'nonllm';
@@ -781,65 +837,117 @@ V3UI_SCRIPT = """
     if(!artlist)return; artlist.textContent='загрузка…';
     api('/v3/artifacts?limit=100').then(d=>{
       artlist.innerHTML="<table style='width:100%;border-collapse:collapse'>"
-        +"<tr><th>Файл</th><th>Формат</th><th>Вердикт</th><th>Движок</th><th>Дата</th></tr>"
-        +(d.artifacts||[]).map(a=>"<tr><td><a href='#' data-sha='"+esc(a.sha256)+"' class='v3art'>"+esc(a.filename)+"</a></td>"
-          +"<td>"+esc(a.format)+"</td><td>"+esc(a.verdict||a.scan_state||'—')+"</td>"
-          +"<td>"+esc((a.engine_image||'—').split('@')[0].split('/').pop())+"</td><td>"+esc(a.created||'')+"</td></tr>").join('')
+        +"<tr><th>Файл</th><th>Формат</th><th>Вердикт</th><th>Движок инференса</th><th>Дата</th></tr>"
+        +(d.artifacts||[]).map(a=>{const st=a.verdict||((a.scan_state&&a.scan_state!=='uploaded'&&a.scan_state!=='queued')?a.scan_state:'Требуется сканирование');
+          return "<tr><td><a href='#' data-sha='"+esc(a.sha256)+"' class='v3art'>"+esc(a.filename)+"</a></td>"
+          +"<td>"+esc(a.format)+"</td><td>"+esc(st)+"</td>"
+          +"<td>"+esc((a.engine_image||'—').split('@')[0].split('/').pop())+"</td><td>"+esc(a.created||'')+"</td></tr>";}).join('')
         +"</table>";}).catch(e=>{artlist.textContent='ERR '+e.message;});}
   document.getElementById('v3art-refresh')&&document.getElementById('v3art-refresh').addEventListener('click',renderArtifacts);
   document.addEventListener('click',ev=>{const a=ev.target.closest&&ev.target.closest('a.v3art'); if(!a)return; ev.preventDefault();
     showArtifact(a.dataset.sha);});
+  let detailTimer=null;
+  function stopDetailTimer(){if(detailTimer){clearInterval(detailTimer);detailTimer=null;}}
   function showArtifact(sha){
+    if(!sha){return;}
+    stopDetailTimer();
+    if(window.__v3showTab)window.__v3showTab('scans');
     detail.style.display='block'; detail.textContent='загрузка…';
-    api('/v3/artifacts/'+encodeURIComponent(sha)).then(d=>{
-      const art=d.artifact, chains=(d.bundles||[]).map(b=>
-        "<li>движок <b>"+esc((b.engine_image||'').split('@')[0])+"</b>"
-        +" вердикт инференса: "+esc(b.inference_verdict||'—')+" / "+esc(b.inference_action||'—')
-        +" аттестация: "+esc((b.attestation_digest||'').slice(0,18))+"…</li>").join('');
-      const fnd=(d.findings||[]).map(f=>"<li><b>"+esc(f.check_id)+"</b> ("+esc(f.severity)+", conf "+esc(f.confidence)+"): "
-        +esc(f.title)+"<br><span style='color:#9aa4b2'>"+esc(f.evidence||'')+"</span></li>").join('');
-      detail.innerHTML="<b>"+esc(art.filename)+"</b> <span style='color:#9aa4b2'>"+esc(sha.slice(0,16))+"…</span><br>"
-        +"формат: "+esc(art.format)+", размер: "+esc(art.size)+", вердикт: <b>"+esc(art.verdict||'—')+"</b><br>"
-        +"<br>Связки (движок+модель):<ul>"+(chains||'<li>нет</li>')+"</ul>"
-        +"<div style='margin-top:6px'>Сменить/связать движок: <select id='v3bind-engine'><option value=''>engine: (выберите)</option></select> "
-        +"<button type='button' id='v3bind-btn'>Связать</button> "
-        +"<button type='button' id='v3test-btn'>Запустить/повторить тест</button> "
-        +"<a href='/v3/artifacts/"+encodeURIComponent(sha)+"/report.json' target='_blank'>Отчёт JSON</a> "
-        +"<a href='/v3/artifacts/"+encodeURIComponent(sha)+"/report.html' target='_blank'>Печать/PDF</a></div>"
-        +"<div id='v3bind-status' style='font-size:12px;color:#9aa4b2'></div>"
-        +"<br><b>Находки последнего скана:</b><ul>"+(fnd||'<li>нет</li>')+"</ul>"
-        +"<b>История тестов:</b><ul>"+((d.scans||[]).map(s=>"<li>"+esc(s.scan_id)+" — "+esc(s.state||'')+" / "+esc(s.verdict||'')+" ("+esc(s.finished||'')+")</li>").join('')||'<li>нет</li>')+"</ul>";
-      // A5: детализация отчёта — покрытие, находки по фазам, eBPF-правила, песочница
-      api('/v3/artifacts/'+encodeURIComponent(sha)+'/report.json').then(rep=>{
-        const cov=(rep.scan||{}).coverage||{}; const bp=rep.findings_by_phase||{};
-        const llm=rep.llm_events||{}; const sb=rep.sandbox||{};
-        const ph=Object.keys(bp).map(k=>"<b>"+esc(k)+"</b>: "+esc((bp[k]||[]).map(f=>f.check_id).join(', '))).join('; ');
-        const rules=(llm.rules||[]).map(r=>esc(r.check_id)+" ("+esc(r.severity)+"×"+esc(r.count)+")").join(', ');
-        detail.insertAdjacentHTML('beforeend',
-          "<div style='margin-top:8px;font-size:12px;color:#c8d2e0'>"
-          +"покрытие: "+(cov.complete?"<b style='color:#8fd18f'>полное</b>":"<span style='color:#e0b060'>неполное</span>")
-          +(cov.failed&&cov.failed.length?(" ("+esc(cov.failed.join(', '))+")"):"")
-          +"<br>находки по фазам: "+(ph||"—")
-          +"<br>eBPF-правила: "+(rules||"—")+" (событий: "+esc(llm.count||0)+")"
-          +"<br>песочница: "+esc(sb.status||"—")+" / "+(sb.load&&sb.load.ok?"загрузка ok":"загрузка с ошибками")
-          +" ["+esc((sb.behavior_findings||[]).join(', ')||"находок нет")+"]"
-          +"</div>");
-      }).catch(()=>{});
-      api('/images/list').then(l=>{const sel=document.getElementById('v3bind-engine');
-        if(sel)(l.images||[]).forEach(i=>{const o=document.createElement('option');o.value=i.digest;
-          o.textContent=(i.ref||i.digest).slice(0,60)+(i.signed?' [signed]':'');sel.appendChild(o);});});
-      const bs=document.getElementById('v3bind-btn');
-      bs&&bs.addEventListener('click',()=>{const e=document.getElementById('v3bind-engine').value;
-        api('/v3/artifacts/'+encodeURIComponent(sha)+'/bind',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({engine_image:e})}).then(r=>{document.getElementById('v3bind-status').textContent=
-            'связано: bundle '+String(r.bundle_id).slice(0,20);}).catch(e2=>{document.getElementById('v3bind-status').textContent='ERR '+e2.message;});});
-      const ts=document.getElementById('v3test-btn');
-      ts&&ts.addEventListener('click',()=>{const e=document.getElementById('v3bind-engine').value;
-        api('/v3/artifacts/'+encodeURIComponent(sha)+'/test',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(e?{engine_image:e}:{})}).then(r=>{document.getElementById('v3bind-status').textContent=
-            r.status==='rescan-required'?('тест не запущен: '+(r.hint||'нужен повторный скан')):('тест запущен: job '+(r.job||''));})
-          .catch(e2=>{document.getElementById('v3bind-status').textContent='ERR '+e2.message;});});
-    }).catch(e=>{detail.textContent='ERR '+e.message;});}
+    const nav=document.getElementById('v3nav'); if(nav)nav.style.display='none';
+    const sec=document.getElementById('sec-scans');
+    if(sec){[...sec.children].forEach(ch=>{if(ch.id!=='v3artdetail')ch.style.display='none';});}
+    let rendered=false;
+    function render(){
+      return api('/v3/artifacts/'+encodeURIComponent(sha)).then(d=>{
+        const art=d.artifact;
+        const fnd=(d.findings||[]).map(f=>"<li><b>"+esc(f.check_id)+"</b> ("+esc(f.severity)+", conf "+esc(f.confidence)+"): "
+          +esc(f.title)+"<br><span style='color:#9aa4b2'>"+esc(f.evidence||'')+"</span></li>").join('');
+        const histScans=(d.scans||[]); const histBundles=(d.bundles||[]);
+        const historyRows = histScans.length
+          ? histScans.map((s,i)=>{const b=histBundles[i]||{};
+              return "<tr><td>"+esc(s.scan_id)+"</td><td>"+esc(s.state||'')+"</td><td>"+esc(s.verdict||'')+"</td>"
+                +"<td>"+esc((b.engine_image||'').split('@')[0].split('/').pop()||'—')+"</td><td>"+esc(b.prompt_set||'—')+"</td>"
+                +"<td>"+esc((b.attestation_digest||'').slice(0,18)||'—')+"</td><td>"+esc(s.finished||'')+"</td></tr>";}).join('')
+          : histBundles.map(b=>"<tr><td>—</td><td>—</td><td>"+esc(b.inference_verdict||'—')+"</td>"
+              +"<td>"+esc((b.engine_image||'').split('@')[0].split('/').pop())+"</td><td>"+esc(b.prompt_set||'—')+"</td>"
+              +"<td>"+esc((b.attestation_digest||'').slice(0,18))+"</td><td>—</td></tr>").join('');
+        if(!rendered){
+          rendered=true;
+          detail.innerHTML="<button type='button' id='v3d-back'>← Назад</button><br>"
+            +"<b>"+esc(art.filename)+"</b> <span style='color:#9aa4b2'>"+esc(sha.slice(0,16))+"…</span><br>"
+            +"формат: "+esc(art.format)+", размер: "+esc(art.size)+", вердикт: <b id='v3d-verdict'>"+esc(art.verdict||'—')+"</b><br>"
+            +"<div id='v3d-report' style='margin-top:8px;font-size:12px;color:#c8d2e0'></div>"
+            +"<div style='margin-top:10px'><b>Находки последнего скана:</b><ul id='v3d-findings'>"+(fnd||'<li>нет</li>')+"</ul></div>"
+            +"<div style='margin-top:10px'><b>Запустить тест</b><br>"
+            +"<select id='v3test-engine'><option value=''>engine: (текущий/выберите)</option></select> "
+            +"<button type='button' id='v3test-btn'>Запустить тест</button> "
+            +"<a href='/v3/artifacts/"+encodeURIComponent(sha)+"/report.json' target='_blank'>Отчёт JSON</a> "
+            +"<a href='/v3/artifacts/"+encodeURIComponent(sha)+"/report.html' target='_blank'>Печать/PDF</a></div>"
+            +"<div id='v3bind-status' style='font-size:12px;color:#9aa4b2'></div>"
+            +"<div style='margin-top:10px'><b>История проверок артефакта</b>"
+            +"<table style='width:100%;border-collapse:collapse;font-size:12px'><thead><tr><th>Скан</th><th>Статус</th><th>Вердикт</th><th>Движок</th><th>Набор</th><th>Аттестация</th><th>Завершён</th></tr></thead><tbody id='v3d-history'>"+(historyRows||'<tr><td colspan=7>нет</td></tr>')+"</tbody></table></div>";
+          document.getElementById('v3d-back')&&document.getElementById('v3d-back').addEventListener('click',()=>{
+            stopDetailTimer();
+            detail.style.display='none'; const nav=document.getElementById('v3nav'); if(nav)nav.style.display='block';
+            const sec=document.getElementById('sec-scans');
+            if(sec){[...sec.children].forEach(ch=>{if(ch.id!=='v3artdetail')ch.style.display='';});}});
+          api('/images/list').then(l=>{const f=String(art.format||'').toLowerCase();
+            const isPickle=f===''||f.includes('pickle')||f==='zip'||f==='tar'||f==='pkl';
+            const imgs=(l.images||[]).filter(i=> isPickle ? i.type==='pickle' : i.type!=='pickle');
+            const opts=imgs.map(i=>{const ref=(i.ref||i.digest); const t=i.type||'—';
+              return "<option value='"+esc(i.digest)+"'>"+esc(ref.slice(0,60))+" ["+t+"]"+(i.signed?' [signed]':'')+"</option>";}).join('');
+            const sel=document.getElementById('v3test-engine');
+            if(sel)sel.innerHTML="<option value=''>engine: (текущий/выберите)</option>"+opts;});
+          const ts=document.getElementById('v3test-btn');
+          ts&&ts.addEventListener('click',()=>{const e=document.getElementById('v3test-engine').value;
+            api('/v3/artifacts/'+encodeURIComponent(sha)+'/test',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify(e?{engine_image:e}:{})}).then(r=>{document.getElementById('v3bind-status').textContent=
+                r.status==='rescan-required'?('тест не запущен: '+(r.hint||'нужен повторный скан')):('тест запущен: job '+(r.job||''));
+                startPoll();})
+              .catch(e2=>{document.getElementById('v3bind-status').textContent='ERR '+e2.message;});});
+        } else {
+          const h=document.getElementById('v3d-history'); if(h)h.innerHTML=historyRows||'<tr><td colspan=7>нет</td></tr>';
+          const f=document.getElementById('v3d-findings'); if(f)f.innerHTML=fnd||'<li>нет</li>';
+          const v=document.getElementById('v3d-verdict'); if(v)v.textContent=art.verdict||'—';
+        }
+        const running=(d.scans||[]).some(s=>s.state==='running'||s.state==='queued');
+        if(!running && detailTimer){stopDetailTimer();}
+        return api('/v3/artifacts/'+encodeURIComponent(sha)+'/report.json').then(rep=>{
+          const rp=document.getElementById('v3d-report'); if(!rp)return;
+          const a=rep.artifact||{}, sc=rep.scan||{}, cov=sc.coverage||{}, mods=cov.modules||{};
+          const sb=rep.sandbox||{}, llm=rep.llm_events||{};
+          const modRow=(name,m)=>`<tr><td>${name}</td><td>${m&&m.ok?'<span style="color:#8fd18f">ok</span>':'<span style="color:#e0b060">failed</span>'}</td><td>${esc((m&&m.reason)||'')}</td></tr>`;
+          const fndRows=(sc.findings||[]).map(f=>`<tr><td>${esc(f.level)}</td><td>${esc(f.check_id)}</td><td>${esc(f.severity)}</td><td>${esc(f.title)}</td><td>${esc(f.evidence||'')}</td></tr>`).join('');
+          const bundleRows=(rep.bundles||[]).map(b=>`<tr><td>${esc((b.engine_image||'').split('@')[0].split('/').pop())}</td><td>${esc(b.prompt_set||'—')}</td><td>${esc(b.detectors||'—')}</td><td>${esc(b.verdict||'—')}</td><td>${esc((b.attestation_digest||'').slice(0,18)||'—')}</td></tr>`).join('');
+          const rules=(llm.rules||[]).map(r=>esc(r.check_id)+" ("+esc(r.severity)+"×"+esc(r.count)+")").join(', ');
+          rp.innerHTML="<div style='border:1px solid #2a3442;border-radius:8px;padding:12px;background:#141a22'>"
+            +"<div style='font-size:15px;font-weight:bold;margin-bottom:8px'>Отчёт о сканировании</div>"
+            +"<div style='display:grid;grid-template-columns:1fr 1fr;gap:4px 18px'>"
+            +"<div><b>Файл:</b> "+esc(a.filename||'')+"</div>"
+            +"<div><b>Формат:</b> "+esc(a.format||'')+"</div>"
+            +"<div><b>Размер:</b> "+esc(a.size||'')+"</div>"
+            +"<div><b>SHA-256:</b> <code>"+esc((a.sha256||'').slice(0,24))+"…</code></div>"
+            +"<div><b>Скан:</b> "+esc(sc.scan_id||'')+"</div>"
+            +"<div><b>Вердикт:</b> <b>"+esc(sc.verdict||'—')+"</b></div>"
+            +"</div>"
+            +"<div style='margin-top:6px'><b>Причина:</b> "+esc(sc.reason||'—')+"</div>"
+            +"<div style='margin-top:10px'><b>Покрытие</b> "+(cov.complete?"<span style='color:#8fd18f'>полное</span>":"<span style='color:#e0b060'>неполное</span>")
+            +"<table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:4px'><tr><th>Модуль</th><th>Статус</th><th>Причина</th></tr>"
+            +modRow('static',mods.static)+modRow('dynamic',mods.dynamic)+modRow('behavior',mods.behavior)+"</table></div>"
+            +"<div style='margin-top:10px'><b>Находки</b><table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:4px'><tr><th>Уровень</th><th>ID</th><th>Severity</th><th>Заголовок</th><th>Evidence</th></tr>"+(fndRows||'<tr><td colspan=5>нет</td></tr>')+"</table></div>"
+            +"<div style='margin-top:10px'><b>Песочница:</b> "+esc(sb.status||'—')+(sb.timed_out?' (timeout)':'')+" · <b>eBPF:</b> "+esc(llm.count||0)+" событий"+(rules?(" ("+rules+")"):"")+"</div>"
+            +"<div style='margin-top:10px'><b>Связки</b><table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:4px'><tr><th>Движок</th><th>Набор</th><th>Детекторы</th><th>Вердикт</th><th>Аттестация</th></tr>"+(bundleRows||'<tr><td colspan=5>нет</td></tr>')+"</table></div>"
+            +"</div>";
+        }).catch(()=>{});
+      });
+    }
+    function startPoll(){
+      stopDetailTimer();
+      let n=0;
+      detailTimer=setInterval(()=>{n++; render().catch(()=>{}); if(n>=120){stopDetailTimer();}},5000);
+    }
+    render().catch(e=>{detail.textContent='ERR '+e.message;});
+  }
   // --- истории операций ---
   document.getElementById('v3ops-btn')&&document.getElementById('v3ops-btn').addEventListener('click',()=>{
     const k=document.getElementById('v3ops-kind').value, out=document.getElementById('v3ops'); out.textContent='загрузка…';
@@ -867,10 +975,14 @@ V3UI_SCRIPT = """
   // --- переключение разделов ---
   const admin=document.getElementById('v3admin-tab'); const isAdmin=!!document.querySelector("#downloads .tab[data-tab='tab-engines']");
   if(admin&&!isAdmin)admin.style.display='none';
-  document.querySelectorAll('.v3tab').forEach(b=>b.addEventListener('click',()=>{
+  window.__v3showTab=function(name){
     document.querySelectorAll('.v3sect').forEach(x=>x.style.display='none');
-    const s=secs[b.dataset.v3]; if(s)s.style.display='block';
-    if(b.dataset.v3==='scans')renderArtifacts();}));
+    const s=secs[name]; if(s)s.style.display='block';
+    document.querySelectorAll('.v3tab').forEach(b=>b.classList.toggle('active', b.dataset.v3===name));
+    if(name==='scans')renderArtifacts();
+  };
+  document.querySelectorAll('.v3tab').forEach(b=>b.addEventListener('click',()=>{
+    window.__v3showTab(b.dataset.v3);}));
   document.querySelector(".v3tab[data-v3='scans']").click();
 })();
 </script>
@@ -944,27 +1056,43 @@ function currentRows(){
   else rows.sort((a,b)=>String(a.created||a.updated||'').localeCompare(String(b.created||b.updated||''))*dir);
   return rows;
 }
+let ART={};
+async function loadArtifacts(){try{const r=await fetch('/v3/artifacts?limit=500',{cache:'no-store'});
+  if(r.ok){const d=await r.json();ART={};(d.artifacts||[]).forEach(a=>{ART[a.sha256]=a;});}}catch(e){}}
 function renderRows(){
   const shown=currentRows();
   document.getElementById('rows').innerHTML = shown.length
     ? shown.map(r=>{
-        const v=r.verdict||'';
+        const v=r.verdict||((r.state&&r.state!=='uploaded'&&r.state!=='queued')?r.state:'Требуется сканирование');
         const badge=(r.kind==='engine_image')?'<span class="badge">Engine image</span> ':'';
-        return `<tr><td>${badge}<a href="/artifact/${r.scan_id}">${esc(r.name)}</a></td>`
+        const a=ART[r.sha256]||{};
+        return `<tr><td>${badge}<a href="#" data-sha="${esc(r.sha256||'')}" class="v3art">${esc(r.name)}</a></td>`
+          +`<td>${esc(a.format||'—')}</td>`
+          +`<td>${esc((a.engine_image||'—').split('@')[0].split('/').pop())}</td>`
           +`<td>${shortDate(r.created||r.updated)}</td>`
           +`<td>${fmtBytes(r.size)}</td><td><code>${(r.sha256||'').slice(0,12)}…</code></td>`
           +`<td>${esc(r.state)}${r.stage&&r.stage!=='done'?' / '+esc(r.stage):''}<div class="pbar"><span style="width:${r.progress||0}%"></span></div></td>`
           +`<td class="v-${String(v).replace(' ','')}">${esc(v||'—')}</td>`
           +`<td>${r.risk_score!=null?r.risk_score:'—'}</td><td>${esc(r.policy_action||'—')}</td></tr>`;}).join('')
-    : `<tr><td colspan="8" style="color:#9aa4b2">${esc(L.empty)}</td></tr>`;
+    : `<tr><td colspan="10" style="color:#9aa4b2">${esc(L.empty)}</td></tr>`;
   document.getElementById('count').textContent=L.shown.replace('{n}',shown.length).replace('{m}',OV.length);
 }
 async function refresh(){
-  // 1) список сканов -> сразу отрисовываем таблицу
+  // 1) список АРТЕФАКТОВ (включая загруженные, но не отсканированные) -> таблица
   try{
-    const r=await fetch('/api/overview',{cache:'no-store'});
+    const r=await fetch('/v3/artifacts?limit=500',{cache:'no-store'});
     if(r.status===401){ location.href='/login?expired=1'; return; }
-    if(r.ok){ OV=(await r.json()).scans||[]; renderRows(); }
+    if(r.ok){
+      const d=await r.json(); ART={};
+      const arts=d.artifacts||[];
+      arts.forEach(a=>{ART[a.sha256]=a;});
+      OV=arts.map(a=>({name:a.filename||a.sha256, sha256:a.sha256, size:a.size,
+        created:a.created||a.created_at, state:a.scan_state||'uploaded',
+        stage:'', progress:0, verdict:a.verdict||'', risk_score:a.risk_score,
+        policy_action:a.policy_action, kind:(a.format==='engine_image')?'engine_image':'',
+        format:a.format, engine_image:a.engine_image}));
+      renderRows();
+    }
   }catch(e){}
   // 2) агрегаты -> отдельно обновляем карточки
   try{
@@ -987,11 +1115,20 @@ document.getElementById('f').addEventListener('submit',e=>{
   const kindEl=document.getElementById('kind');
   const kind=kindEl?kindEl.value:'model';
   const xhr=new XMLHttpRequest();
-  xhr.open('POST','/upload?name='+encodeURIComponent(file.name)+'&fmt='+fmt+'&kind='+encodeURIComponent(kind));
+  xhr.open('POST','/upload?name='+encodeURIComponent(file.name)+'&fmt='+fmt+'&kind='+encodeURIComponent(kind)+'&scan=0');
   const box=document.getElementById('uprog'),bar=document.getElementById('ubar');
   box.style.display='block';
   xhr.upload.onprogress=ev=>{bar.style.width=Math.round(ev.loaded/ev.total*100)+'%';};
-  xhr.onload=()=>{setTimeout(()=>{box.style.display='none';bar.style.width='0';},400);refresh();};
+  xhr.onload=()=>{setTimeout(()=>{box.style.display='none';bar.style.width='0';},400);
+    try{const j=JSON.parse(xhr.responseText||'{}');
+      const st=document.getElementById('modelstatus');
+      if(j.sha256){window.__lastModelSha=j.sha256;
+        if(st)st.textContent='модель загружена: '+j.sha256.slice(0,16)+'… — выберите движок и нажмите «Запустить проверку»';
+        window.__updModelRun&&window.__updModelRun();
+        if(window.__renderModelHistory)window.__renderModelHistory();
+      } else if(st){st.textContent='ERR: '+(j.error||'нет sha256');}
+    }catch(e){}
+    refresh();};
   xhr.onerror=()=>{alert(L.upload_error);};
   xhr.send(file);
 });
@@ -1002,10 +1139,69 @@ document.getElementById('f').addEventListener('submit',e=>{
   tabs.forEach(b=>b.addEventListener('click',()=>show(b.dataset.tab))); show('tab-models');
   const loadEngines=()=>fetch('/images/list').then(r=>r.ok?r.json():null).then(d=>{
     // B4-lite: помечаем состояние подписи/SBOM образа движка прямо в списке
-    const opts=((d&&d.images)||[]).map(i=>`<option value="${i.digest}">${(i.ref||i.digest).slice(0,44)} ${i.signed?'[signed]':'[unsigned]'}${i.sbom?' [sbom]':''}</option>`).join('');
-    ['englist','hfengine','locengine','rbengine'].forEach(id=>{const el=document.getElementById(id);
+    const opts=((d&&d.images)||[]).map(i=>`<option value="${i.digest}">${(i.ref||i.digest).slice(0,44)} [${i.type||'—'}] ${i.signed?'[signed]':'[unsigned]'}${i.sbom?' [sbom]':''}</option>`).join('');
+    ['englist','hfengine','locengine','rbengine','modelengine'].forEach(id=>{const el=document.getElementById(id);
       if(el) el.innerHTML='<option value="">engine: (выберите скачанный)</option>'+opts;});}).catch(()=>{});
   loadEngines(); const er=document.getElementById('engrefresh'); er&&er.addEventListener('click',loadEngines);
+  const mr=document.getElementById('modelrun');
+  const me=document.getElementById('modelengine');
+  const updRun=()=>{if(mr)mr.disabled=!(window.__lastModelSha && me && me.value);};
+  window.__updModelRun=updRun;
+  me&&me.addEventListener('change',updRun);
+  updRun();
+  mr&&mr.addEventListener('click',()=>{const st=document.getElementById('modelstatus');
+    const eng=(document.getElementById('modelengine')||{}).value||'';
+    const sha=(window.__lastModelSha||'').trim();
+    if(!sha){st.textContent='сначала загрузите модель';return;}
+    st.textContent='запуск проверки…';
+    fetch('/v3/artifacts/'+encodeURIComponent(sha)+'/test',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(eng?{engine_image:eng}:{})})
+      .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
+        if(!ok){st.textContent='ERR '+(j.error||'');return;}
+        if(j.status==='preparing'){st.textContent='модель догружается: '+(j.hint||'');
+          const t=setInterval(()=>{fetch('/bundles/'+j.bundle_id+'/test').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
+            if(d.status==='running'){clearInterval(t);st.textContent='тест запущен: job '+(d.job||'');}
+            else if(d.status==='done'){clearInterval(t);st.textContent='тест завершён: вердикт '+(d.verdict||'—');}
+            else if(d.status==='failed'){clearInterval(t);st.textContent='тест не удался: '+(d.error||'');}
+          }).catch(()=>{});},5000);}
+        else{st.textContent='тест запущен: job '+(j.job||'');}})
+      .catch(e=>{st.textContent='ERR '+e.message;});});
+  function renderModelHistory(){
+    const box=document.getElementById('modelhistory'); if(!box)return;
+    fetch('/v3/artifacts?limit=200').then(r=>r.ok?r.json():null).then(d=>{
+      const items=(d&&d.artifacts)||[];
+      if(!items.length){box.innerHTML='<i>нет загруженных моделей</i>';return;}
+      box.innerHTML="<table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th>Файл</th><th>Формат</th><th>Размер</th><th>Статус</th></tr>"
+        +items.map(a=>{const st=a.verdict||((a.scan_state&&a.scan_state!=='uploaded'&&a.scan_state!=='queued')?a.scan_state:'Требуется сканирование');
+          return "<tr><td><a href='#' class='v3art' data-sha='"+esc(a.sha256)+"'>"+esc(a.filename)+"</a></td><td>"+esc(a.format||'')+"</td><td>"+esc(a.size||'')+"</td><td>"+esc(st)+"</td></tr>";}).join('')
+        +"</table>";
+    }).catch(()=>{});
+  }
+  window.__renderModelHistory=renderModelHistory;
+  renderModelHistory();
+  const etm=document.getElementById('engtestmodel');
+  if(etm){fetch('/v3/artifacts?limit=200').then(r=>r.ok?r.json():null).then(d=>{
+    const opts=((d&&d.artifacts)||[]).filter(a=>a.format!=='engine_image').map(a=>`<option value="${a.sha256}">${(a.filename||a.sha256).slice(0,50)} [${a.format||''}]</option>`).join('');
+    etm.innerHTML='<option value="">модель: (выберите)</option>'+opts;}).catch(()=>{});}
+  const etb=document.getElementById('engtest-btn');
+  etb&&etb.addEventListener('click',()=>{const st=document.getElementById('engteststatus');
+    const sha=(document.getElementById('engtestmodel')||{}).value||'';
+    const eng=(document.getElementById('englist')||{}).value||'';
+    if(!sha){st.textContent='выберите тестовую модель';return;}
+    if(!eng){st.textContent='выберите движок';return;}
+    st.textContent='проверка инференса…';
+    fetch('/v3/artifacts/'+encodeURIComponent(sha)+'/test',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({engine_image:eng})})
+      .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
+        if(!ok){st.textContent='ERR '+(j.error||'');return;}
+        if(j.status==='preparing'){st.textContent='модель догружается: '+(j.hint||'');
+          const t=setInterval(()=>{fetch('/bundles/'+j.bundle_id+'/test').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
+            if(d.status==='running'){clearInterval(t);st.textContent='тест запущен: job '+(d.job||'');}
+            else if(d.status==='done'){clearInterval(t);st.textContent='тест завершён: вердикт '+(d.verdict||'—');}
+            else if(d.status==='failed'){clearInterval(t);st.textContent='тест не удался: '+(d.error||'');}
+          }).catch(()=>{});},5000);}
+        else{st.textContent='тест запущен: job '+(j.job||'');}})
+      .catch(e=>{st.textContent='ERR '+e.message;});});
   const rf=document.getElementById('hfresults');
   rf&&rf.addEventListener('click',ev=>{const b=ev.target.closest('button[data-repo]');if(!b)return;
     if(!(document.getElementById('hfengine')||{}).value){ev.preventDefault();ev.stopImmediatePropagation();
@@ -1029,7 +1225,8 @@ document.getElementById('f').addEventListener('submit',e=>{
       fetch('/bundles/'+id+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
       .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
         if(!ok){st.textContent='ERR '+(j.error||'');return;}
-        st.textContent='тест запущен: job '+j.job+', вопросов '+j.questions+(j.gpu?', GPU':', CPU');
+        if(j.status==='preparing'){st.textContent='модель догружается: '+(j.hint||'');}
+        else{st.textContent='тест запущен: job '+j.job+', вопросов '+j.questions+(j.gpu?', GPU':', CPU');}
         const t=setInterval(()=>{fetch('/bundles/'+id+'/test').then(r=>r.ok?r.json():null).then(d=>{
           if(!d)return;
           if(d.status==='done'){clearInterval(t);
@@ -1092,7 +1289,10 @@ document.getElementById('f').addEventListener('submit',e=>{
   const st=document.getElementById('dcstatus');
   const show=t=>{st.textContent=t;};
   const counts=d=>'auto='+Object.keys((d&&d.auto)||{}).length+' overrides='+Object.keys((d&&d.overrides)||{}).length;
-  const load=()=>fetch('/domain-class').then(r=>r.ok?r.json():null).then(d=>{if(d)show(counts(d));return d;}).catch(()=>null);
+  const load=()=>Promise.all([
+    fetch('/domain-class').then(r=>r.ok?r.json():null).catch(()=>null),
+    fetch('/prompt-sets').then(r=>r.ok?r.json():null).catch(()=>null)
+  ]).then(([d,ps])=>{if(d)show((ps&&ps.version?('набор '+ps.version+': вопросов '+ps.cases+'; '):'')+counts(d));return d;});
   load();
   b.addEventListener('click',()=>{const domain=document.getElementById('dcdomain').value.trim();
     const cls=document.getElementById('dcclass').value.trim();
@@ -1111,13 +1311,25 @@ document.getElementById('f').addEventListener('submit',e=>{
         st.textContent=ok?('подписан '+String(j.signature||'').slice(0,26)+'…'):('ERR '+(j.error||''));});});})();
 (function(){const b=document.getElementById('imgimport-btn');if(!b)return;
   const st=document.getElementById('imgstatus');
-  b.addEventListener('click',()=>{const ref=document.getElementById('imgref').value.trim();
+  b.addEventListener('click',()=>{
+    const ref=document.getElementById('imgref').value.trim();
     const key=document.getElementById('imgtarkey').value.trim();
-    fetch('/images/import',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ref:ref,oci_tar_key:key})})
+    const fi=document.getElementById('imgfile');
+    const f=fi&&fi.files&&fi.files[0];
+    const doImport=(ociKey)=>{fetch('/images/import',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ref:ref,oci_tar_key:ociKey})})
       .then(r=>r.json().then(j=>({ok:r.ok,j})))
       .then(({ok,j})=>{st.textContent=ok?('registered '+j.digest+(j.stored_key?' stored/'+j.stored_key:'')):('ERR '+(j.error||'bad'));})
-      .catch(()=>{st.textContent='ERR';});});})();
+      .catch(()=>{st.textContent='ERR';});};
+    if(f){st.textContent='загрузка образа…';
+      const xhr=new XMLHttpRequest();
+      xhr.open('POST','/upload?name='+encodeURIComponent(f.name)+'&fmt=tar&kind=engine_image&scan=0');
+      xhr.onload=()=>{try{const j=JSON.parse(xhr.responseText||'{}');
+        if(j.s3_key){doImport(j.s3_key);}else{st.textContent='ERR: нет s3_key';}}catch(e){st.textContent='ERR';}};
+      xhr.onerror=()=>{st.textContent='ERR upload';};
+      xhr.send(f);
+    } else { doImport(key); }
+  });})();
 (function(){const el=document.getElementById('psfile');if(!el)return;
   const st=document.getElementById('psstatus');
   const show=t=>{st.textContent=t;};
@@ -1129,6 +1341,24 @@ document.getElementById('f').addEventListener('submit',e=>{
         .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{show(ok?('OK '+j.version+' cases='+j.cases):('ERR '+(j.error||'bad')));})
         .catch(()=>show('ERR'));};
     rd.readAsDataURL(f);});})();
+(function(){const box=document.getElementById('v3ps-history');if(!box)return;
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  function render(list){if(!list||!list.length){box.innerHTML='<i>нет загруженных наборов</i>';return;}
+    let h="<table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th align='left'>Файл</th><th>Вопросов</th><th>Статус</th><th>Активен</th><th></th></tr>";
+    list.forEach(x=>{const status=x.errors>0?('ошибки: '+x.errors):(x.warnings>0?('предупреждения: '+x.warnings):'OK');
+      const msgs=(x.error_list&&x.error_list.length?x.error_list:(x.warning_list||[])).map(esc);
+      const details=msgs.length?("<div title='"+msgs.join('&#10;')+"' style='color:#ffcf6b;font-size:11px;max-width:460px;white-space:normal;text-align:left;margin-top:4px'>"+msgs.join('<br>')+"</div>"):'';
+      h+="<tr><td>"+esc(x.name||x.version)+"<br><span style='color:#9aa4b2'>"+esc(x.version)+"</span></td>"
+        +"<td align='center'>"+x.cases+"</td><td align='center'>"+esc(status)+details+"</td>"
+        +"<td align='center'>"+(x.active?'✔':'')+"</td>"
+        +"<td align='center'>"+(x.active?'':"<button type='button' data-ver='"+esc(x.version)+"'>Использовать</button>")+"</td></tr>";});
+    h+="</table>";box.innerHTML=h;
+    box.querySelectorAll('button[data-ver]').forEach(b=>b.addEventListener('click',()=>{
+      fetch('/prompt-sets/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:b.getAttribute('data-ver')})})
+        .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(ok)load();else alert('ERR '+(j.error||'bad'));}).catch(()=>alert('ERR'));}));}
+  function load(){fetch('/prompt-sets/list').then(r=>r.ok?r.json():null).then(d=>render(d&&d.prompt_sets)).catch(()=>render([]));}
+  load();const f=document.getElementById('psfile');if(f)f.addEventListener('change',()=>setTimeout(load,1500));
+})();
 async function loop(){ await refresh(); setTimeout(loop,5000); }
 loop();
 </script>""".replace("__LABELS__", json.dumps(labels, ensure_ascii=False))
@@ -1154,8 +1384,7 @@ def _login_page(error: str = "", lang: str = "ru", notice: str = "") -> bytes:
 def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> bytes:
     body = ("<div class='cards' id='cards'></div>"
             + "<div class='dl' id='downloads'><div class='tabs'>"
-            + f"<button type='button' class='tab' data-tab='tab-models'>{'Модели (кроме LLM)' if lang=='ru' else 'Models (non-LLM)'}</button>"
-            + f"<button type='button' class='tab' data-tab='tab-local'>{'Локальные LLM' if lang=='ru' else 'Local LLMs'}</button>"
+            + f"<button type='button' class='tab' data-tab='tab-models'>{'Модели' if lang=='ru' else 'Models'}</button>"
             + ("<button type='button' class='tab' data-tab='tab-bundletest'>"
                + ("Тест bundle" if lang == "ru" else "Bundle test") + "</button>"
                if "admin" in (roles or []) else "")
@@ -1163,38 +1392,19 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
             + f"<button type='button' class='tab' data-tab='tab-hf'>{'Модель с HF' if lang=='ru' else 'Model from HF'}</button>"
             + "</div><div class='tabpane' id='tab-models'>"
             + f"<form class='upload' id='f'><b>{T('dash.upload', lang)}</b><br><br>"
-            + "<label style='color:#9aa4b2;font-size:12px'>"
-            + ("Тип артефакта" if lang == "ru" else "Artifact kind") + ": </label>"
-            + "<select id='kind' name='kind'>"
-            + ("<option value='model'>Модель</option>"
-               "<option value='engine_image'>Образ инференс-движка</option>"
-               if lang == "ru" else
-               "<option value='model'>Model</option>"
-               "<option value='engine_image'>Engine image</option>")
-            + "</select><br><br>"
             f"<input type='file' name='file'> <button type='submit'>{T('dash.upload_btn', lang)}</button>"
             "<div class='uprog' id='uprog'><span id='ubar'></span></div>"
-            + "<div id='kindnotice' style='display:none;color:#f0c674;font-size:12px;margin-top:6px'>"
-            + ("Это контейнерный образ (engine image) — он будет запущен вместе с моделью "
-               "в изолированной среде Kata." if lang == "ru" else
-               "This is a container image (engine image) — it will be run together with the model "
-               "in an isolated Kata environment.")
-            + "</div>"
+            + "<div style='margin-top:8px'>"
+            + ("Движок инференса" if lang == "ru" else "Inference engine") + ": "
+            + "<select id='modelengine'><option value=''>engine: (авто по формату)</option></select> "
+            + "<button type='button' id='modelrun'>" + ("Запустить проверку" if lang == "ru" else "Run check") + "</button></div>"
+            + "<div id='modelstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div>"
             f"<div style='color:#9aa4b2;font-size:12px;margin-top:6px'>{T('dash.upload_hint', lang)}</div>"
             "</form>"
+            + "<div class='upload' style='margin-top:0'><b>" + ("История загрузок моделей" if lang == "ru" else "Model upload history") + "</b>"
+            + "<div id='modelhistory' style='margin-top:6px;font-size:12px'></div></div>"
             + "</div>"  # /tab-models
-            + ("<div class='tabpane' id='tab-local' style='display:none'>"
-               + "<div class='upload' style='margin-top:0'><b>" + ("Локальная LLM: файл + движок (обязателен)" if lang == "ru" else "Local LLM: file + engine (required)") + "</b><br><br>"
-               + "<input type='file' id='locfile'> "
-               + "<select id='locengine'><option value=''>engine: (выберите скачанный)</option></select> "
-               + "<button id='locbtn' type='button'>" + ("Загрузить и запустить тест" if lang == "ru" else "Upload & run test") + "</button>"
-               + "<div id='locstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div></div>"
-               + "<div class='upload' style='margin-top:0'><b>" + ("Перепривязка движка (перезапуск теста)" if lang == "ru" else "Engine rebind (re-run test)") + "</b><br><br>"
-               + "<input id='rbsha' type='text' placeholder='model sha256' style='width:45%'> "
-               + "<select id='rbengine'><option value=''>engine: (выберите скачанный)</option></select> "
-               + "<button id='rbbtn' type='button'>" + ("Сменить движок и перезапустить" if lang == "ru" else "Rebind & re-run") + "</button>"
-               + "<div id='rbstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div></div>"
-               + "</div>")
+
             + ("<div class='tabpane' id='tab-bundletest' style='display:none'>"
                + "<div class='upload' style='margin-top:0'>"
                + "<b>" + ("Тест bundle (инференс на наборе вопросов)" if lang == "ru"
@@ -1206,34 +1416,26 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
                + "<div id='btstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div></div></div>"
                + "<div class='tabpane' id='tab-engines' style='display:none'>"
                + "<div class='upload' id='imgs' style='margin-top:0'>"
-               + "<b>" + ("Импорт образа движка" if lang == "ru" else "Engine image import") + "</b><br><br>"
-               + "<input id='imgref' type='text' placeholder='mlscan-registry/…@sha256:…' style='width:60%'> "
-               + "<input id='imgtarkey' type='text' placeholder='oci_tar_key (опц.)' style='width:20%'> "
+               + "<b>" + ("Загрузка движка инференса" if lang == "ru" else "Inference engine upload") + "</b><br><br>"
+               + "<input id='imgref' type='text' placeholder='docker image ref (repo@sha256:…)' style='width:40%'> "
+               + "<input id='imgfile' type='file' accept='.tar,.tar.gz,.tgz' style='width:26%'> "
+               + "<input id='imgtarkey' type='text' placeholder='oci_tar_key (опц.)' style='width:14%'> "
+               + "<select id='imgtype'><option value='llm'>LLM</option><option value='onnx'>ONNX</option><option value='pickle'>Pickle</option><option value='other'>Другое</option></select> "
                + "<button id='imgsign-btn' type='button'>" + ("Подписать" if lang == "ru" else "Sign") + "</button> "
-               + "<button id='imgimport-btn' type='button'>" + ("Импорт" if lang == "ru" else "Import") + "</button>"
+               + "<button id='imgimport-btn' type='button'>" + ("Загрузить движок" if lang == "ru" else "Upload engine") + "</button>"
                + "<div id='imgstatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div>"
                + "<div style='margin-top:6px;font-size:12px'>" + ("Скачанные движки:" if lang == "ru" else "Downloaded engines:")
                + " <select id='englist' style='min-width:40%'></select> <button id='engrefresh' type='button'>refresh</button></div>"
+               + "<div style='margin-top:8px;font-size:12px'>" + ("Тестовая модель:" if lang == "ru" else "Test model:")
+               + " <select id='engtestmodel' style='min-width:40%'><option value=''>модель: (выберите)</option></select> "
+               + "<button id='engtest-btn' type='button'>" + ("Проверить инференс" if lang == "ru" else "Check inference") + "</button></div>"
+               + "<div id='engteststatus' style='color:#9aa4b2;font-size:12px;margin-top:6px'></div>"
                + "</div></div>" if "admin" in (roles or []) else "<div class='tabpane' id='tab-engines' style='display:none'></div>")
             + ("<div class='tabpane' id='tab-hf' style='display:none'>"
-               + "<div class='upload' id='hfpanel' style='margin-top:0'>"
-               + "<b>" + ("Hugging Face: поиск и загрузка" if lang == "ru" else "Hugging Face: search & download") + "</b><br><br>"
-               + "<input id='hfquery' type='text' placeholder='name/query' style='width:22%'> "
-               + "<input id='hftype' type='text' placeholder='type (text-generation)' style='width:16%'> "
-               + "<select id='hfquant'><option value=''>quant: any</option><option>Q4_K_M</option><option>Q5_K_M</option><option>Q8_0</option><option>F16</option></select> "
-               + "<button id='hfsearch-btn' type='button'>" + ("Найти" if lang == "ru" else "Search") + "</button> "
-               + "<select id='hfengine'><option value=''>engine: (обязателен из скачанных)</option></select>"
-               + "<div id='hfresults' style='margin-top:6px;font-size:12px'></div>"
-               + "<div id='hfstatus' style='color:#9aa4b2;font-size:12px'></div>"
-               + "</div>"
-               + "<div class='upload' style='margin-top:0'><b>HF token</b> "
-               + "<input id='hftoken' type='password' placeholder='hf_…' style='width:28%'> "
-               + "<button id='hftokensave' type='button'>" + ("Сохранить токен" if lang == "ru" else "Save token") + "</button> "
-               + "<span id='hftokenstatus' style='color:#9aa4b2;font-size:12px'></span></div>"
+               + "<div class='upload' id='hfpanel' style='margin-top:0'></div>"
                + "</div>" if "admin" in (roles or []) else "<div class='tabpane' id='tab-hf' style='display:none'></div>")
             + "</div>"  # /downloads
             + ("<div class='upload' id='psset' style='margin-top:0'>"
-               + "<b>" + ("Набор тестов (XLSX)" if lang == "ru" else "Prompt set (XLSX)") + "</b><br><br>"
                + "<input type='file' id='psfile' accept='.xlsx' name='psfile'> "
                + "<span id='psstatus' style='color:#9aa4b2;font-size:12px'></span>"
                + "</div>" if "admin" in (roles or []) else "")
@@ -1265,10 +1467,11 @@ def ui_index(lang: str = "ru", roles: list | None = None, path: str = "/") -> by
             "<span id='count' style='color:#9aa4b2;font-size:12px'></span>"
             "</div>"
             f"<table><thead><tr><th>{T('dash.col.artifact', lang)}</th>"
+            f"<th>Формат</th><th>Движок инференса</th>"
             f"<th>{T('dash.col.date', lang)}</th><th>{T('dash.col.size', lang)}</th><th>SHA-256</th>"
             f"<th>{T('dash.col.progress', lang)}</th><th>{T('dash.col.verdict', lang)}</th>"
             f"<th>{T('dash.col.score', lang)}</th><th>{T('dash.col.action', lang)}</th></tr></thead>"
-            f"<tbody id='rows'><tr><td colspan='8' style='color:#9aa4b2'>"
+            f"<tbody id='rows'><tr><td colspan='10' style='color:#9aa4b2'>"
             f"{T('dash.loading', lang)}</td></tr></tbody></table>")
     return _page(T("ui.overview", lang), body, _js(lang), lang=lang, roles=roles, path=path)
 
@@ -1517,14 +1720,20 @@ class Handler(BaseHTTPRequestHandler):
         return resp.status, data
 
     def _prompt_sets_proxy(self, q: dict) -> None:
-        """Прокси к сервису тестирования: активный набор (GET) и загрузка XLSX (POST)."""
+        """Прокси к сервису тестирования: активный набор/история (GET), загрузка/выбор (POST)."""
         try:
             if self.command == "GET":
-                code, body = self._test_request("GET", "/prompt-sets/active")
+                if self.path.startswith("/prompt-sets/list"):
+                    code, body = self._test_request("GET", "/prompt-sets")
+                else:
+                    code, body = self._test_request("GET", "/prompt-sets/active")
                 return self._send(code, body, "application/json; charset=utf-8")
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"
-            code, body = self._test_request("POST", "/prompt-sets", data)
+            if self.path.startswith("/prompt-sets/activate"):
+                code, body = self._test_request("POST", "/prompt-sets/activate", data)
+            else:
+                code, body = self._test_request("POST", "/prompt-sets", data)
             return self._send(code, body, "application/json; charset=utf-8")
         except Exception as exc:  # noqa: BLE001
             return self._json(502, {"error": f"testing: {type(exc).__name__}: {exc}"})
@@ -1537,8 +1746,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": T("msg.empty_body_cl", self._lang(q))})
         cx = http.client.HTTPConnection(TEST_HOST, TEST_PORT, timeout=1800)
         kind = q.get("kind", ["model"])[0]
+        scan = q.get("scan", ["1"])[0]
         path = (f"/scans/upload?name={urllib.parse.quote(name)}&fmt={urllib.parse.quote(fmt)}"
-                f"&kind={urllib.parse.quote(kind)}")
+                f"&kind={urllib.parse.quote(kind)}&scan={urllib.parse.quote(scan)}")
         cx.putrequest("POST", path)
         cx.putheader("Content-Length", str(n))
         cx.putheader("Content-Type", "application/octet-stream")
@@ -1590,7 +1800,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", nxt)
             self.end_headers()
             return
-        if p == "/prompt-sets":
+        if p == "/prompt-sets" or p == "/prompt-sets/list":
             return self._prompt_sets_proxy(q)
         if p == "/images/list":
             code, body = self._test_request("GET", "/images/list")
@@ -1776,7 +1986,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, res)
         if u.path == "/upload":
             return self._proxy_upload(q)
-        if u.path == "/prompt-sets":
+        if u.path == "/prompt-sets" or u.path == "/prompt-sets/activate":
             return self._prompt_sets_proxy(q)
         if u.path == "/hf/token":
             n = int(self.headers.get("Content-Length", "0") or "0")

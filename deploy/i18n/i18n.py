@@ -77,7 +77,7 @@ CATALOG: dict[str, dict[str, str]] = {
     # --- дашборд
     "ui.overview": {"ru": "Обзор", "en": "Overview"},
     "dash.upload": {"ru": "Загрузить модель", "en": "Upload model"},
-    "dash.upload_btn": {"ru": "Загрузить и проверить", "en": "Upload and scan"},
+    "dash.upload_btn": {"ru": "Загрузить", "en": "Upload"},
     "dash.upload_hint": {"ru": "Поддерживаются большие файлы; формат определяется по расширению.",
                          "en": "Large files are supported; the format is detected by extension."},
     "dash.filter": {"ru": "Фильтр по имени…", "en": "Filter by name…"},
