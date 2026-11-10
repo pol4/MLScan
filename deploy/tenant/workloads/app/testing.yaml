@@ -36,6 +36,8 @@ spec:
             - {name: LLM_TEST_GPU, value: "1"}
             - {name: LLM_SGLANG_SM75, value: "1"}
             - {name: LLM_TEST_DECEPTION, value: "1"}
+            # in-guest eBPF-observer: включать (1) после появления kata-btf (BTF-ядро) и Kyverno-allowance
+            - {name: LLM_TEST_EBPF, value: "0"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}
             - {name: PORT, value: "8080"}

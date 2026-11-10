@@ -16,3 +16,4 @@ resources:
   - sandbox/sinkhole.yaml
   - sandbox/artifacts-proxy.yaml
   - sandbox/sgl-shim.yaml
+  - sandbox/ebpf-agent.yaml
