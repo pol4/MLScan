@@ -13,6 +13,31 @@
 
 ---
 
+## Актуальный статус (стенд `rtx-cluster`, тенант `t-mlscan-app` / `t-mlscan-sandbox`)
+
+Развёрнута **v3-система целиком**: UI за Keycloak (OIDC) — **`https://mlscan.platform.rtx.local`**,
+сервис тестирования, аналитика, интеграции (CI-gate), ops (метрики), PostgreSQL, S3 (**Ceph RGW**,
+`s3.platform.rtx.local`), песочница `t-mlscan-sandbox` (Kata для сканов; **GPU-инференс** на RTX 4000).
+
+Что актуально (сверх v2-стенда, описанного ниже):
+- **LLM-инференс как недоверенный движок по digest**: `vLLM` / `SGLang` / `llama.cpp`; связка
+  «модель + движок + версии» фиксируется как **bundle**, вердикт **bundle + аттестация + CI-gate**.
+- **Загрузка целых каталогов с HF**: для vLLM/SGLang скачивается весь репозиторий (config/tokenizer/все
+  шарды); одиночный `.safetensors` из HF автоматически догружается до полного каталога при тесте.
+- **Полный набор вопросов** (активный набор — **726** вопросов) через S3 (сняты лимиты env/ConfigMap);
+  в «Администрировании» виден размер набора и текст предупреждений XLSX-импорта.
+- **SGLang 0.5.9 на Turing (sm_75)** — работает на RTX 4000 через runtime-shim (`sgl-shim`):
+  torch-реализации RMSNorm/SiLU + `torch_native`/`pytorch`; для Ampere+ шим не нужен.
+- Job LLM-теста **сам удаляется после вердикта** (освобождение GPU); вердикт инференса отражается и в
+  карточке артефакта.
+- S3 — **Ceph RGW**; Garage выведен; oauth2-proxy устойчив к временной недоступности Keycloak.
+
+Сквозное описание процессов, sequence-диаграммы и **области наблюдения / открытые зоны и проблемы ИБ** —
+[`CrossProcess_overview.md`](CrossProcess_overview.md). Статус развёртывания и процедуры —
+[`deploy/tenant/STATUS.md`](deploy/tenant/STATUS.md).
+
+---
+
 ## Развитие проекта
 
 Проект развивался **инкрементально**: от проверки одного формата к платформе, способной
@@ -284,59 +309,69 @@ P1-8 — аудит изменений, P2).
 
 ## Скриншоты (UI)
 
-**Вход** — логин и пароль (сессия в cookie `.mlscan.local`, единый вход для analytics/ops/integrations);
-для CI/скриптов — вход по API-ключу:
+Актуальный стенд: UI за **Keycloak (OIDC)** — `https://mlscan.platform.rtx.local` (роли берутся из
+групп Keycloak, напр. `mlscan-admins` → `admin`). Разделы: **Сканы · Загрузка · История операций ·
+Настройки · Администрирование**. Снимки ниже сделаны с боевого тенанта (`tests/ui/screenshots.js`).
 
-![MLScan UI — вход](docs/img/ui-login.png)
+**Сканы** — список проверенных артефактов с вердиктами (в т.ч. `Inconclusive` при неполной
+проверке), фильтрами и статистикой по вердиктам/объёму; виден движок инференса:
 
-**Сессия истекла** — если у открытой вкладки закончилась сессия (12 ч), UI сам возвращает на вход
-с пояснением, а не показывает молча пустую таблицу:
+![MLScan UI — список сканов](docs/img/ui-e2e/01-scans.png)
 
-![MLScan UI — сессия истекла](docs/img/ui-login-expired.png)
+**Карточка артефакта (LLM + инференс)** — `Qwen3-1.7B`, формат safetensors: покрытие
+(статика/динамика/поведение), находки, сенсор и раздел **«Связи»** — по одному вердикту на каждый
+движок (**bundle**) с аттестацией: `engine-sglang:v0.5.9 → Needs review`, `engine-vllm:v0.9.2`:
 
-**Дашборд** — загрузка моделей (в т.ч. больших), статистика по вердиктам/объёму, фильтр по имени
-и результату, сортировка по дате/объёму, таблица со SHA-256, размером, прогрессом проверки,
-вердиктом, риск-скором и действием policy (в текущем стенде — 3575 проверок):
+![MLScan UI — карточка артефакта с инференсом](docs/img/ui-e2e/02-artifact-card.png)
 
-![MLScan UI — дашборд](docs/img/ui-dashboard.png)
+**Загрузка — Модели** (локальные артефакты, в т.ч. большие; формат определяется по расширению):
 
-**Адрес UI:** `http://analytics.mlscan.local:30217` (по умолчанию HTTP; HTTPS — опционально:
-`bash deploy/install.sh 3 --with-tls` → `https://analytics.mlscan.local:30921`, самоподписанный
-сертификат). Ошибка браузера `SSL_ERROR_RX_RECORD_TOO_LONG` = `https://` на HTTP-порт 30217:
-используйте `http://…:30217` или включите TLS. Перед открытием добавьте хост в `/etc/hosts`:
-`<NODE_IP> analytics.mlscan.local ops.mlscan.local integrations.mlscan.local api.mlscan.local`.
+![MLScan UI — загрузка моделей](docs/img/ui-e2e/03-upload-models.png)
 
-**Учётные данные UI.** Пользователи создаются при установке уровня 3: `admin` (роль `admin`) и
-`analyst` (роль `analyst`). Пароли **печатаются в выводе `bash deploy/install.sh 3`** и хранятся в
-`/tmp/mlscan-users.json`; показать позже — `bash deploy/v2/auth/users.sh --show`, задать/сбросить —
-`MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh`. Повторные запуски установки пароли
-**не меняют**. Вход по API-ключу (для CI/скриптов) — `bash deploy/v2/auth/keys.sh`.
+**Загрузка — Тест bundle** (прогон набора вопросов на выбранном движке инференса):
 
-**Настройки** — глобальный язык сообщений всей системы (доступно роли `admin`; сохраняется в БД,
-применяется ко всем сервисам для новых и исторических записей):
+![MLScan UI — тест bundle](docs/img/ui-e2e/04-upload-bundletest.png)
 
-![MLScan UI — настройки](docs/img/ui-settings.png)
+**Загрузка — Движки инференса** (реестр образов движков по digest, подпись/SBOM):
 
-**Карточка неполной проверки** — модель, которую динамика не смогла загрузить
-(отсутствует модуль `mymod`): вердикт **Inconclusive** вместо ложного `Safe`, баннер
-«Проверка выполнена не полностью» и частичный результат:
+![MLScan UI — движки инференса](docs/img/ui-e2e/05-upload-engines.png)
 
-![MLScan UI — неполная проверка](docs/img/ui-incomplete-scan.png)
+**Загрузка — Модель с HF** — фоновые загрузки с докачкой; для vLLM/SGLang скачивается **весь
+каталог** модели; прогресс, статус и вердикт по каждой загрузке:
 
-**Карточка артефакта** — самая крупная проверенная модель: torch-модель `pytorch_model.pt`
-объёмом **268 470 293 байт (≈256 МиБ)**. Видны SHA-256, размер, тайминги (статика 0.42 с /
-песочница 20.3 с), риск-скор 10.0, policy `block-rce → block`, находки с доказательствами
-(`A-01` critical `posix.system`, `A-02` high, `F-30` high `os.system(...)`) и раздел
-**«Динамический этап»**: `загрузка: ok`, `тип: dict`, `subprocess: 1` — модель действительно
-загружена и payload исполнен в песочнице:
+![MLScan UI — модель с HF](docs/img/ui-e2e/06-upload-hf.png)
 
-![MLScan UI — карточка артефакта (torch-модель ≈256 МиБ)](docs/img/ui-torch-large.png)
+**История операций** — журнал действий и загрузок:
 
-**Карточка артефакта не-pickle формата** (`evil_mar.mar`, model-as-code): вердикт **Malicious**,
-находки `EXEC-01` (critical) и `EXEC-02` (high) из адаптера формата, плюс динамическое
-подтверждение `F-30` — в разделе «Динамический этап» видно `subprocess: 1`:
+![MLScan UI — история операций](docs/img/ui-e2e/07-operations.png)
 
-![MLScan UI — карточка артефакта формата](docs/img/ui-format-artifact.png)
+**Настройки** — язык системы и параметры:
+
+![MLScan UI — настройки](docs/img/ui-e2e/08-settings.png)
+
+**Администрирование** — активный набор вопросов и его размер (`вопросов 726`), сопоставление
+`домен → класс policy` (`auto/overrides`), импорт XLSX, rate-limit, квоты HF/egress, проверка
+цепочки вердиктов:
+
+![MLScan UI — администрирование](docs/img/ui-e2e/09-admin.png)
+
+> **Архив (v2-стенд, прежний UI).** Снимки ниже — с прежней установки (`analytics.mlscan.local`);
+> сохранены как иллюстрация классических карточек **не-LLM** артефактов: вход/сессия, дашборд,
+> неполная проверка (`Inconclusive`), крупная torch-модель и model-as-code (`.mar`).
+
+![MLScan UI — вход (v2)](docs/img/ui-login.png)
+
+![MLScan UI — дашборд (v2)](docs/img/ui-dashboard.png)
+
+![MLScan UI — неполная проверка (v2)](docs/img/ui-incomplete-scan.png)
+
+![MLScan UI — карточка torch-модели (v2)](docs/img/ui-torch-large.png)
+
+![MLScan UI — карточка формата .mar (v2)](docs/img/ui-format-artifact.png)
+
+**Снять свои снимки:** `bash tests/ui/run_ui_tests.sh` или
+`MLSCAN_UI_URL=http://127.0.0.1:18081 node tests/ui/screenshots.js` (port-forward к
+`mlscan-analytics`; сервис доверяет заголовкам oauth2-proxy `X-Forwarded-User/Groups`).
 
 ---
 
@@ -455,10 +490,13 @@ MIT — см. [`LICENSE`](./LICENSE).
 ## Состояние проекта (актуально)
 
 ### Что развёрнуто
-- **Рабочая система**: v2 (сервис тестирования + песочница Kata + аналитика + ops + integrations + ingress)
-  и **реализация v3** поверх неё. Namespace’ы `mlscan-*`; UI `http://analytics.mlscan.local:30217`;
-  API `http://api.mlscan.local:30217` (HTTPS `:30921`); S3 (Garage) c TLS-egress `s3.mlscan.local:30921`;
-  PostgreSQL; ops `/metrics`; integrations `/gate`.
+- **Текущий стенд (тенант)**: namespace `t-mlscan-app` / `t-mlscan-sandbox`; UI за Keycloak —
+  `https://mlscan.platform.rtx.local`; API-ингресс — `https://mlscan-api.platform.rtx.local`;
+  S3 — **Ceph RGW** (`s3.platform.rtx.local`); PostgreSQL; ops `/metrics` (скрейпится Prometheus),
+  integrations `/gate`. Деплой через ArgoCD (Gitea) + Harbor (immutable digest).
+  Подробности и процедуры — [`deploy/tenant/STATUS.md`](deploy/tenant/STATUS.md).
+- **v2-линия** (сервис + Kata + аналитика, Garage, отдельные `mlscan-*` namespace и UI
+  `analytics.mlscan.local:30217`) сохранена как предыдущий стенд и в основном перенесена в тенант.
 
 ### v3: реализовано и проверено на стенде
 - **Data-plane/ingest**: range-read, общий пул `objects/<sha…>` + `object_refs` (дедуп), TLS-egress S3,
@@ -488,12 +526,15 @@ MIT — см. [`LICENSE`](./LICENSE).
 - Запуск: `python3 -m unittest discover -s tests/v3` · `bash tests/ui/run_ui_tests.sh` · `bash tests/e2e/<name>.sh`.
 
 ### Осталось (по приоритету)
-1. **Отдельный RuntimeClass `kata-btf`** (BTF-ядро Kata) для **in-guest eBPF/Tetragon** + правки Kyverno —
-   затем полный H3 (HF→llama.cpp→Kata+eBPF→10 вопросов). Дизайн и факты — `Arch_v3/15` §8.9/§8.10.
-2. **GPU-пул** (железо + `nvidia-device-plugin`).
-3. **HF**: реальный токен и egress-allowlist к huggingface.co/CDN (сейчас mock-HF).
-4. Harbor + cosign/SBOM, Vault/TSA/WORM, mTLS, multi-node HA/DR, GitOps-контроллер, доверенная
-   judge-модель, HDF5-адаптер, полная интеграция анализа в поток скана, перф-замеры 1 ТБ.
+1. **In-guest eBPF/Tetragon в тенанте** (RuntimeClass `kata-btf` + ConfigMap `mlscan-ebpf-agent`):
+   сейчас сенсор **выключен** (`SANDBOX_EBPF`/`LLM_TEST_EBPF=0`), поэтому `LLM-B-01..05` не срабатывают
+   — это главная «слепая зона» наблюдения (см. [`CrossProcess_overview.md`](CrossProcess_overview.md) §8).
+2. **LLM-тесты вне Kata**: идут на `runtimeClassName: nvidia` (хостовое ядро, GPU); нужна Kata+GPU
+   (или иной микро-ВМ) для изоляции недоверенного движка/модели.
+3. **Harbor + cosign/SBOM, Vault/TSA/WORM, mTLS, multi-node HA/DR, GitOps-контроллер, доверенная
+   judge-модель, HDF5-адаптер, перф-замеры 1 ТБ.**
+4. **HF-воркер**: редкий случай `EntityTooSmall` на multipart для мелких последних частей
+   (наблюдалось на `sshleifer/tiny-gpt2` в списке загрузок) — поправить порог/размер части.
 
 ### Уточнение по среде
 Интернет у **узла** есть; egress **подов** ограничен нашей NetworkPolicy (`mlscan-egress`) — поэтому HF/ghcr

@@ -13,6 +13,29 @@ provenance problems.
 
 ---
 
+## Current status (stand `rtx-cluster`, tenant `t-mlscan-app` / `t-mlscan-sandbox`)
+
+The **full v3 system is deployed**: UI behind Keycloak (OIDC) — `https://mlscan.platform.rtx.local`,
+testing service, analytics, integrations (CI gate), ops (metrics), PostgreSQL, S3 (**Ceph RGW**),
+sandbox `t-mlscan-sandbox` (Kata for scans; **GPU inference** on RTX 4000).
+
+Beyond the v2 stand described below:
+- **LLM inference as an untrusted engine by digest**: `vLLM` / `SGLang` / `llama.cpp`; the
+  “model + engine + versions” binding is an immutable **bundle** with **verdict + attestation + CI gate**.
+- **Whole HF model directories**: for vLLM/SGLang the entire repo (config/tokenizer/all shards) is
+  fetched; a single `.safetensors` from HF is auto-completed to the full directory before a test.
+- **Full question set** (active set — **726** questions) delivered via S3 (no env/ConfigMap limits).
+- **SGLang 0.5.9 on Turing (sm_75)** runs on the RTX 4000 via a runtime shim (`sgl-shim`); not needed
+  on Ampere+.
+- The LLM test **Job deletes itself after the verdict** (frees the GPU).
+- S3 is **Ceph RGW**; Garage removed.
+
+End-to-end processes, sequence diagrams and the **observation scope / open gaps** —
+[`CrossProcess_overview.md`](CrossProcess_overview.md) (RU). Deployment status and procedures —
+[`deploy/tenant/STATUS.md`](deploy/tenant/STATUS.md) (RU).
+
+---
+
 ## Core concept: every artifact runs on an engine
 
 Every check executes an artifact through an **engine**, and the result is recorded as an immutable
@@ -282,9 +305,46 @@ TPR=1.0, FPR=0.0. A quick corpus run against a deployed stand is
 
 ---
 
-## Screenshots (UI, English)
+## Screenshots (UI)
 
-**Sign-in** — username and password (session cookie on `.mlscan.local`, single sign-on for
+Current stand: UI behind **Keycloak (OIDC)** — `https://mlscan.platform.rtx.local` (roles come from
+Keycloak groups, e.g. `mlscan-admins` → `admin`). Sections: **Scans · Upload · Operations history ·
+Settings · Administration**. UI is localized RU/EN; the fresh screenshots below are RU-locale
+(taken with `tests/ui/screenshots.js` against the live tenant).
+
+![MLScan UI — scans](docs/img/ui-e2e/01-scans.png)
+
+**Artifact card (LLM + inference)** — `Qwen3-1.7B`: coverage (static/dynamic/behaviour), findings,
+sensor, and **Bindings** — one verdict per engine (**bundle**) with attestation
+(`engine-sglang:v0.5.9 → Needs review`, `engine-vllm:v0.9.2`):
+
+![MLScan UI — artifact card](docs/img/ui-e2e/02-artifact-card.png)
+
+**Upload — Models / Test bundle / Inference engines / Model from HF**: local artifacts, bundle test
+run, engine image registry by digest, and background HF downloads fetching the **whole model
+directory** for vLLM/SGLang:
+
+![MLScan UI — upload models](docs/img/ui-e2e/03-upload-models.png)
+
+![MLScan UI — bundle test](docs/img/ui-e2e/04-upload-bundletest.png)
+
+![MLScan UI — inference engines](docs/img/ui-e2e/05-upload-engines.png)
+
+![MLScan UI — model from HF](docs/img/ui-e2e/06-upload-hf.png)
+
+**Operations history / Settings / Administration** (active question set size — `726 questions`,
+`domain → policy class` `auto/overrides`, XLSX import, limits):
+
+![MLScan UI — operations](docs/img/ui-e2e/07-operations.png)
+
+![MLScan UI — settings](docs/img/ui-e2e/08-settings.png)
+
+![MLScan UI — administration](docs/img/ui-e2e/09-admin.png)
+
+> **Archive (v2 stand, previous UI).** The screenshots below are from the earlier installation
+> (`analytics.mlscan.local`) and illustrate the classic **non-LLM** artifact cards.
+
+**Sign-in (v2)** — username and password (session cookie on `.mlscan.local`, single sign-on for
 analytics/ops/integrations); CI/scripts can sign in with an API key:
 
 ![MLScan UI — sign in](docs/img/en/ui-login.png)
