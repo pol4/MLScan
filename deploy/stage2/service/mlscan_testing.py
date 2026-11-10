@@ -138,6 +138,7 @@ LLM_TEST_RAM_GB = int(os.environ.get("LLM_TEST_RAM_GB", "24"))
 LLM_TEST_MAX_QUESTIONS = int(os.environ.get("LLM_TEST_MAX_QUESTIONS", "0"))  # 0 = все вопросы набора
 LLM_GPU_COMPUTE_CAP = float(os.environ.get("LLM_GPU_COMPUTE_CAP", "7.5"))  # sm_75 (Quadro RTX 4000)
 LLM_SGLANG_SM75 = os.environ.get("LLM_SGLANG_SM75", "0") == "1"  # torch-shim для SGLang на sm_75
+LLM_TEST_DECEPTION = os.environ.get("LLM_TEST_DECEPTION", "1") == "1"  # ловушки на инференс-пути
 LLM_TEST_DISK_GB = int(os.environ.get("LLM_TEST_DISK_GB", "40"))
 LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 IMAGES_REQUIRE_SIGNED = os.environ.get("IMAGES_REQUIRE_SIGNED", "0") == "1"   # B4-lite: политика подписи
@@ -3029,6 +3030,7 @@ class Handler(BaseHTTPRequestHandler):
             prompts_url=(prompts_url if not testpack_url else ""),
             testpack_url=testpack_url, testpack_meta=testpack_meta,
             engine_descriptor=engine_descriptor, sgl_shim=LLM_SGLANG_SM75,
+            deception=LLM_TEST_DECEPTION,
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
             scan_id=scan_id, namespace=LLM_TEST_NS, gpu=gpu,
             runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),

@@ -258,7 +258,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         model_files: list | None = None, prompts_configmap: str = "",
                         prompts_url: str = "", sgl_shim: bool = False,
                         testpack_url: str = "", testpack_meta: str = "",
-                        engine_descriptor: dict | None = None) -> dict:
+                        engine_descriptor: dict | None = None, deception: bool = True) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -295,6 +295,12 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
     uid = int(os.environ.get("MLSCAN_LLM_TEST_UID", "65532"))
     hardened = {"runAsNonRoot": True, "runAsUser": uid, "runAsGroup": uid,
                 "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
+    # Ф5: ловушки (honeypot-секреты) монтируются и на инференс-путь (HOME остаётся writable)
+    if deception:
+        engine_env += [
+            {"name": "AWS_SHARED_CREDENTIALS_FILE", "value": "/deception/.aws/credentials"},
+            {"name": "AWS_CONFIG_FILE", "value": "/deception/.aws/config"},
+            {"name": "KUBECONFIG", "value": "/deception/.kube/config"}]
     eng_l = (engine_image or "").lower()
     model_path = "/model" if model_files else "/model/model.gguf"
     if "sglang" in eng_l:
@@ -324,6 +330,11 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                  "volumeMounts": [{"name": "model", "mountPath": "/model", "readOnly": True}]
                                  + ([{"name": "sgl-shim", "mountPath": "/opt/sgl-sm75", "readOnly": True}]
                                     if sgl_shim else [])
+                                 + ([{"name": "deception", "mountPath": "/deception", "readOnly": True},
+                                     {"name": "deception-aws", "mountPath": "/deception/.aws", "readOnly": True},
+                                     {"name": "deception-ssh", "mountPath": "/deception/.ssh", "readOnly": True},
+                                     {"name": "deception-kube", "mountPath": "/deception/.kube", "readOnly": True}]
+                                    if deception else [])
                                  + ([{"name": "dev", "mountPath": "/dev"},
                                      {"name": "cudalibs", "mountPath": "/usr/lib/x86_64-linux-gnu", "readOnly": True}]
                                     if (gpu and gpu_mode == "hostdev") else []),
@@ -428,6 +439,11 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                               if prompts_configmap else [])
                            + ([{"name": "sgl-shim", "configMap": {"name": "sgl-shim"}}]
                               if sgl_shim else [])
+                           + ([{"name": "deception", "configMap": {"name": "mlscan-deception"}},
+                               {"name": "deception-aws", "configMap": {"name": "mlscan-deception-aws"}},
+                               {"name": "deception-ssh", "configMap": {"name": "mlscan-deception-ssh"}},
+                               {"name": "deception-kube", "configMap": {"name": "mlscan-deception-kube"}}]
+                              if deception else [])
                            + ([{"name": "dev", "hostPath": {"path": "/dev"}}]
                               if (gpu and gpu_mode == "hostdev") else [])
                            + ([{"name": "cudalibs", "hostPath": {"path": "/usr/lib/x86_64-linux-gnu"}}]

@@ -163,7 +163,10 @@ class GpuEnvTest(unittest.TestCase):
         limits = spec["containers"][0]["resources"]["limits"]
         self.assertNotIn("nvidia.com/gpu", limits)
         self.assertIn("0", spec["containers"][0]["args"])
-        self.assertEqual(len(spec["volumes"]), 1)          # без /dev
+        names = [v["name"] for v in spec["volumes"]]
+        self.assertNotIn("dev", names)                     # без /dev
+        self.assertIn("model", names)
+        self.assertIn("deception", names)                  # Ф5: ловушки на инференс-пути
         self.assertEqual(spec["runtimeClassName"], "kata")
 
     def test_llm_test_job_probe_payload(self):

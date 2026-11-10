@@ -25,7 +25,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: testing
-          image: harbor.platform.rtx.local/mlscan/services@sha256:c793f2c573986b311f10dacbc23f3c92f38e68023e0987ea86ecb6c78755377b
+          image: harbor.platform.rtx.local/mlscan/services@sha256:c3ad7036067ad658c2fa1cbff0024ec50f61edb549356f47144ab0883e4a7e0f
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_testing.py"]
           env:
@@ -35,6 +35,7 @@ spec:
             - {name: LLM_TEST_RUNTIME_CLASS, value: nvidia}
             - {name: LLM_TEST_GPU, value: "1"}
             - {name: LLM_SGLANG_SM75, value: "1"}
+            - {name: LLM_TEST_DECEPTION, value: "1"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}
             - {name: PORT, value: "8080"}
