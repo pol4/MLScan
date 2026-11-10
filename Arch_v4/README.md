@@ -55,6 +55,7 @@ v3 уже умеет: запускать артефакт в Kata (сканы), 
 | [`06-contracts.md`](06-contracts.md) | Контракты: SandboxJobSpec, EngineDescriptor, TestPack, Event, Verdict/Policy |
 | [`07-migration-roadmap.md`](07-migration-roadmap.md) | Переход v3→v4 по фазам, критерии приёмки, риски |
 | [`08-threat-model.md`](08-threat-model.md) | Модель угроз и границы доверия унифицированной песочницы |
+| [`09-large-artifact-pipeline.md`](09-large-artifact-pipeline.md) | **Сквозной процесс большого артефакта** (модель на ТБ): очередь/S3, доставка через gateway, тиры проверки, стриминг/кэш |
 
 ## 4. Высокоуровневая схема
 
