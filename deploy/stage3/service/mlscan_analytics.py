@@ -709,6 +709,21 @@ V3UI_MARKUP = """
     <div id='v3ps-history' style='margin-top:6px;font-size:12px'></div></div>
 </div>
 <div class='v3sect' id='sec-admin' style='display:none'>
+  <div class='upload' style='margin-top:0'><b>Политики вердикта (v4 — управляемые критерии)</b>
+    <div style='font-size:12px;color:#9aa4b2;margin:4px 0'>Скоринг и правила вердикта как данные: черновик → симуляция → публикация.</div>
+    <input id='v4pol-id' type='text' value='default' style='width:12%'>
+    <button type='button' id='v4pol-load'>Загрузить</button>
+    <button type='button' id='v4pol-save'>Сохранить черновик</button>
+    <button type='button' id='v4pol-publish'>Опубликовать</button>
+    <div id='v4pol-list' style='font-size:12px;color:#9aa4b2;margin:6px 0'></div>
+    <textarea id='v4pol-json' spellcheck='false' style='width:100%;height:170px;font-family:monospace;font-size:12px'></textarea>
+    <div style='margin-top:6px'><b>Симуляция</b> — cases JSON: <code>[{findings, coverage, results, label}]</code></div>
+    <textarea id='v4pol-cases' spellcheck='false' style='width:100%;height:80px;font-family:monospace;font-size:12px' placeholder='[{"profile":"llm","results":{"safety_fail":0,"pass_rate":1.0},"label":"safe"}]'></textarea>
+    <button type='button' id='v4pol-sim'>Симулировать</button>
+    <pre id='v4pol-out' style='white-space:pre-wrap;font-size:12px;color:#cfd6e0;margin:6px 0'></pre>
+  </div>
+  <div class='upload' style='margin-top:0'><b>Движки инференса (дескрипторы)</b>
+    <div id='v4eng-list' style='font-size:12px;color:#9aa4b2'></div></div>
   <div class='upload' style='margin-top:0'><b>Квоты HF (per-tenant)</b>
     <input id='v3qa-tenant' type='text' placeholder='tenant' style='width:14%'>
     <input id='v3qa-bytes' type='number' placeholder='daily_bytes (пусто = снять)' style='width:16%'>
@@ -1300,6 +1315,34 @@ document.getElementById('f').addEventListener('submit',e=>{
       body:JSON.stringify({domain:domain,policy_class:cls})})
       .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>load().then(()=>show(ok?('saved '+j.domain+'→'+j.policy_class):('ERR '+(j.error||'bad')))) )
       .catch(()=>show('ERR'));});})();
+(function(){const g=id=>document.getElementById(id);const out=g('v4pol-out');if(!out)return;
+  const fmt=o=>JSON.stringify(o,null,2);
+  const show=o=>{out.textContent=(typeof o==='string')?o:fmt(o);};
+  const loadList=async()=>{try{const r=await fetch('/v4/policies');const d=await r.json();
+    if(!r.ok){show(d);return;}
+    g('v4pol-list').textContent='Политики: '+((d.policies||[]).map(p=>p.id+' v'+p.version).join(', ')||'—')+(d.v4?'':' (v4-модуль недоступен)');
+  }catch(e){show('ERR '+e.message);}};
+  const loadPolicy=async()=>{const id=g('v4pol-id').value||'default';
+    try{const r=await fetch('/v4/policies/'+encodeURIComponent(id));const d=await r.json();
+      if(!r.ok){show(d);return;}g('v4pol-json').value=fmt(d.body||{});
+      show({id:d.id,version:d.version,status:d.status,signature:d.signature});
+    }catch(e){show('ERR '+e.message);}};
+  const post=async(path,obj)=>{try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj||{})});
+    const d=await r.json().catch(()=>({}));show({status:r.status,resp:d});if(r.ok)loadList();}catch(e){show('ERR '+e.message);}};
+  const engines=async()=>{try{const r=await fetch('/v4/engines');const d=await r.json();
+    if(!r.ok){g('v4eng-list').textContent='ERR '+r.status;return;}
+    g('v4eng-list').innerHTML=(d.engines||[]).map(e=>'<div>'+e.kind+' · '+e.id+' · '+(e.capabilities&&e.capabilities.gpu?'GPU':'CPU')+' <span style="color:#6f7a88">'+e.source+'</span></div>').join('')||'—';
+  }catch(e){g('v4eng-list').textContent='ERR '+e.message;}};
+  g('v4pol-load').addEventListener('click',loadPolicy);
+  g('v4pol-save').addEventListener('click',()=>{let b;try{b=JSON.parse(g('v4pol-json').value||'{}');}catch(e){show('JSON: '+e.message);return;}
+    post('/v4/policies',{id:g('v4pol-id').value||'default',body:b});});
+  g('v4pol-publish').addEventListener('click',()=>{const id=g('v4pol-id').value||'default';let body=null;try{body=JSON.parse(g('v4pol-json').value||'null');}catch(e){}
+    post('/v4/policies/'+encodeURIComponent(id)+'/publish',body?{body:body}:{});});
+  g('v4pol-sim').addEventListener('click',()=>{const id=g('v4pol-id').value||'default';let cases;try{cases=JSON.parse(g('v4pol-cases').value||'[]');}catch(e){show('cases JSON: '+e.message);return;}
+    let pol=null;try{pol=JSON.parse(g('v4pol-json').value||'null');}catch(e){}
+    post('/v4/policies/'+encodeURIComponent(id)+'/simulate',pol?{policy:pol,cases:cases}:{cases:cases});});
+  loadList();loadPolicy();engines();
+})();
 (function(){const sb=document.getElementById('imgsign-btn');
   sb&&sb.addEventListener('click',()=>{
     const st=document.getElementById('imgstatus');
@@ -1815,7 +1858,7 @@ class Handler(BaseHTTPRequestHandler):
             code, body = self._test_request("GET", p)
             return self._send(code, body, "application/json; charset=utf-8")
         # v3 UI API: артефакты, операции, целостность, решения gate, квоты/egress, обзор HF
-        if p.startswith("/v3/") or p.startswith("/gate") or p in ("/hf/quota", "/hf/egress") \
+        if p.startswith("/v3/") or p.startswith("/v4/") or p.startswith("/gate") or p in ("/hf/quota", "/hf/egress") \
                 or p.startswith("/hf/egress"):
             code, body = self._test_request("GET", p + (("?" + (u.query or "")) if u.query else ""))
             return self._send(code, body, "application/json; charset=utf-8")
@@ -1992,6 +2035,11 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"
             code, body = self._test_request("POST", "/hf/token", data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        if u.path.startswith("/v4/"):
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", u.path, data)
             return self._send(code, body, "application/json; charset=utf-8")
         if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):
             n = int(self.headers.get("Content-Length", "0") or "0")

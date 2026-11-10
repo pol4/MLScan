@@ -334,6 +334,92 @@ def _verdict_from_score(safety_fail: int, pass_rate: float) -> str:
     return "Inconclusive"
 
 
+# --- v4: политика вердикта (управляемые критерии) ---------------------------
+def _v4_jsonb(v):
+    """JSONB из БД приходит dict (psycopg) или строкой — привести к dict."""
+    if isinstance(v, (dict, list)):
+        return v
+    try:
+        return json.loads(v or "{}")
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _policy_sign(body: dict) -> str:
+    """Подпись версии политики (HMAC платформенным ключом, если доступно; иначе sha256)."""
+    canon = json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    try:
+        if v3attest is not None and hasattr(v3attest, "sign"):
+            return "hmac:" + str(v3attest.sign(canon.decode("utf-8"), ATTEST_KEY))
+    except Exception:  # noqa: BLE001
+        pass
+    return "sha256:" + hashlib.sha256(canon).hexdigest()
+
+
+def _policy_default_body() -> dict:
+    return dict(v4policy.DEFAULT_POLICY) if v4policy is not None else {}
+
+
+def _policy_latest(policy_id: str = "default") -> dict:
+    """Последняя версия политики; при отсутствии — сидируем дефолтную и возвращаем её.
+
+    Устойчиво к отсутствию таблицы `policies` (до миграции) — возвращает дефолт.
+    """
+    if not DB_ENABLED:
+        return {"id": policy_id, "version": 1, "status": "published",
+                "body": _policy_default_body(), "signature": ""}
+    body = None
+    try:
+        rows = db_query("SELECT version,status,body,signature FROM v4_policies WHERE id=" + _lit(policy_id)
+                        + " ORDER BY version DESC LIMIT 1")
+    except Exception:  # noqa: BLE001
+        rows = None
+    if rows:
+        return {"id": policy_id, "version": int(rows[0][0]), "status": rows[0][1],
+                "body": _v4_jsonb(rows[0][2]), "signature": rows[0][3] or ""}
+    body = _policy_default_body()
+    if body:
+        try:
+            db_exec("INSERT INTO v4_policies(id,version,status,body,signature) VALUES ("
+                    + _lit(policy_id) + ",1," + _lit("published") + ","
+                    + _lit(json.dumps(body, ensure_ascii=False)) + "," + _lit(_policy_sign(body)) + ") "
+                    "ON CONFLICT (id,version) DO NOTHING")
+        except Exception:  # noqa: BLE001
+            pass
+    return {"id": policy_id, "version": 1, "status": "published", "body": body, "signature": ""}
+
+
+def _policy_new_version(policy_id: str, body: dict, status: str = "draft") -> int:
+    """Добавить новую версию политики; вернуть её номер."""
+    ver = 0
+    try:
+        rows = db_query("SELECT COALESCE(MAX(version),0) FROM v4_policies WHERE id=" + _lit(policy_id))
+        ver = int(rows[0][0]) if rows else 0
+    except Exception:  # noqa: BLE001
+        ver = 0
+    ver += 1
+    db_exec("INSERT INTO v4_policies(id,version,status,body,signature) VALUES ("
+            + _lit(policy_id) + "," + str(ver) + "," + _lit(status) + ","
+            + _lit(json.dumps(body, ensure_ascii=False)) + "," + _lit(_policy_sign(body)) + ") "
+            "ON CONFLICT (id,version) DO UPDATE SET status=EXCLUDED.status, body=EXCLUDED.body, "
+            "signature=EXCLUDED.signature, created=now()")
+    return ver
+
+
+def _policy_llm_verdict(safety_fail, pass_rate) -> str:
+    """Вердикт LLM-теста по политике (профиль `llm`). Дефолт воспроизводит поведение v3."""
+    if v4policy is None:
+        return _verdict_from_score(int(safety_fail or 0), float(pass_rate or 1.0))
+    try:
+        body = _policy_latest("default")["body"] or _policy_default_body()
+        out = v4policy.evaluate([], coverage=None,
+                                results={"safety_fail": safety_fail, "pass_rate": pass_rate},
+                                policy=body, profile="llm")
+        return out["verdict"]
+    except Exception:  # noqa: BLE001
+        return _verdict_from_score(int(safety_fail or 0), float(pass_rate or 1.0))
+
+
 def _hf_daily_limit(tenant: str) -> int:
     """Суточный лимит HF-загрузок для тенанта (0 = без лимита). Персональный — из hf_quotas."""
     if DB_ENABLED:
@@ -1078,6 +1164,15 @@ except Exception:  # noqa: BLE001
     v3pq = v3tasks = v3orch = v3tenants = None  # type: ignore
     v3attest = None  # type: ignore
     _v3q = None  # type: ignore
+
+sys.path.insert(0, "/opt/v4")
+try:  # v4: движки как данные + политика вердикта (управляемые критерии)
+    import scoring.policy as v4policy  # noqa: E402
+    import scoring.simulator as v4sim  # noqa: E402
+    import engines.descriptor as v4ed  # noqa: E402
+except Exception as _v4exc:  # noqa: BLE001
+    v4policy = v4sim = v4ed = None  # type: ignore
+    print(f"[testing] v4 modules unavailable: {_v4exc}", file=sys.stderr)
 
 
 def T(key: str, lang: str = "ru", **fmt) -> str:
@@ -1989,6 +2084,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._hf_quota_get()
         if u.path == "/hf/egress":
             return self._hf_egress_get(q)
+        # v4: политики вердикта и дескрипторы движков
+        if u.path == "/v4/policies":
+            return self._v4_policy_list()
+        if u.path.startswith("/v4/policies/"):
+            return self._v4_policy_get(u.path[len("/v4/policies/"):].strip("/"))
+        if u.path == "/v4/engines":
+            return self._v4_engines_list()
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
             return self._bundle_test_get(u.path[len("/bundles/"):-len("/test")].strip("/"))
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
@@ -2503,7 +2605,7 @@ class Handler(BaseHTTPRequestHandler):
                 rows = db_query("SELECT bundle_id FROM bundle_tests WHERE run_token=" + _lit(run_token))
                 if not rows or rows[0][0] != bundle_id:
                     return self._json(403, {"error": "run-token не соответствует bundle"})
-            verdict = _verdict_from_score(int(agg.get("safety_fail") or 0), float(agg.get("pass_rate") or 0))
+            verdict = _policy_llm_verdict(int(agg.get("safety_fail") or 0), float(agg.get("pass_rate") or 0))
             try:
                 out = _write_bundle_verdict(
                     bundle_id, verdict, safety_fail=int(agg.get("safety_fail") or 0),
@@ -2955,6 +3057,166 @@ class Handler(BaseHTTPRequestHandler):
 
     def _admin_ok(self) -> bool:
         return "admin" in (getattr(self, "_roles", []) or [])
+
+    # ---- v4: политики вердикта (управляемые критерии) --------------------
+    def _v4_body(self):
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            return json.loads(self.rfile.read(n) or b"{}")
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _v4_policy_list(self) -> None:
+        rows = []
+        if DB_ENABLED:
+            try:
+                rows = db_query("SELECT id, MAX(version), COUNT(*) FROM v4_policies GROUP BY id ORDER BY id") or []
+            except Exception:  # noqa: BLE001
+                rows = []
+        if not rows:      # сид дефолтной политики (или до миграции — просто фолбэк)
+            _policy_latest("default")
+            try:
+                rows = db_query("SELECT id, MAX(version), COUNT(*) FROM v4_policies GROUP BY id ORDER BY id") or []
+            except Exception:  # noqa: BLE001
+                rows = []
+        out = [{"id": r[0], "version": int(r[1] or 0), "versions": int(r[2] or 0)} for r in rows]
+        return self._json(200, {"policies": out, "v4": v4policy is not None})
+
+    def _v4_policy_get(self, policy_id: str) -> None:
+        if not policy_id or "/" in policy_id:
+            return self._json(404, {"error": "not found"})
+        pol = _policy_latest(policy_id)
+        return self._json(200, {"id": pol["id"], "version": pol["version"], "status": pol["status"],
+                                "signature": pol.get("signature", ""), "body": pol["body"]})
+
+    def _v4_policy_save(self) -> None:
+        """Создать черновик политики: {id?, body|policy}."""
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        if v4policy is None:
+            return self._json(503, {"error": "v4 policy module unavailable"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        pid = (body.get("id") or "default").strip()
+        pbody = body.get("body") or body.get("policy")
+        if not isinstance(pbody, dict):
+            return self._json(400, {"error": "body (policy) должен быть объектом"})
+        try:
+            v4policy.parse_text_dsl(pbody)
+        except ValueError as exc:
+            return self._json(400, {"error": f"policy DSL: {exc}"})
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        ver = _policy_new_version(pid, pbody, status="draft")
+        return self._json(201, {"id": pid, "version": ver, "status": "draft",
+                                "signature": _policy_sign(pbody)})
+
+    def _v4_policy_publish(self, policy_id: str) -> None:
+        """Опубликовать политику: {body?|policy?} (новая версия) или текущую последнюю."""
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        pbody = body.get("body") or body.get("policy")
+        try:
+            rows = db_query("SELECT COALESCE(MAX(version),0) FROM v4_policies WHERE id=" + _lit(policy_id))
+            ver = int(rows[0][0]) if rows else 0
+        except Exception:  # noqa: BLE001
+            ver = 0
+        if isinstance(pbody, dict):
+            if v4policy is not None:
+                try:
+                    v4policy.parse_text_dsl(pbody)
+                except ValueError as exc:
+                    return self._json(400, {"error": f"policy DSL: {exc}"})
+            ver = _policy_new_version(policy_id, pbody, status="published")
+        elif ver > 0:
+            db_exec("UPDATE v4_policies SET status='published' WHERE id=" + _lit(policy_id)
+                    + " AND version=" + str(ver))
+        else:
+            return self._json(404, {"error": "политика не найдена"})
+        return self._json(200, {"id": policy_id, "version": ver, "status": "published"})
+
+    def _v4_policy_simulate(self, policy_id: str) -> None:
+        """Симуляция политики: {policy?|id?, profile?, cases:[{findings,coverage,results,label}]}."""
+        if v4sim is None or v4policy is None:
+            return self._json(503, {"error": "v4 modules unavailable"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        pol = body.get("policy")
+        if not isinstance(pol, dict):
+            pol = _policy_latest(policy_id)["body"] or _policy_default_body()
+        cases = body.get("cases")
+        if not isinstance(cases, list):
+            return self._json(400, {"error": "cases должен быть списком"})
+        prof = body.get("profile") or "generic"
+        try:
+            out = v4sim.simulate(pol, cases, default_profile=prof)
+        except ValueError as exc:
+            return self._json(400, {"error": f"policy DSL: {exc}"})
+        return self._json(200, {"policy": {"id": pol.get("id"), "version": pol.get("version")}, **out})
+
+    # ---- v4: дескрипторы движков -----------------------------------------
+    def _v4_engines_list(self) -> None:
+        out = []
+        if DB_ENABLED:
+            try:
+                rows = db_query("SELECT id,oci,kind,body FROM v4_engine_descriptors ORDER BY id") or []
+            except Exception:  # noqa: BLE001
+                rows = []
+            for r in rows:
+                d = _v4_jsonb(r[3]) or {}
+                out.append({"id": r[0], "oci": r[1], "kind": r[2],
+                            "artifact_kinds": d.get("artifact_kinds", []),
+                            "capabilities": d.get("capabilities", {}), "source": "descriptor"})
+        try:
+            rows = db_query("SELECT digest,ref,source FROM registry_images") or []
+        except Exception:  # noqa: BLE001
+            rows = []
+        seen = {o["oci"] for o in out}
+        for row in rows:
+            try:
+                d = v4ed.EngineDescriptor.from_registry_row(row) if v4ed is not None else None
+            except Exception:  # noqa: BLE001
+                d = None
+            if d and d.oci not in seen:
+                seen.add(d.oci)
+                out.append({"id": d.id, "oci": d.oci, "kind": d.kind,
+                            "artifact_kinds": d.artifact_kinds, "capabilities": d.capabilities,
+                            "source": "registry"})
+        return self._json(200, {"engines": out})
+
+    def _v4_engine_register(self) -> None:
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        if v4ed is None:
+            return self._json(503, {"error": "v4 modules unavailable"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        d = v4ed.EngineDescriptor.from_dict(body)
+        errs = d.validate()
+        if errs:
+            return self._json(400, {"error": "invalid descriptor", "details": errs})
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        db_exec("INSERT INTO v4_engine_descriptors(id,oci,kind,body) VALUES ("
+                + _lit(d.id) + "," + _lit(d.oci) + "," + _lit(d.kind) + ","
+                + _lit(json.dumps(d.to_dict(), ensure_ascii=False)) + ") "
+                "ON CONFLICT (id) DO UPDATE SET oci=EXCLUDED.oci, kind=EXCLUDED.kind, "
+                "body=EXCLUDED.body, created=now()")
+        plan = {}
+        try:
+            plan = v4ed.plan_runtime_class(d, available=["kata", "kata-btf", "kata-gpu"],
+                                           gpu_available=d.needs_gpu())
+        except Exception as exc:  # noqa: BLE001
+            plan = {"runtime_class": "", "degraded": True, "reason": str(exc)}
+        return self._json(201, {"descriptor": d.to_dict(), "plan": plan})
 
     def _hf_quota_get(self) -> None:
         """N4: суточные лимиты HF-загрузок (тенант/значение; None = лимит по конфигурации)."""
@@ -4130,6 +4392,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._hf_quota_set()
         if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):
             return self._bundle_rebind(u.path.split("/", 3)[2])
+        # v4: политики вердикта и дескрипторы движков
+        if u.path == "/v4/policies":
+            return self._v4_policy_save()
+        if u.path.startswith("/v4/policies/") and u.path.endswith("/simulate"):
+            return self._v4_policy_simulate(u.path[len("/v4/policies/"):-len("/simulate")].strip("/"))
+        if u.path.startswith("/v4/policies/") and u.path.endswith("/publish"):
+            return self._v4_policy_publish(u.path[len("/v4/policies/"):-len("/publish")].strip("/"))
+        if u.path == "/v4/engines":
+            return self._v4_engine_register()
         if u.path.startswith("/v3/artifacts/"):
             rest = u.path[len("/v3/artifacts/"):].strip("/")
             if rest.endswith("/bind"):

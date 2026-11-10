@@ -228,3 +228,21 @@ CREATE TABLE IF NOT EXISTS bundle_verdict_chain (
   chain_digest TEXT NOT NULL,
   created TIMESTAMPTZ DEFAULT now()
 );
+
+-- v4: политики вердикта (управляемые критерии) и дескрипторы движков
+CREATE TABLE IF NOT EXISTS v4_policies (
+  id TEXT NOT NULL,
+  version INT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  body JSONB NOT NULL DEFAULT '{}'::jsonb,
+  signature TEXT DEFAULT '',
+  created TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (id, version)
+);
+CREATE TABLE IF NOT EXISTS v4_engine_descriptors (
+  id TEXT PRIMARY KEY,
+  oci TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  body JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created TIMESTAMPTZ NOT NULL DEFAULT now()
+);

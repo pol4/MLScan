@@ -27,7 +27,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: ops
-          image: harbor.platform.rtx.local/mlscan/services@sha256:da5b212d53bd6b6ab2c8e0a6dfce125524a1935418f16eb54a1144f20e0fba97
+          image: harbor.platform.rtx.local/mlscan/services@sha256:4c413d65b26e5bf7950b11ccf21e2846213693c370dc9579f71f3d6533923369
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_ops.py"]
           env:

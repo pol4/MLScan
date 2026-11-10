@@ -29,7 +29,7 @@
 | `mlscan-ui` (oauth2-proxy, Keycloak OIDC) | 1/1, ingress → 302 Keycloak |
 | `sinkhole` (sandbox) | 1/1 |
 | Ingress + TLS (`platform-ca`) | `mlscan.platform.rtx.local`, `mlscan-api.platform.rtx.local` |
-| Services image | `harbor.platform.rtx.local/mlscan/services@sha256:da5b212d…ba97` (BuildKit) |
+| Services image | `harbor.platform.rtx.local/mlscan/services@sha256:4c413d65…3369` (BuildKit) |
 | Sandbox image | `harbor.platform.rtx.local/mlscan/sandbox@sha256:cc0f6ef7…bd31` (BuildKit) |
 | Sandbox subnet | `mlscan-sandbox` 10.99.0.0/24, `natOutgoing:false` |
 | Isolation gate (Phase 5.5) | **PASSED** (`isolation_fail=0`, поды на 10.99.x) |
@@ -125,6 +125,11 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - **Устойчивость UI к недоступности Keycloak**: oauth2-proxy запускается с
   `--skip-oidc-discovery` и явным `--oidc-jwks-url`, поэтому временный 503 от Keycloak
   не вызывает crash-loop (ранее было 17 рестартов во время перезапуска узла).
+- **v4 (унифицированная песочница) — первый инкремент на стенде**: движки инференса описаны как
+  данные (`EngineDescriptor`), вердикт LLM вычисляется **политикой** (скоринг + правила) — API
+  `/v4/policies` (черновик → симуляция → публикация) и `/v4/engines`; дефолтная политика
+  воспроизводит прежнее поведение. В админ-UI — панель «Политики вердикта (v4)» + список движков.
+  Библиотечный слой (`deploy/v4/*`) и 22 unit-теста (`tests/v4`).
 - **SGLang v0.5.9 на sm_75 (Quadro RTX 4000) — работает через runtime-shim**:
   upstream `sgl_kernel` собран только для sm_80+ (`RMSNorm ... no kernel image`).
   Добавлен ConfigMap `sgl-shim` (namespace `t-mlscan-sandbox`) с `sitecustomize.py`,
@@ -166,7 +171,7 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - Удалён неиспользуемый `mlscan-oidc` ExternalSecret; deception-субконфиги
   (`-aws/-ssh/-kube`) смонтированы в sandbox Job.
 - Gate: детерминированный, IP-based, host-IP проверки — INFO.
-- Код сервисов запечён в immutable-образ `harbor.platform.rtx.local/mlscan/services@sha256:da5b212d…ba97`;
+- Код сервисов запечён в immutable-образ `harbor.platform.rtx.local/mlscan/services@sha256:4c413d65…3369`;
   код-ConfigMap'ы удалены, `gen-configmaps.sh` создаёт только данные.
 - Сборка — платформенный **BuildKit** (`buildkitd.pf-ci.svc:1234`): Dockerfiles в
   `deploy/tenant/images/{services,sandbox}/Dockerfile`, Job в `pf-ci` через
