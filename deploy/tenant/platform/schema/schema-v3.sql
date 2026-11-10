@@ -266,3 +266,6 @@ CREATE TABLE IF NOT EXISTS v4_datasets (
   body JSONB DEFAULT '[]'::jsonb,
   created TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- v4: план проверки, зафиксированный на запуск теста bundle
+ALTER TABLE bundle_tests ADD COLUMN IF NOT EXISTS plan JSONB DEFAULT '{}'::jsonb;

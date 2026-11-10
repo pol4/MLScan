@@ -420,6 +420,69 @@ def _policy_llm_verdict(safety_fail, pass_rate) -> str:
         return _verdict_from_score(int(safety_fail or 0), float(pass_rate or 1.0))
 
 
+def _v4_artifact_kind(model_sha: str, engine: str = "") -> str:
+    """Вид артефакта для подбора TestPack (по формату/имени и типу движка)."""
+    try:
+        rows = db_query("SELECT format,filename FROM artifacts WHERE sha256=" + _lit(model_sha))
+    except Exception:  # noqa: BLE001
+        rows = None
+    if not rows:
+        return ""
+    fmt = (rows[0][0] or "").lower()
+    fn = (rows[0][1] or "").lower()
+    e = (engine or "").lower()
+    is_llm = ("vllm" in e) or ("sglang" in e) or ("llama" in e)
+    if fn.endswith(".gguf") or fmt == "gguf":
+        return "llm-gguf" if is_llm else "gguf"
+    if fn.endswith(".safetensors") or fmt == "safetensors":
+        return "llm-safetensors" if is_llm else "safetensors"
+    return fmt or "unknown"
+
+
+def _v4_digest(engine: str) -> str:
+    e = engine or ""
+    return ("sha256:" + e.split("@sha256:")[-1]) if "@sha256:" in e else e
+
+
+def _v4_available_runtime_classes() -> list:
+    """Фактически доступные RuntimeClass в кластере (для честного плана v4)."""
+    try:
+        d = k8s("GET", "/apis/node.k8s.io/v1/runtimeclasses")
+        names = [it.get("metadata", {}).get("name", "") for it in d.get("items", [])]
+        return [n for n in names if n]
+    except Exception:  # noqa: BLE001
+        return ["kata"]
+
+
+def _v4_engine_descriptor_for(engine: str):
+    """Найти EngineDescriptor движка: из реестра дескрипторов, иначе из registry_images."""
+    if v4ed is None:
+        return None
+    dig = _v4_digest(engine)
+    try:
+        rows = db_query("SELECT body FROM v4_engine_descriptors") or []
+    except Exception:  # noqa: BLE001
+        rows = []
+    for r in rows:
+        b = _v4_jsonb(r[0]) or {}
+        oci = b.get("oci", "")
+        if oci == engine or (_v4_digest(oci) == dig and dig):
+            try:
+                return v4ed.EngineDescriptor.from_dict(b)
+            except Exception:  # noqa: BLE001
+                pass
+    try:
+        rr = db_query("SELECT digest,ref,source FROM registry_images WHERE digest=" + _lit(dig))
+    except Exception:  # noqa: BLE001
+        rr = None
+    if rr:
+        try:
+            return v4ed.EngineDescriptor.from_registry_row(rr[0])
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
 def _hf_daily_limit(tenant: str) -> int:
     """Суточный лимит HF-загрузок для тенанта (0 = без лимита). Персональный — из hf_quotas."""
     if DB_ENABLED:
@@ -1173,8 +1236,9 @@ try:  # v4: движки как данные + политика вердикта
     import tests.testpack as v4testpack  # noqa: E402
     import tests.runner as v4runner  # noqa: E402
     import tests.datasets as v4datasets  # noqa: E402
+    import engines.plan as v4plan  # noqa: E402
 except Exception as _v4exc:  # noqa: BLE001
-    v4policy = v4sim = v4ed = v4testpack = v4runner = v4datasets = None  # type: ignore
+    v4policy = v4sim = v4ed = v4testpack = v4runner = v4datasets = v4plan = None  # type: ignore
     print(f"[testing] v4 modules unavailable: {_v4exc}", file=sys.stderr)
 
 
@@ -2100,6 +2164,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._v4_testpack_get(u.path[len("/v4/testpacks/"):].strip("/"))
         if u.path == "/v4/datasets":
             return self._v4_datasets_list()
+        if u.path == "/v4/plan":
+            return self._v4_plan_get((q.get("engine") or [""])[0], (q.get("artifact_kind") or [""])[0])
+        if u.path.startswith("/v4/bundles/") and u.path.endswith("/plan"):
+            return self._json(200, self._v4_bundle_plan(u.path[len("/v4/bundles/"):-len("/plan")].strip("/")))
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
             return self._bundle_test_get(u.path[len("/bundles/"):-len("/test")].strip("/"))
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
@@ -2952,9 +3020,18 @@ class Handler(BaseHTTPRequestHandler):
                 "ON CONFLICT (bundle_id) DO UPDATE SET scan_id=EXCLUDED.scan_id, job=EXCLUDED.job, "
                 "namespace=EXCLUDED.namespace, status='running', run_token=EXCLUDED.run_token, "
                 "gpu=EXCLUDED.gpu, error='', updated=now()")
+        # v4: зафиксировать план проверки (движок + TestPack + наблюдение + политика)
+        plan = {}
+        try:
+            plan = self._v4_bundle_plan(bundle_id)
+            if plan:
+                db_exec("UPDATE bundle_tests SET plan=" + _lit(json.dumps(plan, ensure_ascii=False))
+                        + " WHERE bundle_id=" + _lit(bundle_id))
+        except Exception:  # noqa: BLE001
+            plan = {}
         return {"bundle_id": bundle_id, "job": name, "namespace": LLM_TEST_NS,
                 "scan_id": scan_id, "status": "running", "questions": len(cases),
-                "gpu": gpu,
+                "gpu": gpu, "plan": plan,
                 "hint": "по завершении job появится вердикт bundle (/bundles/<id>/verdict)"}
 
     def _bundle_test_get(self, bundle_id: str) -> None:
@@ -3361,6 +3438,39 @@ class Handler(BaseHTTPRequestHandler):
                 "ON CONFLICT (ref) DO UPDATE SET cases=EXCLUDED.cases, hash=EXCLUDED.hash, "
                 "body=EXCLUDED.body, created=now()")
         return self._json(201, {"ref": ref, "cases": len(cases), "hash": h})
+
+    # ---- v4: план проверки (движок + TestPack + наблюдение + политика) ----
+    def _v4_plan_for(self, engine: str, artifact_kind: str) -> dict:
+        if v4ed is None or v4testpack is None or v4plan is None:
+            return {}
+        desc = _v4_engine_descriptor_for(engine)
+        if desc is None:
+            return {}
+        packs = v4testpack.select_packs([it["pack"] for it in self._v4_all_packs()],
+                                        artifact_kind=artifact_kind, engine=engine)
+        pol = _policy_latest("default")
+        return v4plan.build_plan(desc, packs, artifact_kind=artifact_kind, engine=engine,
+                                 policy={"id": pol["id"], "version": pol["version"]},
+                                 available=_v4_available_runtime_classes(),
+                                 gpu_available=bool(LLM_TEST_GPU), allow_cpu_fallback=True)
+
+    def _v4_bundle_plan(self, bundle_id: str) -> dict:
+        try:
+            rows = db_query("SELECT engine_image,model_sha256 FROM bundles WHERE bundle_id=" + _lit(bundle_id))
+        except Exception:  # noqa: BLE001
+            rows = None
+        if not rows:
+            return {}
+        engine, sha = rows[0][0], rows[0][1]
+        return self._v4_plan_for(engine, _v4_artifact_kind(sha, engine))
+
+    def _v4_plan_get(self, engine: str, artifact_kind: str) -> None:
+        if not engine:
+            return self._json(400, {"error": "нужен параметр engine"})
+        plan = self._v4_plan_for(engine, artifact_kind or "")
+        if not plan:
+            return self._json(404, {"error": "план недоступен: движок не найден или v4 недоступен"})
+        return self._json(200, plan)
 
     def _hf_quota_get(self) -> None:
         """N4: суточные лимиты HF-загрузок (тенант/значение; None = лимит по конфигурации)."""

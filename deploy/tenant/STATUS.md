@@ -29,7 +29,7 @@
 | `mlscan-ui` (oauth2-proxy, Keycloak OIDC) | 1/1, ingress → 302 Keycloak |
 | `sinkhole` (sandbox) | 1/1 |
 | Ingress + TLS (`platform-ca`) | `mlscan.platform.rtx.local`, `mlscan-api.platform.rtx.local` |
-| Services image | `harbor.platform.rtx.local/mlscan/services@sha256:df852d11…7127` (BuildKit) |
+| Services image | `harbor.platform.rtx.local/mlscan/services@sha256:c65464c4…95d5` (BuildKit) |
 | Sandbox image | `harbor.platform.rtx.local/mlscan/sandbox@sha256:cc0f6ef7…bd31` (BuildKit) |
 | Sandbox subnet | `mlscan-sandbox` 10.99.0.0/24, `natOutgoing:false` |
 | Isolation gate (Phase 5.5) | **PASSED** (`isolation_fail=0`, поды на 10.99.x) |
@@ -134,6 +134,11 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   `/v4/datasets`; существующие наборы вопросов отдаются как `ds://prompts/<ver>@1` (активный — 726 кейсов);
   в админ-UI — панели «Пакеты тестов (v4)» и «Датасеты (v4)». Раннер (`deploy/v4/tests/runner.py`) исполняет
   шаги `static/load/invoke/stream/interactive/assert/snapshot` с бюджетами; таблицы `v4_testpacks`/`v4_datasets`.
+- **v4 Plan (E4/T3-lite)**: при запуске теста bundle фиксируется **план проверки** (движок + подобранные
+  `TestPack` + требования наблюдения + версия политики); RuntimeClass выбирается по **фактическим**
+  RuntimeClass кластера и наличию GPU: для vLLM сейчас `kata` + `degraded=true`
+  («gpu required but kata-gpu unavailable: cpu-in-kata») — это честно отражает текущий разрыв v4.
+  API: `GET /v4/plan?engine=&artifact_kind=`, `GET /v4/bundles/{id}/plan`; колонка `bundle_tests.plan`.
 - **SGLang v0.5.9 на sm_75 (Quadro RTX 4000) — работает через runtime-shim**:
   upstream `sgl_kernel` собран только для sm_80+ (`RMSNorm ... no kernel image`).
   Добавлен ConfigMap `sgl-shim` (namespace `t-mlscan-sandbox`) с `sitecustomize.py`,
@@ -175,7 +180,7 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - Удалён неиспользуемый `mlscan-oidc` ExternalSecret; deception-субконфиги
   (`-aws/-ssh/-kube`) смонтированы в sandbox Job.
 - Gate: детерминированный, IP-based, host-IP проверки — INFO.
-- Код сервисов запечён в immutable-образ `harbor.platform.rtx.local/mlscan/services@sha256:df852d11…7127`;
+- Код сервисов запечён в immutable-образ `harbor.platform.rtx.local/mlscan/services@sha256:c65464c4…95d5`;
   код-ConfigMap'ы удалены, `gen-configmaps.sh` создаёт только данные.
 - Сборка — платформенный **BuildKit** (`buildkitd.pf-ci.svc:1234`): Dockerfiles в
   `deploy/tenant/images/{services,sandbox}/Dockerfile`, Job в `pf-ci` через
