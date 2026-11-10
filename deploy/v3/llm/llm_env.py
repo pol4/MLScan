@@ -9,6 +9,13 @@
 from __future__ import annotations
 
 import os
+import sys
+
+try:  # v4: движок как данные (образ/команда/ресурсы из EngineDescriptor)
+    sys.path.insert(0, "/opt/v4")
+    import engines.descriptor as _v4ed  # noqa: E402
+except Exception:  # noqa: BLE001
+    _v4ed = None
 
 NAMESPACE = "mlscan-sandbox-llm"
 
@@ -250,7 +257,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         s3_client_configmap: str = "mlscan-s3client",
                         model_files: list | None = None, prompts_configmap: str = "",
                         prompts_url: str = "", sgl_shim: bool = False,
-                        testpack_url: str = "", testpack_meta: str = "") -> dict:
+                        testpack_url: str = "", testpack_meta: str = "",
+                        engine_descriptor: dict | None = None) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -325,6 +333,20 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
         _engine_c["command"] = engine_command
     else:
         _engine_c["args"] = engine_args
+    # v4 (E4): образ/команда/ресурсы из EngineDescriptor (аддитивно, при наличии)
+    if engine_descriptor and _v4ed is not None:
+        try:
+            _d = _v4ed.EngineDescriptor.from_dict(engine_descriptor)
+            _r = _v4ed.to_k8s_resources(_d)
+            if _r.get("limits"):
+                _engine_c["resources"] = {"limits": {**(_engine_c["resources"].get("limits") or {}),
+                                                     **_r["limits"]}}
+            _cmd = _v4ed.render_start(_d, model_path)
+            if _cmd:
+                _engine_c.pop("args", None)
+                _engine_c["command"] = _cmd
+        except Exception:  # noqa: BLE001
+            pass
     containers = [
         _engine_c,
         {"name": "probe", "image": "python:3.12-slim",

@@ -94,6 +94,25 @@ class DescriptorTest(unittest.TestCase):
         b = ed.EngineDescriptor.from_registry_row({"digest": DIGEST, "ref": "harbor/sandbox", "source": "builtin"})
         self.assertEqual(b.kind, "loader")
 
+    def test_to_k8s_resources(self):
+        d = self._llm()   # resources: gpu=1, ram_gb=24
+        r = ed.to_k8s_resources(d)
+        self.assertEqual(r["limits"]["memory"], "24Gi")
+        self.assertEqual(r["limits"]["nvidia.com/gpu"], "1")
+        c = ed.EngineDescriptor(id="c", oci="harbor/c@" + DIGEST, kind="loader",
+                                artifact_kinds=["pickle"], capabilities={"gpu": False})
+        self.assertEqual(ed.to_k8s_resources(c), {})
+
+    def test_render_start(self):
+        d = ed.EngineDescriptor(id="v", oci="harbor/v@" + DIGEST, kind="llm",
+                                artifact_kinds=["llm-safetensors"],
+                                runtime={"start": "python -m srv --model {{model}} --port 8000"})
+        argv = ed.render_start(d, "/model")
+        self.assertEqual(argv[0], "/bin/sh")
+        self.assertIn("--model /model", argv[-1])
+        self.assertIsNone(ed.render_start(ed.EngineDescriptor(id="x", oci="harbor/x@" + DIGEST,
+                                                              kind="llm", artifact_kinds=["gguf"]), "/model"))
+
     def test_roundtrip(self):
         d = self._llm()
         self.assertEqual(ed.EngineDescriptor.from_dict(d.to_dict()).to_dict(), d.to_dict())

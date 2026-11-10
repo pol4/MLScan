@@ -29,7 +29,7 @@
 | `mlscan-ui` (oauth2-proxy, Keycloak OIDC) | 1/1, ingress → 302 Keycloak |
 | `sinkhole` (sandbox) | 1/1 |
 | Ingress + TLS (`platform-ca`) | `mlscan.platform.rtx.local`, `mlscan-api.platform.rtx.local` |
-| Services image | `harbor.platform.rtx.local/mlscan/services@sha256:018910fd…dd71` (BuildKit) |
+| Services image | `harbor.platform.rtx.local/mlscan/services@sha256:c793f2c5…377b` (BuildKit) |
 | Sandbox image | `harbor.platform.rtx.local/mlscan/sandbox@sha256:cc0f6ef7…bd31` (BuildKit) |
 | Sandbox subnet | `mlscan-sandbox` 10.99.0.0/24, `natOutgoing:false` |
 | Isolation gate (Phase 5.5) | **PASSED** (`isolation_fail=0`, поды на 10.99.x) |
@@ -143,6 +143,11 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   (`{testpack meta, steps, cases}`) в S3 и передаёт Job'у `TESTPACK_URL`; probe читает пакет (фолбэк —
   `PROMPTS_URL`), прогоняет кейсы и постит ответы; в подписанной аттестации вердикта фиксируется
   `predicate.versions.testpack`. Проверено: прогон 726 вопросов → `Needs review`, testpack `llm-basic`.
+- **v4 E4 (движок из дескриптора)**: `EngineDescriptor` задаёт образ/команду (`runtime.start` с `{{model}}`)
+  и ресурсы (`ram_gb/cpu/gpu` → k8s limits); Job строится из дескриптора (аддитивно — без дескриптора
+  поведение прежнее). Регистрация дескрипторов и «план» используют **фактические** RuntimeClass/GPU:
+  пример — `engine-sglang:v0.5.9` регистрируется с ресурсами, план отдаёт `kata`, `degraded=true`
+  (пока нет `kata-gpu`).
 - **SGLang v0.5.9 на sm_75 (Quadro RTX 4000) — работает через runtime-shim**:
   upstream `sgl_kernel` собран только для sm_80+ (`RMSNorm ... no kernel image`).
   Добавлен ConfigMap `sgl-shim` (namespace `t-mlscan-sandbox`) с `sitecustomize.py`,
@@ -184,7 +189,7 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - Удалён неиспользуемый `mlscan-oidc` ExternalSecret; deception-субконфиги
   (`-aws/-ssh/-kube`) смонтированы в sandbox Job.
 - Gate: детерминированный, IP-based, host-IP проверки — INFO.
-- Код сервисов запечён в immutable-образ `harbor.platform.rtx.local/mlscan/services@sha256:018910fd…dd71`;
+- Код сервисов запечён в immutable-образ `harbor.platform.rtx.local/mlscan/services@sha256:c793f2c5…377b`;
   код-ConfigMap'ы удалены, `gen-configmaps.sh` создаёт только данные.
 - Сборка — платформенный **BuildKit** (`buildkitd.pf-ci.svc:1234`): Dockerfiles в
   `deploy/tenant/images/{services,sandbox}/Dockerfile`, Job в `pf-ci` через

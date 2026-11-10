@@ -204,3 +204,39 @@ def runtime_class_is_safe(runtime_class: str) -> bool:
     if rc in HOST_FORBIDDEN_CLASSES:
         return False
     return rc in KATA_CLASSES
+
+
+def to_k8s_resources(desc: EngineDescriptor) -> dict:
+    """Сконвертировать профиль ресурсов дескриптора в k8s `resources` (limits).
+
+    Поддерживаются `ram_gb`→`memory`, `cpu`→`cpu`, `gpu`→`nvidia.com/gpu`. Пустой профиль — `{}`.
+    """
+    r = desc.resource_profile()
+    lim: dict[str, str] = {}
+    ram = r.get("ram_gb")
+    if ram:
+        try:
+            lim["memory"] = f"{int(ram)}Gi"
+        except (TypeError, ValueError):
+            pass
+    cpu = r.get("cpu")
+    if cpu:
+        lim["cpu"] = str(cpu)
+    gpu = r.get("gpu")
+    if gpu:
+        try:
+            lim["nvidia.com/gpu"] = str(int(gpu))
+        except (TypeError, ValueError):
+            pass
+    return {"limits": lim} if lim else {}
+
+
+def render_start(desc: EngineDescriptor, model_path: str) -> list | None:
+    """Команда запуска движка из дескриптора (`runtime.start`) с подстановкой `{{model}}`.
+
+    Возвращает argv для k8s `command` (через `/bin/sh -lc`), либо `None`, если start не задан.
+    """
+    start = (desc.runtime or {}).get("start")
+    if not start:
+        return None
+    return ["/bin/sh", "-lc", str(start).replace("{{model}}", model_path or "/model")]

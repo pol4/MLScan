@@ -3009,6 +3009,11 @@ class Handler(BaseHTTPRequestHandler):
                 testpack_meta = json.dumps(meta, ensure_ascii=False)
         except Exception:  # noqa: BLE001
             testpack_url, testpack_meta = "", ""
+        try:
+            _desc = _v4_engine_descriptor_for(engine)
+            engine_descriptor = _desc.to_dict() if _desc is not None else None
+        except Exception:  # noqa: BLE001
+            engine_descriptor = None
         job = v3llmenv.make_llama_test_job(
             bundle_id=bundle_id, engine_image=engine, model_url=url, model_sha256=model_sha,
             model_key=("" if mfiles else key), model_files=mfiles,
@@ -3022,7 +3027,8 @@ class Handler(BaseHTTPRequestHandler):
                       "reference": c.get("reference") or "", "severity": c.get("severity") or "",
                       "tolerance": c.get("tolerance")} for c in cases],
             prompts_url=(prompts_url if not testpack_url else ""),
-            testpack_url=testpack_url, testpack_meta=testpack_meta, sgl_shim=LLM_SGLANG_SM75,
+            testpack_url=testpack_url, testpack_meta=testpack_meta,
+            engine_descriptor=engine_descriptor, sgl_shim=LLM_SGLANG_SM75,
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
             scan_id=scan_id, namespace=LLM_TEST_NS, gpu=gpu,
             runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),
@@ -3326,8 +3332,8 @@ class Handler(BaseHTTPRequestHandler):
                 "body=EXCLUDED.body, created=now()")
         plan = {}
         try:
-            plan = v4ed.plan_runtime_class(d, available=["kata", "kata-btf", "kata-gpu"],
-                                           gpu_available=d.needs_gpu())
+            plan = v4ed.plan_runtime_class(d, available=_v4_available_runtime_classes(),
+                                           gpu_available=bool(LLM_TEST_GPU))
         except Exception as exc:  # noqa: BLE001
             plan = {"runtime_class": "", "degraded": True, "reason": str(exc)}
         return self._json(201, {"descriptor": d.to_dict(), "plan": plan})
