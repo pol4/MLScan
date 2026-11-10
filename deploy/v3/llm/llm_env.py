@@ -202,10 +202,13 @@ _PROBE_SRC = (
     "for _ in range(int(os.environ.get('ENGINE_WAIT','180'))):\n"
     "    try: op.open(base+'/models',timeout=3); break\n"
     "    except Exception: time.sleep(2)\n"
+    "tu=os.environ.get('TESTPACK_URL','')\n"
+    "tp=json.loads(op.open(tu,timeout=60).read()) if tu else None\n"
     "pf=os.environ.get('PROMPTS_FILE','')\n"
     "pu=os.environ.get('PROMPTS_URL','')\n"
-    "cases=(json.loads(op.open(pu,timeout=60).read()) if pu else\n"
-    "       (json.load(open(pf)) if pf else json.loads(os.environ['PROMPTS_JSON'])))['cases']\n"
+    "cases=(tp['cases'] if tp else\n"
+    "       (json.loads(op.open(pu,timeout=60).read()) if pu else\n"
+    "        (json.load(open(pf)) if pf else json.loads(os.environ['PROMPTS_JSON'])))['cases'])\n"
     "resp={}; toks=0; ok=0; t0=time.monotonic()\n"
     "for c in cases:\n"
     "    body=json.dumps({'model':'m','messages':[{'role':'user','content':c['prompt']}],\n"
@@ -226,6 +229,7 @@ _PROBE_SRC = (
     "tok_s={toks/max(dt,0.1):.1f}',flush=True)\n"
     "payload={'version':os.environ.get('PROMPT_SET',''),'scan_id':os.environ.get('SCAN_ID',''),\n"
     "         'bundle_id':os.environ.get('BUNDLE_ID',''),'engine_image':os.environ.get('ENGINE_IMAGE',''),\n"
+    "         'testpack':(json.loads(os.environ['TESTPACK_META']) if os.environ.get('TESTPACK_META') else None),\n"
     "         'metrics':{'questions':len(cases),'completion_tokens':toks,'secs':round(dt,1)},\n"
     "         'responses':resp}\n"
     "req=urllib.request.Request(os.environ['TESTING_URL']+'/llm/score',data=json.dumps(payload).encode(),\n"
@@ -245,7 +249,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         ebpf_image: str = "", model_key: str = "", s3_env: dict | None = None,
                         s3_client_configmap: str = "mlscan-s3client",
                         model_files: list | None = None, prompts_configmap: str = "",
-                        prompts_url: str = "", sgl_shim: bool = False) -> dict:
+                        prompts_url: str = "", sgl_shim: bool = False,
+                        testpack_url: str = "", testpack_meta: str = "") -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -327,9 +332,11 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
          "securityContext": dict(hardened, readOnlyRootFilesystem=False),
          "volumeMounts": ([{"name": "prompts", "mountPath": "/prompts", "readOnly": True}]
                           if prompts_configmap else []),
-         "env": (([{"name": "PROMPTS_URL", "value": prompts_url}] if prompts_url else
-                  ([{"name": "PROMPTS_FILE", "value": "/prompts/prompts.json"}] if prompts_configmap else
-                   [{"name": "PROMPTS_JSON", "value": json_dumps({"cases": prompts or []})}]))
+         "env": (([{"name": "TESTPACK_URL", "value": testpack_url},
+                   {"name": "TESTPACK_META", "value": testpack_meta}] if testpack_url else
+                  ([{"name": "PROMPTS_URL", "value": prompts_url}] if prompts_url else
+                   ([{"name": "PROMPTS_FILE", "value": "/prompts/prompts.json"}] if prompts_configmap else
+                    [{"name": "PROMPTS_JSON", "value": json_dumps({"cases": prompts or []})}])))
                  + [{"name": "PROMPT_SET", "value": prompt_set},
                  {"name": "BUNDLE_ID", "value": bundle_id},
                  {"name": "SCAN_ID", "value": scan_id or ("bundle-test-" + bundle_id)},

@@ -2689,7 +2689,8 @@ class Handler(BaseHTTPRequestHandler):
                     pass_rate=float(agg.get("pass_rate") or 0),
                     coverage={"complete": True, "questions": int(agg.get("total") or 0)},
                     metrics=dict(agg, **(body.get("metrics") or {})),
-                    versions={"prompt_set": ver, "engine": body.get("engine_image") or ""},
+                    versions={"prompt_set": ver, "engine": body.get("engine_image") or "",
+                              "testpack": (body.get("testpack") or {}).get("id", "")},
                     engine_image=body.get("engine_image") or "")
                 agg.update({"bundle_id": bundle_id, "bundle_verdict": verdict,
                             "bundle_action": out["action"], "attestation_digest": out["attestation_digest"]})
@@ -2982,6 +2983,32 @@ class Handler(BaseHTTPRequestHandler):
              "tolerance": c.get("tolerance")} for c in cases]}, ensure_ascii=False).encode("utf-8")
         client.put(prompts_key, prompts_body, content_type="application/json")
         prompts_url = client.presign("GET", prompts_key, expires=6 * 3600)
+        # v4: выбрать TestPack по (вид артефакта, движок) и материализовать его данными прогона
+        testpack_url, testpack_meta = "", ""
+        try:
+            if v4testpack is not None:
+                kind = _v4_artifact_kind(model_sha, engine)
+                packs = v4testpack.select_packs([it["pack"] for it in self._v4_all_packs()],
+                                                artifact_kind=kind, engine=engine)
+                pack = packs[0] if packs else {
+                    "id": "llm-active", "version": 1,
+                    "steps": [{"type": "load"}, {"type": "invoke", "dataset": "active"},
+                              {"type": "assert", "over": ["responses"]}]}
+                try:
+                    pack = v4testpack.compile_pack(pack)
+                except ValueError:
+                    pack = {"id": "llm-active", "version": 1, "hash": ""}
+                meta = {"id": pack.get("id"), "version": pack.get("version"), "hash": pack.get("hash")}
+                env_pack = {"testpack": meta,
+                            "steps": [s.get("type") for s in pack.get("steps", [])],
+                            "cases": cases}
+                tp_key = f"tmp/testpack/{bundle_id}.json"
+                client.put(tp_key, json.dumps(env_pack, ensure_ascii=False).encode("utf-8"),
+                           content_type="application/json")
+                testpack_url = client.presign("GET", tp_key, expires=6 * 3600)
+                testpack_meta = json.dumps(meta, ensure_ascii=False)
+        except Exception:  # noqa: BLE001
+            testpack_url, testpack_meta = "", ""
         job = v3llmenv.make_llama_test_job(
             bundle_id=bundle_id, engine_image=engine, model_url=url, model_sha256=model_sha,
             model_key=("" if mfiles else key), model_files=mfiles,
@@ -2994,7 +3021,8 @@ class Handler(BaseHTTPRequestHandler):
             prompts=[{"id": c["id"], "prompt": c["prompt"], "criticality": c.get("criticality"),
                       "reference": c.get("reference") or "", "severity": c.get("severity") or "",
                       "tolerance": c.get("tolerance")} for c in cases],
-            prompts_url=prompts_url, sgl_shim=LLM_SGLANG_SM75,
+            prompts_url=(prompts_url if not testpack_url else ""),
+            testpack_url=testpack_url, testpack_meta=testpack_meta, sgl_shim=LLM_SGLANG_SM75,
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
             scan_id=scan_id, namespace=LLM_TEST_NS, gpu=gpu,
             runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),
