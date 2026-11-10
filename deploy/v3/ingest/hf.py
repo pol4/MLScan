@@ -22,7 +22,13 @@ def parse_quantization(filename: str) -> str:
 def select_files(files: list[str], *, quantization: str = "", prefer_ext=(".gguf",)) -> list[str]:
     """Выбрать файлы: при заданной квантизации — только matching; иначе GGUF по приоритету квантизаций."""
     quant = (quantization or "").upper()
-    cand = [f for f in files or [] if f.lower().endswith(tuple(prefer_ext))] or list(files or [])
+    base = [f for f in files or [] if not (
+        f.lower().startswith("license") or f.lower().startswith("readme")
+        or f.lower().startswith(".github/") or f.lower() in (".gitattributes", ".gitignore")
+        or f.lower().endswith(".md"))]
+    weight_ext = (".gguf", ".safetensors", ".bin", ".onnx", ".pt", ".pth")
+    weights = [f for f in base if f.lower().endswith(weight_ext)]
+    cand = [f for f in base if f.lower().endswith(tuple(prefer_ext))] or weights or base
     if quant:
         sel = [f for f in cand if parse_quantization(f) == quant]
         return sorted(sel) or sorted(cand)

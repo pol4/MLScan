@@ -87,7 +87,7 @@ if S3_ENABLED:
     _s3_internal = S3(S3_ENDPOINT, os.environ["S3_ACCESS_KEY"], os.environ["S3_SECRET_KEY"],
                       region=os.environ.get("S3_REGION", "garage"), bucket=os.environ["S3_BUCKET"],
                       timeout=600, public_endpoint=os.environ.get(
-                          "S3_INTERNAL_ENDPOINT", "http://garage.mlscan-data.svc:3900"))
+                          "S3_INTERNAL_ENDPOINT", S3_ENDPOINT))
 
 def _s3_client_for(internal: bool):
     """S3-клиент для выдачи presigned-URL: внутренний адрес для клиентов внутри кластера.
@@ -134,6 +134,11 @@ LLM_TEST_NS = os.environ.get("LLM_TEST_NS", "mlscan-build")
 LLM_TEST_RUNTIME_CLASS = os.environ.get("LLM_TEST_RUNTIME_CLASS", "nvidia")
 LLM_TEST_GPU = os.environ.get("LLM_TEST_GPU", "1") == "1"
 LLM_TEST_MAX_TOKENS = int(os.environ.get("LLM_TEST_MAX_TOKENS", "256"))
+LLM_TEST_RAM_GB = int(os.environ.get("LLM_TEST_RAM_GB", "24"))
+LLM_TEST_MAX_QUESTIONS = int(os.environ.get("LLM_TEST_MAX_QUESTIONS", "0"))  # 0 = все вопросы набора
+LLM_GPU_COMPUTE_CAP = float(os.environ.get("LLM_GPU_COMPUTE_CAP", "7.5"))  # sm_75 (Quadro RTX 4000)
+LLM_SGLANG_SM75 = os.environ.get("LLM_SGLANG_SM75", "0") == "1"  # torch-shim для SGLang на sm_75
+LLM_TEST_DISK_GB = int(os.environ.get("LLM_TEST_DISK_GB", "40"))
 LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 IMAGES_REQUIRE_SIGNED = os.environ.get("IMAGES_REQUIRE_SIGNED", "0") == "1"   # B4-lite: политика подписи
 LLM_TEST_EBPF = os.environ.get("LLM_TEST_EBPF", "0") == "1"      # B1: in-guest eBPF-агент в job'е теста
@@ -392,6 +397,20 @@ def _sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+def _k8s_delete_job_async(namespace: str, name: str, delay: float = 5.0) -> None:
+    """Удалить Job теста после вердикта: движок не должен держать GPU до TTL."""
+    def _del():
+        try:
+            k8s("DELETE", f"/apis/batch/v1/namespaces/{namespace or 'mlscan-build'}/jobs/{name}"
+                         "?propagationPolicy=Background")
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        threading.Timer(delay, _del).start()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _hf_key(repo: str, fname: str) -> str:
     """Безопасный ключ объекта S3 для файла HF (без выхода за префикс hf/<repo>/)."""
     parts = [p for p in str(repo or "").split("/") if p]
@@ -402,6 +421,36 @@ def _hf_key(repo: str, fname: str) -> str:
     if bad:
         raise RuntimeError(f"unsafe HF object name: {repo!r}/{fname!r}")
     return "hf/" + "/".join(parts + [name])
+
+
+def _hf_repo_of_key(s3_key: str) -> str:
+    """HF-репозиторий из S3-ключа hf/<org>/<name>/<file> (иначе '')."""
+    parts = [p for p in str(s3_key or "").split("/") if p]
+    if len(parts) >= 4 and parts[0] == "hf":
+        return "/".join(parts[1:-1])
+    return ""
+
+
+def _hf_repo_files(repo: str) -> list[str]:
+    """Файлы HF-репозитория для каталога модели (без документации/лицензий), дедуп по basename."""
+    try:
+        meta = json.loads(_HF_OPENER.open(f"{HF_BASE_URL}/api/models/{repo}", timeout=30).read() or b"{}")
+        files = [f.get("rfilename") for f in (meta.get("siblings") or []) if f.get("rfilename")]
+    except Exception:  # noqa: BLE001
+        return []
+    files = [f for f in files if not f.lower().endswith((".md", ".png", ".jpg", ".jpeg", ".gif", ".svg"))]
+    files = [f for f in files if not (
+        f.lower().startswith((".github/", "license", "readme", "docs/"))
+        or f.lower() in (".gitattributes", ".gitignore"))]
+    seen, uniq = set(), []
+    for f in files:
+        b = os.path.basename(str(f))
+        if b and b not in seen:
+            seen.add(b)
+            uniq.append(f)
+    return uniq
+
+
 HF_MOCK = os.environ.get("HF_MOCK", "0") == "1"
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 # Ключ для обратимого хранения per-tenant HF-токена (P6 per-tenant KMS).
@@ -639,7 +688,11 @@ def _hf_download_worker(dl_id: str) -> None:
                 sha = _sha256_file(dest)
                 key = _hf_key(repo, fname)
                 with open(dest, "rb") as fh:
-                    _s3.put_stream_multipart(key, fh, size, sha, part_size=1024 * 1024, workers=4)
+                    if size < 5 * 1024 * 1024:
+                        _s3.put_stream(key, fh, size, sha)
+                    else:
+                        _s3.put_stream_multipart(key, fh, size, sha,
+                                                 part_size=8 * 1024 * 1024, workers=4)
             _hf_egress_log(tenant, repo, fname, egress_url, size, "ok")
             done += size
             db_exec("UPDATE hf_downloads SET bytes_done=" + str(done) + ", updated=now() WHERE id=" + _lit(dl_id))
@@ -649,22 +702,43 @@ def _hf_download_worker(dl_id: str) -> None:
             fl = json.loads((rows2[0][0] if rows2 else "[]") or "[]")
             eng = (rows2[0][1] if rows2 else "") or ""
             if fl:
-                f0 = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(fl[0])}")
+                main = next((x for x in fl if x.lower().endswith((".safetensors", ".bin", ".gguf", ".onnx"))), fl[0])
+                f0 = os.path.join(DATA_TMP, f"hf-{dl_id}-{os.path.basename(main)}")
                 if os.path.exists(f0):
                     msha = _sha256_file(f0)
                     db_exec("UPDATE hf_downloads SET model_sha256=" + _lit(msha) + ", updated=now() WHERE id=" + _lit(dl_id))
                     # B1: модель с HF должна быть в хранилище как артефакт (presigned URL для теста bundle)
                     if DB_ENABLED:
                         try:
-                            key0 = _hf_key(repo, os.path.basename(fl[0]))
-                            fmt0 = "gguf" if str(fl[0]).lower().endswith(".gguf") else "bin"
+                            er = db_query("SELECT ref FROM registry_images WHERE digest=" + _lit(eng)) if eng else []
+                            eng_ref = ((er[0][0] if er else "") or eng).lower()
+                            want_dir = ("vllm" in eng_ref) or ("sglang" in eng_ref)
+                            key0 = _hf_key(repo, os.path.basename(main))
+                            ext0 = (os.path.splitext(str(main))[1].lstrip(".").lower() or "bin")
+                            repo_base = os.path.basename(str(repo).rstrip("/")) or os.path.basename(main)
+                            prefix = "hf/" + "/".join([p for p in str(repo or "").split("/") if p]) + "/"
+                            is_dir = want_dir and len(fl) > 1
+                            if is_dir:
+                                artifact_name = repo_base
+                                s3key_store = prefix
+                                metadata = json.dumps({"dir": True, "prefix": prefix,
+                                                       "files": [os.path.basename(x) for x in fl]},
+                                                      ensure_ascii=False)
+                                size_val = done
+                            else:
+                                artifact_name = repo_base + "." + ext0
+                                s3key_store = key0
+                                metadata = "{}"
+                                size_val = os.path.getsize(f0)
+                            fmt0 = ext0
                             # upsert: чиним s3_key/format при повторной загрузке/восстановлении из дампа
-                            db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key,source) VALUES ("
-                                    + _lit(msha) + "," + str(os.path.getsize(f0)) + "," + _lit(fmt0) + ","
-                                    + _lit(os.path.basename(fl[0])) + "," + _lit(key0) + ","
-                                    + _lit("hf-dataset" if is_dataset else "hf") + ") "
+                            db_exec("INSERT INTO artifacts(sha256,size,format,filename,s3_key,source,metadata) VALUES ("
+                                    + _lit(msha) + "," + str(size_val) + "," + _lit(fmt0) + ","
+                                    + _lit(artifact_name) + "," + _lit(s3key_store) + ","
+                                    + _lit("hf") + "," + _lit(metadata) + ") "
                                     "ON CONFLICT (sha256) DO UPDATE SET size=EXCLUDED.size, "
-                                    "format=EXCLUDED.format, filename=EXCLUDED.filename, s3_key=EXCLUDED.s3_key")
+                                    "format=EXCLUDED.format, filename=EXCLUDED.filename, s3_key=EXCLUDED.s3_key, "
+                                    "metadata=EXCLUDED.metadata")
                         except Exception:  # noqa: BLE001
                             pass
                     if eng and v3binding is not None:
@@ -1880,6 +1954,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._v3_metrics()
         if u.path == "/v3/slo":
             return self._v3_slo()
+        if u.path == "/prompt-sets":
+            return self._prompt_sets_list()
         if u.path == "/prompt-sets/active":
             return self._prompt_sets_active()
         if u.path.startswith("/llm/events/"):
@@ -1939,6 +2015,7 @@ class Handler(BaseHTTPRequestHandler):
         name = os.path.basename((query.get("name", ["sample.pkl"])[0]) or "sample.pkl")
         fmt = query.get("fmt", ["pickle"])[0]
         kind = query.get("kind", ["model"])[0]
+        scan = query.get("scan", ["1"])[0] != "0"
         fam_hint = query.get("family", [""])[0]
         n = int(self.headers.get("Content-Length", "0") or "0")
         if n <= 0:
@@ -2034,11 +2111,18 @@ class Handler(BaseHTTPRequestHandler):
                  bool(rec.get("s3_multipart")))
         if prof is not None:
             _upsert_model_profile(sha, prof, "manual" if fam_hint else "auto")
-        _tid = _enqueue_scan_task(rec, getattr(self, "_subject", ""))
-        save_scan(rec)
-        threading.Thread(target=_run_scan_with_task, args=(scan_id, name, fmt, local, _tid),
-                         daemon=True).start()
-        return self._json(202, {"scan_id": scan_id, "state": "queued", "size": got,
+        if scan:
+            _tid = _enqueue_scan_task(rec, getattr(self, "_subject", ""))
+            save_scan(rec)
+            threading.Thread(target=_run_scan_with_task, args=(scan_id, name, fmt, local, _tid),
+                             daemon=True).start()
+        else:
+            rec["state"] = "uploaded"
+            rec["stage"] = "uploaded"
+            save_scan(rec)
+            if DB_ENABLED:
+                db_exec("UPDATE scans SET status='uploaded', stage='uploaded' WHERE scan_id=" + _lit(scan_id))
+        return self._json(202, {"scan_id": scan_id, "state": "queued" if scan else "uploaded", "size": got,
                                 "sha256": sha, "s3_key": rec.get("s3_key"),
                                 "multipart": bool(rec.get("s3_multipart")),
                                 "parts": rec.get("s3_parts"), "kind": rec.get("kind", "model"),
@@ -2323,6 +2407,56 @@ class Handler(BaseHTTPRequestHandler):
                                 "warnings": json.loads(r[3] or "[]"),
                                 "errors": json.loads(r[4] or "[]")})
 
+    def _prompt_sets_list(self) -> None:
+        """L3: история загруженных наборов тестов (XLSX)."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT version,name,cases,warnings,errors,active,created "
+                        "FROM prompt_sets ORDER BY created DESC")
+        out = []
+        for r in rows or []:
+            def _lst(v):
+                try:
+                    x = json.loads(v or "[]")
+                    return x if isinstance(x, list) else []
+                except Exception:  # noqa: BLE001
+                    return []
+            wl, el = _lst(r[3]), _lst(r[4])
+            out.append({
+                "version": r[0],
+                "name": r[1] or "",
+                "cases": len(_lst(r[2])),
+                "warnings": len(wl),
+                "errors": len(el),
+                "warning_list": [str(x) for x in wl],
+                "error_list": [str(x) for x in el],
+                "active": bool(r[5]),
+                "created": str(r[6]) if r[6] else "",
+            })
+        return self._json(200, {"prompt_sets": out})
+
+    def _prompt_sets_activate(self) -> None:
+        """L3: выбрать ранее загруженный набор тестов активным."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        ver = (body.get("version") or "").strip()
+        if not ver:
+            return self._json(400, {"error": "version обязателен"})
+        rows = db_query("SELECT version FROM prompt_sets WHERE version=" + _lit(ver))
+        if not rows:
+            return self._json(404, {"error": "набор не найден"})
+        try:
+            db_exec("UPDATE prompt_sets SET active=false WHERE active")
+            db_exec("UPDATE prompt_sets SET active=true WHERE version=" + _lit(ver))
+        except Exception as exc:  # noqa: BLE001
+            return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
+        return self._json(200, {"ok": True, "version": ver})
+
     def _llm_score(self, run_token: str = "") -> None:
         """L3: оценка ответов (правила; опц. judge) с допуском по критичности + агрегация.
 
@@ -2383,6 +2517,23 @@ class Handler(BaseHTTPRequestHandler):
                 if DB_ENABLED:
                     db_exec("UPDATE bundle_tests SET status='done', error='', updated=now() WHERE bundle_id="
                             + _lit(bundle_id))
+                    try:      # освобождаем GPU: удаляем Job после доставки результата probe
+                        jr = db_query("SELECT job,namespace FROM bundle_tests WHERE bundle_id=" + _lit(bundle_id))
+                        if jr and jr[0][0]:
+                            _k8s_delete_job_async(jr[0][1] or LLM_TEST_NS, jr[0][0])
+                    except Exception:  # noqa: BLE001
+                        pass
+                    # Вердикт инференса показываем и в строке артефакта (последний скан модели).
+                    try:
+                        mr = db_query("SELECT model_sha256 FROM bundles WHERE bundle_id=" + _lit(bundle_id))
+                        msha = (mr[0][0] if mr else "") or ""
+                        if msha:
+                            db_exec("UPDATE scans SET verdict=" + _lit(verdict) + ", status='done', "
+                                    "finished_at=now() WHERE id=(SELECT s.id FROM scans s JOIN artifacts a "
+                                    "ON a.id=s.artifact_id WHERE a.sha256=" + _lit(msha)
+                                    + " ORDER BY s.created_at DESC LIMIT 1)")
+                    except Exception:  # noqa: BLE001
+                        pass
             except Exception as exc:  # noqa: BLE001
                 if DB_ENABLED:
                     db_exec("UPDATE bundle_tests SET status='failed', error="
@@ -2468,28 +2619,38 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return bool(rows)
 
-    def _bundle_model_key(self, sha: str) -> tuple[str, str]:
-        """Ключ объекта S3 и имя файла модели по sha256 (таблица artifacts)."""
+    def _bundle_model_key(self, sha: str) -> tuple[str, str, dict]:
+        """Ключ S3, имя файла и metadata (dir-манифест) модели по sha256 (таблица artifacts)."""
         if not (DB_ENABLED and sha):
-            return "", ""
-        rows = db_query("SELECT s3_key,filename FROM artifacts WHERE sha256=" + _lit(sha))
+            return "", "", {}
+        rows = db_query("SELECT s3_key,filename,metadata FROM artifacts WHERE sha256=" + _lit(sha))
         if not rows:
-            return "", ""
-        return (rows[0][0] or ""), (rows[0][1] or "")
+            return "", "", {}
+        raw = rows[0][2]
+        if isinstance(raw, dict):
+            meta = raw
+        else:
+            try:
+                meta = json.loads(raw or "{}")
+            except Exception:  # noqa: BLE001
+                meta = {}
+        return (rows[0][0] or ""), (rows[0][1] or ""), meta
 
-    def _prompt_cases(self, prompt_set: str, limit: int = 200) -> tuple[list, str]:
+    def _prompt_cases(self, prompt_set: str, limit: int = 0) -> tuple[list, str]:
         """Кейсы набора вопросов для job'а теста: (кейсы, фактическая версия набора).
 
+        limit<=0 — брать весь набор (по умолчанию); иначе ограничить число вопросов.
         Если в bundle указан набор без кейсов (например, дефолтный ps-v9), берём активный набор.
         """
         if not DB_ENABLED:
             return [], ""
         keys = ("id", "domain", "prompt", "reference", "criticality", "severity", "weight", "tolerance")
         cols = ("id,domain,prompt,reference,criticality,severity,weight,tolerance")
+        lim = f" LIMIT {int(limit)}" if int(limit) > 0 else ""
 
         def by_version(ver: str) -> list:
             rows = db_query(f"SELECT {cols} FROM llm_prompts WHERE prompt_set=" + _lit(ver)
-                            + f" ORDER BY criticality DESC, id LIMIT {int(limit)}")
+                            + f" ORDER BY criticality DESC, id{lim}")
             return [dict(zip(keys, r)) for r in (rows or [])]
 
         if prompt_set:
@@ -2498,7 +2659,7 @@ class Handler(BaseHTTPRequestHandler):
                 return cases, prompt_set
         rows = db_query("SELECT p.id,p.domain,p.prompt,p.reference,p.criticality,p.severity,p.weight,"
                         "p.tolerance,p.prompt_set FROM llm_prompts p JOIN prompt_sets s ON s.version=p.prompt_set "
-                        f"WHERE s.active ORDER BY p.criticality DESC, p.id LIMIT {int(limit)}")
+                        f"WHERE s.active ORDER BY p.criticality DESC, p.id{lim}")
         cases = [dict(zip(keys, r[:8])) for r in (rows or [])]
         ver = (rows[0][8] if rows else "")
         return cases, ver
@@ -2512,6 +2673,41 @@ class Handler(BaseHTTPRequestHandler):
             body = {}
         return self._bundle_test_start_core(bundle_id, body)
 
+    @staticmethod
+    def _engine_is_dir(engine: str) -> bool:
+        """vLLM/SGLang грузят каталог модели, а не одиночный файл."""
+        e = (engine or "").lower()
+        return ("vllm" in e) or ("sglang" in e)
+
+    def _hf_prepare_dir(self, repo: str, engine: str) -> str:
+        """Поставить в очередь догрузку полного каталога HF-модели; вернуть id загрузки."""
+        files = _hf_repo_files(repo)
+        if not files:
+            return ""
+        dl_id = uuid.uuid4().hex
+        tenant = self._tenant()
+        db_exec("INSERT INTO hf_downloads(id,tenant,repo_id,revision,quantization,files,bytes_total,status,engine_image) "
+                "VALUES (" + ",".join([_lit(dl_id), _lit(tenant), _lit(repo), _lit("main"), _lit(""),
+                                       _lit(json.dumps(files, ensure_ascii=False)), "0", _lit("queued"),
+                                       _lit(engine)]) + ")")
+        return dl_id
+
+    def _prepare_and_start(self, bundle_id: str, body: dict, dl_id: str) -> None:
+        """Дождаться догрузки каталога модели и автоматически запустить тест bundle."""
+        try:
+            _hf_download_worker(dl_id)
+            rows = db_query("SELECT status,error FROM hf_downloads WHERE id=" + _lit(dl_id))
+            st = rows[0][0] if rows else ""
+            if st != "done":
+                raise RuntimeError((rows[0][1] if rows else "") or f"download {st or 'failed'}")
+            self._bundle_job_start(bundle_id, body)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(str(exc)[:300])
+                        + ", updated=now() WHERE bundle_id=" + _lit(bundle_id))
+            except Exception:  # noqa: BLE001
+                pass
+
     def _bundle_test_start_core(self, bundle_id: str, body: dict) -> None:
         if not DB_ENABLED:
             return self._json(503, {"error": "db disabled"})
@@ -2521,39 +2717,111 @@ class Handler(BaseHTTPRequestHandler):
                         + _lit(bundle_id))
         if not rows:
             return self._json(404, {"error": "bundle not found"})
-        engine, model_sha, prompt_set = rows[0][0], rows[0][1], rows[0][2] or ""
+        engine, model_sha = rows[0][0], rows[0][1]
+        gpu = body.get("gpu")
+        gpu = LLM_TEST_GPU if gpu is None else bool(gpu)
+        if ("sglang" in (engine or "").lower() and LLM_GPU_COMPUTE_CAP < 8.0
+                and not LLM_SGLANG_SM75
+                and "sm75" not in (engine or "").lower() and "v0.4" not in (engine or "").lower()):
+            return self._json(409, {"error": "SGLang требует GPU с compute capability >= 8.0 (Ampere+); "
+                                             f"текущий GPU — sm_{LLM_GPU_COMPUTE_CAP:.1f}. "
+                                             "Используйте vLLM или образ engine-sglang-*-sm75."})
         if not self._engine_ok(engine):
             return self._json(400, {"error": "движок bundle не найден в registry_images"})
-        key, fname = self._bundle_model_key(model_sha)
+        key, fname, meta = self._bundle_model_key(model_sha)
         if not key:
             return self._json(409, {"error": "модель bundle не найдена в хранилище (загрузите её через UI)",
                                     "model_sha256": model_sha})
-        cases, ver = self._prompt_cases(body.get("prompt_set") or prompt_set)
+        # Одиночный файл из HF + vLLM/SGLang: сначала догружаем весь каталог модели
+        # (config/tokenizer/все шарды) в S3, затем автоматически стартуем тест.
+        if (not meta.get("dir") and self._engine_is_dir(engine)
+                and not str(fname).lower().endswith(".gguf")):
+            repo = _hf_repo_of_key(key)
+            if not repo:
+                return self._json(409, {"error": "для vLLM/SGLang нужен каталог модели "
+                                                 "(config/tokenizer/веса); загрузите модель из HF"})
+            if repo:
+                dl_id = self._hf_prepare_dir(repo, engine)
+                if dl_id:
+                    run_token = secrets.token_hex(16)
+                    scan_id = "bundle-test-" + bundle_id[:16] + "-" + secrets.token_hex(4)
+                    db_exec("INSERT INTO bundle_tests(bundle_id,scan_id,job,namespace,status,run_token,gpu,error) VALUES ("
+                            f"{_lit(bundle_id)},{_lit(scan_id)},'','{LLM_TEST_NS}','preparing',"
+                            f"{_lit(run_token)},{'true' if gpu else 'false'},'') "
+                            "ON CONFLICT (bundle_id) DO UPDATE SET scan_id=EXCLUDED.scan_id, job='', "
+                            "namespace=EXCLUDED.namespace, status='preparing', run_token=EXCLUDED.run_token, "
+                            "gpu=EXCLUDED.gpu, error='', updated=now()")
+                    threading.Thread(target=self._prepare_and_start,
+                                     args=(bundle_id, dict(body), dl_id), daemon=True).start()
+                    return self._json(202, {"bundle_id": bundle_id, "status": "preparing",
+                                            "download_id": dl_id, "scan_id": scan_id,
+                                            "hint": "модель догружается полным каталогом; тест стартует автоматически"})
+        try:
+            out = self._bundle_job_start(bundle_id, body)
+        except RuntimeError as exc:
+            return self._json(409, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            return self._json(502, {"error": f"job: {type(exc).__name__}: {exc}"})
+        return self._json(202, out)
+
+    def _bundle_job_start(self, bundle_id: str, body: dict) -> dict:
+        """Создать Job теста bundle. Возвращает описание запуска; бросает RuntimeError при ошибке."""
+        rows = db_query("SELECT engine_image,model_sha256,prompt_set FROM bundles WHERE bundle_id="
+                        + _lit(bundle_id))
+        if not rows:
+            raise RuntimeError("bundle not found")
+        engine, model_sha, prompt_set = rows[0][0], rows[0][1], rows[0][2] or ""
+        key, fname, meta = self._bundle_model_key(model_sha)
+        if not key:
+            raise RuntimeError("модель bundle не найдена в хранилище")
+        gpu = body.get("gpu")
+        gpu = LLM_TEST_GPU if gpu is None else bool(gpu)
+        cases, ver = self._prompt_cases(body.get("prompt_set") or prompt_set,
+                                        int(body.get("limit") or LLM_TEST_MAX_QUESTIONS))
         if not cases:
-            return self._json(409, {"error": "набор вопросов пуст — загрузите XLSX (раздел «Загрузки»)"})
+            raise RuntimeError("набор вопросов пуст — загрузите XLSX (раздел «Загрузки»)")
         client = _s3_internal or _s3
         if client is None:
-            return self._json(503, {"error": "s3 недоступен (нужен presigned URL модели)"})
-        url = client.presign("GET", key, expires=6 * 3600)   # внутренний адрес S3 для job'а
+            raise RuntimeError("s3 недоступен (нужен presigned URL модели)")
+        # Многофайловая модель (vLLM/SGLang): манифест presigned-URL всех файлов каталога.
+        mfiles = None
+        if meta.get("dir") and meta.get("files"):
+            prefix = meta.get("prefix") or key
+            mfiles = [{"url": client.presign("GET", prefix + os.path.basename(str(x)), expires=6 * 3600),
+                       "dest": os.path.basename(str(x))} for x in meta["files"]]
+        url = "" if mfiles else client.presign("GET", key, expires=6 * 3600)   # внутренний адрес S3 для job'а
         run_token = secrets.token_hex(16)
         # Уникальный scan_id на каждый прогон: иначе события/находки eBPF разных тестов одного
         # bundle накапливались под одним ключом и смешивались в отчёте.
         scan_id = "bundle-test-" + bundle_id[:16] + "-" + secrets.token_hex(4)
+        # Набор вопросов может быть большим (сотни кейсов): кладём его в S3 и отдаём
+        # job'у presigned-URL (env/ConfigMap имеют жёсткие лимиты размера).
+        prompts_key = f"tmp/prompts/{bundle_id}.json"
+        prompts_body = json.dumps({"cases": [
+            {"id": c["id"], "prompt": c["prompt"], "criticality": c.get("criticality"),
+             "reference": c.get("reference") or "", "severity": c.get("severity") or "",
+             "tolerance": c.get("tolerance")} for c in cases]}, ensure_ascii=False).encode("utf-8")
+        client.put(prompts_key, prompts_body, content_type="application/json")
+        prompts_url = client.presign("GET", prompts_key, expires=6 * 3600)
         job = v3llmenv.make_llama_test_job(
             bundle_id=bundle_id, engine_image=engine, model_url=url, model_sha256=model_sha,
-            model_key=key,
-            s3_env={"S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""),
+            model_key=("" if mfiles else key), model_files=mfiles,
+            s3_env=(None if mfiles else {
+                    "S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""),
                     "S3_ACCESS_KEY": os.environ.get("S3_ACCESS_KEY", ""),
                     "S3_SECRET_KEY": os.environ.get("S3_SECRET_KEY", ""),
                     "S3_BUCKET": os.environ.get("S3_BUCKET", ""),
-                    "S3_REGION": os.environ.get("S3_REGION", "garage")},
+                    "S3_REGION": os.environ.get("S3_REGION", "garage")}),
             prompts=[{"id": c["id"], "prompt": c["prompt"], "criticality": c.get("criticality"),
                       "reference": c.get("reference") or "", "severity": c.get("severity") or "",
                       "tolerance": c.get("tolerance")} for c in cases],
+            prompts_url=prompts_url, sgl_shim=LLM_SGLANG_SM75,
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
-            scan_id=scan_id, namespace=LLM_TEST_NS, gpu=bool(body.get("gpu", LLM_TEST_GPU)),
+            scan_id=scan_id, namespace=LLM_TEST_NS, gpu=gpu,
             runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),
             max_tokens=int(body.get("max_tokens") or LLM_TEST_MAX_TOKENS),
+            resources={"ram_gb": int(body.get("ram_gb") or LLM_TEST_RAM_GB),
+                       "disk_gb": int(body.get("disk_gb") or LLM_TEST_DISK_GB), "cpu": "4"},
             ebpf_agent=bool(body.get("ebpf", LLM_TEST_EBPF)))
         name = job["metadata"]["name"]
         try:
@@ -2561,10 +2829,7 @@ class Handler(BaseHTTPRequestHandler):
             k8s("DELETE", f"/apis/batch/v1/namespaces/{LLM_TEST_NS}/jobs/{name}?propagationPolicy=Background")
         except Exception:  # noqa: BLE001
             pass
-        try:
-            k8s("POST", f"/apis/batch/v1/namespaces/{LLM_TEST_NS}/jobs", job)
-        except Exception as exc:  # noqa: BLE001
-            return self._json(502, {"error": f"job: {type(exc).__name__}: {exc}"})
+        k8s("POST", f"/apis/batch/v1/namespaces/{LLM_TEST_NS}/jobs", job)
         if DB_ENABLED:      # чистая метрика за прогон: сбрасываем счётчик событий сенсора
             try:
                 db_exec("UPDATE bundle_tests SET sensor_events=0 WHERE bundle_id=" + _lit(bundle_id))
@@ -2572,14 +2837,14 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         db_exec("INSERT INTO bundle_tests(bundle_id,scan_id,job,namespace,status,run_token,gpu,error) VALUES ("
                 f"{_lit(bundle_id)},{_lit(scan_id)},{_lit(name)},{_lit(LLM_TEST_NS)},'running',"
-                f"{_lit(run_token)},{'true' if bool(body.get('gpu', LLM_TEST_GPU)) else 'false'},'') "
+                f"{_lit(run_token)},{'true' if gpu else 'false'},'') "
                 "ON CONFLICT (bundle_id) DO UPDATE SET scan_id=EXCLUDED.scan_id, job=EXCLUDED.job, "
                 "namespace=EXCLUDED.namespace, status='running', run_token=EXCLUDED.run_token, "
                 "gpu=EXCLUDED.gpu, error='', updated=now()")
-        return self._json(202, {"bundle_id": bundle_id, "job": name, "namespace": LLM_TEST_NS,
-                                "scan_id": scan_id, "status": "running", "questions": len(cases),
-                                "gpu": bool(body.get("gpu", LLM_TEST_GPU)),
-                                "hint": "по завершении job появится вердикт bundle (/bundles/<id>/verdict)"})
+        return {"bundle_id": bundle_id, "job": name, "namespace": LLM_TEST_NS,
+                "scan_id": scan_id, "status": "running", "questions": len(cases),
+                "gpu": gpu,
+                "hint": "по завершении job появится вердикт bundle (/bundles/<id>/verdict)"}
 
     def _bundle_test_get(self, bundle_id: str) -> None:
         """Статус теста bundle: фаза job + сохранённый вердикт (если тест завершён)."""
@@ -2841,11 +3106,29 @@ class Handler(BaseHTTPRequestHandler):
     def _images_list(self) -> None:
         if not DB_ENABLED:
             return self._json(503, {"error": "db disabled"})
+        try:
+            _builtin_engine()  # встроенный песочный движок всегда в списке
+        except Exception:  # noqa: BLE001
+            pass
         rows = db_query("SELECT digest,ref,source,size,status,"
                         "COALESCE(signature,''),COALESCE(sbom,'') FROM registry_images ORDER BY created DESC") or []
+
+        def _t(ref, source):
+            r = (ref or "").lower()
+            if source == BUILTIN_ENGINE_SOURCE:
+                return "pickle"
+            if "llama" in r or "vllm" in r or "sglang" in r:
+                return "llm"
+            if "onnx" in r:
+                return "onnx"
+            if "pickle" in r or "python" in r:
+                return "pickle"
+            return "other"
+
         return self._json(200, {"images": [{"digest": r[0], "ref": r[1], "source": r[2], "size": r[3],
                                             "status": r[4], "signed": bool((r[5] or "").strip()),
-                                            "sbom": bool((r[6] or "").strip())} for r in rows]})
+                                            "sbom": bool((r[6] or "").strip()),
+                                            "type": _t(r[1], r[2])} for r in rows]})
 
     @staticmethod
     def _to_digest(engine_image: str) -> str:
@@ -2957,7 +3240,7 @@ class Handler(BaseHTTPRequestHandler):
         if kind not in ("models", "datasets"):
             return self._json(400, {"error": "kind: models|datasets"})
         limit = max(1, min(100, int(body.get("limit") or 30)))
-        q: dict = {"limit": str(limit), "sort": body.get("sort") or "downloads", "direction": "-1"}
+        q: dict = {"limit": str(limit), "sort": body.get("sort") or "downloads", "direction": "-1", "full": "true"}
         if body.get("author"):
             q["author"] = body["author"]
         if body.get("task"):
@@ -2976,13 +3259,57 @@ class Handler(BaseHTTPRequestHandler):
                     req.add_header("Authorization", f"Bearer {tok}")
                 with _HF_OPENER.open(req, timeout=40) as r:
                     for it in (json.loads(r.read()) or []):
+                        tags = it.get("tags") or []
+                        st = it.get("safetensors") or {}
+                        params = int(st.get("total") or 0)
+                        fmt = next((t for t in tags if t in ("safetensors", "gguf", "onnx", "pytorch", "tensorflow")), "")
+                        quant = next((t for t in tags if str(t).upper() in
+                                      ("Q4_K_M", "Q5_K_M", "Q8_0", "F16", "Q4_0", "Q6_K", "Q2_K")), "")
+                        lib = it.get("library_name") or ""
+                        supported = []
+                        if lib:
+                            supported.append(lib)
+                        if "gguf" in tags:
+                            supported.append("llama.cpp")
+                        if "onnx" in tags:
+                            supported.append("onnxruntime")
+                        if "safetensors" in tags:
+                            supported.append("transformers")
+                        desc = (it.get("cardData") or {}).get("model_name") or it.get("pipeline_tag") or ""
                         items.append({"id": it.get("id") or it.get("modelId"),
                                       "downloads": it.get("downloads") or 0,
                                       "likes": it.get("likes") or 0,
-                                      "tags": (it.get("tags") or [])[:6],
-                                      "updated": it.get("lastModified") or ""})
+                                      "tags": tags[:6],
+                                      "updated": it.get("lastModified") or "",
+                                      "size": int(it.get("usedStorage") or 0) or (params * 2 if params else 0),
+                                      "params": params,
+                                      "format": fmt,
+                                      "quantization": quant,
+                                      "supported_inferences": supported,
+                                      "description": desc})
             except Exception as exc:  # noqa: BLE001
                 return self._json(502, {"error": f"hf: {type(exc).__name__}: {exc}"})
+        if not HF_MOCK and items:
+            def _size(mid):
+                try:
+                    rq = urllib.request.Request(f"{HF_BASE_URL}/api/models/{mid}")
+                    tk = _tenant_hf_token(self._tenant()) or HF_TOKEN
+                    if tk:
+                        rq.add_header("Authorization", f"Bearer {tk}")
+                    with _HF_OPENER.open(rq, timeout=10) as rr:
+                        dd = json.loads(rr.read())
+                    return int(dd.get("usedStorage") or 0)
+                except Exception:  # noqa: BLE001
+                    return 0
+            try:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    sizes = list(ex.map(_size, [it["id"] for it in items]))
+                for it, sz in zip(items, sizes):
+                    if sz:
+                        it["size"] = sz
+            except Exception:  # noqa: BLE001
+                pass
         return self._json(200, {"kind": kind, "count": len(items), "mock": HF_MOCK, "items": items})
 
     def _hf_search(self) -> None:
@@ -3050,7 +3377,27 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 files = []
         files = [f for f in files if not f.lower().endswith((".md", ".png", ".jpg", ".jpeg", ".gif", ".svg"))]
-        if v3hf is not None and body.get("quantization"):
+        # vLLM/SGLang грузят весь каталог модели (config/tokenizer/веса), а не один gguf.
+        eng_ref = ""
+        if engine_image:
+            try:
+                er = db_query("SELECT ref FROM registry_images WHERE digest=" + _lit(engine_image))
+                eng_ref = ((er[0][0] if er else "") or engine_image).lower()
+            except Exception:  # noqa: BLE001
+                eng_ref = str(engine_image).lower()
+        want_dir = ("vllm" in eng_ref) or ("sglang" in eng_ref)
+        if want_dir and files:
+            files = [f for f in files if not (
+                f.lower().startswith((".github/", "license", "readme", "docs/"))
+                or f.lower() in (".gitattributes", ".gitignore"))]
+            seen, uniq = set(), []          # S3-ключи плоские: дедуп по basename
+            for f in files:
+                b = os.path.basename(str(f))
+                if b and b not in seen:
+                    seen.add(b)
+                    uniq.append(f)
+            files = uniq
+        elif v3hf is not None and body.get("quantization"):
             sel = v3hf.select_files(files, quantization=body.get("quantization"))
             files = sel or files
         elif files and v3hf is not None:
@@ -3402,6 +3749,23 @@ class Handler(BaseHTTPRequestHandler):
                         for r in bundles],
             "findings": findings})
 
+    def _engine_kind(self, engine: str) -> str:
+        rows = db_query("SELECT ref,source FROM registry_images WHERE digest="
+                        + _lit(self._to_digest(engine)) + " LIMIT 1")
+        if not rows:
+            return ""
+        ref, source = rows[0]
+        r = (ref or "").lower()
+        if source == BUILTIN_ENGINE_SOURCE:
+            return "pickle"
+        if "llama" in r or "vllm" in r or "sglang" in r:
+            return "llm"
+        if "onnx" in r:
+            return "onnx"
+        if "pickle" in r or "python" in r:
+            return "pickle"
+        return "other"
+
     def _artifact_engine_check(self, engine: str) -> tuple[bool, str]:
         if not self._engine_ok(engine):
             return False, "движок не найден в registry_images (импортируйте образ по digest)"
@@ -3459,35 +3823,49 @@ class Handler(BaseHTTPRequestHandler):
         if not rows:
             return self._json(404, {"error": "артефакт не найден"})
         fmt = str(rows[0][0] or "").lower()
-        is_llm = fmt in ("gguf", "llm") or str(rows[0][1] or "").lower().endswith(".gguf")
+        fname_l = str(rows[0][1] or "").lower()
         engine = _norm_engine(body.get("engine_image") or "")
+        ekind = self._engine_kind(engine) if engine else ""
+        # safetensors/bin/pt — тоже LLM-веса, если выбран LLM-движок (vLLM/SGLang/llama)
+        is_llm = (ekind == "llm" or fmt in ("gguf", "llm") or fname_l.endswith(".gguf"))
         if is_llm and not engine:
             return self._json(400, {"error": "для LLM нужно указать движок инференса (engine_image)"})
-        if not is_llm:
-            if engine and engine != _builtin_engine():
-                # явно выбран движок для «инертного» артефакта — фиксируем связку и запускаем инференс
+        if ("sglang" in (engine or "").lower() and LLM_GPU_COMPUTE_CAP < 8.0
+                and not LLM_SGLANG_SM75
+                and "sm75" not in (engine or "").lower() and "v0.4" not in (engine or "").lower()):
+            return self._json(409, {"error": "SGLang требует GPU с compute capability >= 8.0 (Ampere+); "
+                                             f"текущий GPU — sm_{LLM_GPU_COMPUTE_CAP:.1f}. "
+                                             "Используйте vLLM или образ engine-sglang-*-sm75."})
+        if ekind != "llm":
+            # песочный re-scan для pickle/инертных форматов; выбранный движок фиксируем в
+            # бандле, чтобы в таблицах было видно, чем проверяли
+            eng = engine or _builtin_engine()
+            try:
+                self._artifact_bundle_ensure(sha, eng, body.get("prompt_set") or "")
+            except Exception:  # noqa: BLE001
                 pass
-            else:
-                # дефолт: встроенный песочный движок; «тест» для не-LLM = повторный скан (реализуется отдельно)
-                bid = ""
-                try:
-                    bid = self._artifact_bundle_ensure(sha, _builtin_engine(), body.get("prompt_set") or "")
-                except Exception as exc:  # noqa: BLE001
-                    return self._json(400, {"error": str(exc)})
-                return self._json(409, {"status": "rescan-required", "bundle_id": bid,
-                                        "engine_image": _builtin_engine(),
-                                        "hint": "для этого формата тест — повторный скан в песочнице; "
-                                                "перезагрузите файл (повторный скан по хранилищу — следующий шаг)"})
-        if not is_llm and not engine:
-            engine = _builtin_engine()      # дефолт: песочный движок платформы
-        if not engine:
-            return self._json(400, {"error": "движок недоступен (нет встроенного и не указан явно)"})
+            rows2 = db_query("SELECT s3_key, size, filename, format FROM artifacts WHERE sha256=" + _lit(sha))
+            if not rows2 or not rows2[0][0]:
+                return self._json(409, {"status": "rescan-required",
+                                        "hint": "нет S3-ключа для повторного скана"})
+            s3_key, size, fname, afmt = rows2[0]
+            new_scan = uuid.uuid4().hex
+            if DB_ENABLED:
+                db_exec("INSERT INTO scans(scan_id,artifact_id,status,stage,progress,kind) "
+                        "SELECT " + _lit(new_scan) + ",id,'queued','queued',0,'model' "
+                        "FROM artifacts WHERE sha256=" + _lit(sha))
+            rec = {"scan_id": new_scan, "name": fname, "format": afmt, "size": int(size or 0),
+                   "kind": "model", "sha256": sha, "state": "queued", "stage": "queued",
+                   "progress": 0, "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            save_scan(rec)
+            threading.Thread(target=_run_direct_with_task,
+                             args=(new_scan, fname, afmt, s3_key, int(size or 0)), daemon=True).start()
+            return self._json(202, {"status": "queued", "scan_id": new_scan, "engine": eng})
         try:
             bid = self._artifact_bundle_ensure(sha, engine, body.get("prompt_set") or "")
         except Exception as exc:  # noqa: BLE001
             return self._json(400, {"error": str(exc)})
-        test_body = dict(body, gpu=body.get("gpu"), runtime_class=body.get("runtime_class"))
-        return self._bundle_test_start_core(bid, test_body)
+        return self._bundle_test_start_core(bid, dict(body))
 
     def _v3_operations(self, q: dict) -> None:
         """Истории операций по подзакладкам: загрузки локальных файлов, HF-загрузки, движки."""
@@ -3783,6 +4161,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._llm_events()
         if u.path == "/prompt-sets":
             return self._prompt_sets_upload()
+        if u.path == "/prompt-sets/activate":
+            return self._prompt_sets_activate()
         if u.path == "/llm/score":
             return self._llm_score()
         if u.path in ("/scans", "/scans/upload", "/upload"):

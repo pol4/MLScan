@@ -99,8 +99,8 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
                         "args": ["--key", model_key, "--dest", "/model", "--sha256", model_sha256],
                         "env": [{"name": k, "value": v} for k, v in (s3_env or {}).items()],
                         "volumeMounts": ([{"name": "model", "mountPath": "/model"}]
-                                     + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
-                                        if (model_key and s3_env) else [])),
+                                         + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
+                                            if (model_key and s3_env) else [])),
                     }],
                     "containers": [
                         {"name": "engine", "image": engine_image,
@@ -133,19 +133,14 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
 
 # --- N2: запускаемый job теста bundle (реальный движок + набор вопросов -> /llm/score) ----------
 _FETCH_SRC = (
-    "import hashlib,os,sys,urllib.request\n"
-    "dest=os.environ.get('FETCH_DEST','/model/model.gguf')\n"
-    "sha=os.environ.get('FETCH_SHA','')\n"
-    "os.makedirs(os.path.dirname(dest),exist_ok=True)\n"
-    "h=hashlib.sha256()\n"
-    "key=os.environ.get('S3_KEY','')\n"
-    "if key and os.path.exists('/opt/s3/s3client.py'):\n"
-    "    sys.path.insert(0,'/opt/s3')\n"
-    "    from s3client import S3\n"
-    "    s3=S3(os.environ['S3_ENDPOINT'],os.environ['S3_ACCESS_KEY'],os.environ['S3_SECRET_KEY'],\n"
-    "          region=os.environ.get('S3_REGION','garage'),bucket=os.environ['S3_BUCKET'],timeout=600)\n"
-    "    st,hd,resp = s3.get_stream(key)\n"
-    "    with open(dest,'wb') as f:\n"
+    "import hashlib,json,os,sys,urllib.request\n"
+    "os.makedirs('/model',exist_ok=True)\n"
+    "manifest=os.environ.get('FETCH_MANIFEST','')\n"
+    "def s3get(s3,key,out):\n"
+    "    os.makedirs(os.path.dirname(out),exist_ok=True)\n"
+    "    st,hd,resp=s3.get_stream(key)\n"
+    "    h=hashlib.sha256()\n"
+    "    with open(out,'wb') as f:\n"
     "        try:\n"
     "            while True:\n"
     "                b=resp.read(1<<20)\n"
@@ -154,14 +149,48 @@ _FETCH_SRC = (
     "        finally:\n"
     "            try: resp.close()\n"
     "            except Exception: pass\n"
-    "else:\n"
+    "    return h.hexdigest()\n"
+    "if manifest:\n"
+    "    files=json.loads(manifest)\n"
+    "    s3=None\n"
+    "    if any('key' in it for it in files):\n"
+    "        sys.path.insert(0,'/opt/s3')\n"
+    "        from s3client import S3\n"
+    "        s3=S3(os.environ['S3_ENDPOINT'],os.environ['S3_ACCESS_KEY'],os.environ['S3_SECRET_KEY'],\n"
+    "              region=os.environ.get('S3_REGION','garage'),bucket=os.environ['S3_BUCKET'],timeout=600)\n"
     "    op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
+    "    for it in files:\n"
+    "        out=os.path.join('/model',it['dest'])\n"
+    "        if it.get('key'):\n"
+    "            got=s3get(s3,it['key'],out)\n"
+    "        else:\n"
+    "            os.makedirs(os.path.dirname(out),exist_ok=True)\n"
+    "            h=hashlib.sha256()\n"
+    "            with op.open(it['url'],timeout=1800) as r, open(out,'wb') as f:\n"
+    "                while True:\n"
+    "                    b=r.read(1<<20)\n"
+    "                    if not b: break\n"
+    "                    h.update(b); f.write(b)\n"
+    "            got=h.hexdigest()\n"
+    "        print('FETCHED',out,os.path.getsize(out),got,flush=True)\n"
+    "    sys.exit(0)\n"
+    "dest=os.environ.get('FETCH_DEST','/model/model.gguf')\n"
+    "sha=os.environ.get('FETCH_SHA','')\n"
+    "key=os.environ.get('S3_KEY','')\n"
+    "if key and os.path.exists('/opt/s3/s3client.py'):\n"
+    "    sys.path.insert(0,'/opt/s3')\n"
+    "    from s3client import S3\n"
+    "    s3=S3(os.environ['S3_ENDPOINT'],os.environ['S3_ACCESS_KEY'],os.environ['S3_SECRET_KEY'],\n"
+    "          region=os.environ.get('S3_REGION','garage'),bucket=os.environ['S3_BUCKET'],timeout=600)\n"
+    "    got=s3get(s3,key,dest)\n"
+    "else:\n"
+    "    h=hashlib.sha256(); op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
     "    with op.open(os.environ['FETCH_URL'],timeout=1800) as r, open(dest,'wb') as f:\n"
     "        while True:\n"
     "            b=r.read(1<<20)\n"
     "            if not b: break\n"
     "            h.update(b); f.write(b)\n"
-    "got=h.hexdigest()\n"
+    "    got=h.hexdigest()\n"
     "print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
     "if sha and got!=sha: print('SHA_MISMATCH',got,sha,flush=True); sys.exit(3)\n"
 )
@@ -173,7 +202,11 @@ _PROBE_SRC = (
     "for _ in range(int(os.environ.get('ENGINE_WAIT','180'))):\n"
     "    try: op.open(base+'/models',timeout=3); break\n"
     "    except Exception: time.sleep(2)\n"
-    "cases=json.loads(os.environ['PROMPTS_JSON'])['cases']; resp={}; toks=0; t0=time.monotonic()\n"
+    "pf=os.environ.get('PROMPTS_FILE','')\n"
+    "pu=os.environ.get('PROMPTS_URL','')\n"
+    "cases=(json.loads(op.open(pu,timeout=60).read()) if pu else\n"
+    "       (json.load(open(pf)) if pf else json.loads(os.environ['PROMPTS_JSON'])))['cases']\n"
+    "resp={}; toks=0; ok=0; t0=time.monotonic()\n"
     "for c in cases:\n"
     "    body=json.dumps({'model':'m','messages':[{'role':'user','content':c['prompt']}],\n"
     "                     'temperature':0,'max_tokens':int(os.environ.get('MAX_TOKENS','256'))}).encode()\n"
@@ -183,10 +216,12 @@ _PROBE_SRC = (
     "        d=json.loads(op.open(req,timeout=180).read())\n"
     "        ans=d['choices'][0]['message']['content']\n"
     "        toks+=int(d.get('usage',{}).get('completion_tokens',0))\n"
+    "        ok+=1\n"
     "    except Exception as exc:\n"
     "        ans=''; print('Q_ERR',c['id'],type(exc).__name__,flush=True)\n"
     "    resp[str(c['id'])]=[ans]; print('Q',c['id'],'->',ans[:60].replace(chr(10),' '),flush=True)\n"
     "dt=time.monotonic()-t0\n"
+    "if not ok: print('LLM_NO_ANSWERS',flush=True); sys.exit(4)\n"
     "print(f'LLM_TIMING questions={len(cases)} completion_tokens={toks} secs={dt:.1f} "
     "tok_s={toks/max(dt,0.1):.1f}',flush=True)\n"
     "payload={'version':os.environ.get('PROMPT_SET',''),'scan_id':os.environ.get('SCAN_ID',''),\n"
@@ -208,15 +243,17 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         ttl_seconds: int = 3600, max_tokens: int = 256,
                         ebpf_agent: bool = False, ebpf_configmap: str = "mlscan-ebpf-agent",
                         ebpf_image: str = "", model_key: str = "", s3_env: dict | None = None,
-                        s3_client_configmap: str = "mlscan-s3client") -> dict:
+                        s3_client_configmap: str = "mlscan-s3client",
+                        model_files: list | None = None, prompts_configmap: str = "",
+                        prompts_url: str = "", sgl_shim: bool = False) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
     """
     if "@sha256:" not in (engine_image or ""):
         raise ValueError("engine image должен быть по digest")
-    if not model_url:
-        raise ValueError("нужен presigned URL модели")
+    if not model_url and not model_files:
+        raise ValueError("нужен presigned URL или манифест файлов модели")
     # GPU без device-plugin: прямая CDI-инъекция через annotation (containerd enable_cdi).
     # MLSCAN_GPU_MODE=cdi (по умолчанию) -> аннотация cdi.k8s.io/mlscan-gpu: nvidia.com/gpu=<uuid|index>
     gpu_mode = os.environ.get("MLSCAN_GPU_MODE", "cdi")   # cdi | hostdev | device-plugin(limits)
@@ -228,7 +265,13 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
               "ephemeral-storage": f"{int(res.get('disk_gb', 40))}Gi"}
     if gpu and gpu_mode == "device-plugin":
         limits["nvidia.com/gpu"] = 1
-    engine_env = [{"name": "LLAMA_ARG_HOST", "value": "0.0.0.0"}]
+    engine_env = [{"name": "LLAMA_ARG_HOST", "value": "0.0.0.0"},
+                  # числовой UID без записи в /etc/passwd -> torch.getpass.getuser() падает
+                  {"name": "USER", "value": "mlscan"}, {"name": "LOGNAME", "value": "mlscan"},
+                  {"name": "HOME", "value": "/tmp"},
+                  {"name": "TORCHINDUCTOR_CACHE_DIR", "value": "/tmp/torchinductor"},
+                  {"name": "TRITON_CACHE_DIR", "value": "/tmp/triton"},
+                  {"name": "XDG_CACHE_HOME", "value": "/tmp/.cache"}]
     if gpu:
         engine_env.append({"name": "NVIDIA_VISIBLE_DEVICES", "value": gpu_uuid or "all"})
         if gpu_mode == "hostdev":
@@ -239,31 +282,61 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
     uid = int(os.environ.get("MLSCAN_LLM_TEST_UID", "65532"))
     hardened = {"runAsNonRoot": True, "runAsUser": uid, "runAsGroup": uid,
                 "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
-    engine_args = ["--model", "/model/model.gguf", "--host", "0.0.0.0", "--port", "8000",
-                   "--ctx-size", "4096", "--n-gpu-layers", "99" if gpu else "0"]
+    eng_l = (engine_image or "").lower()
+    model_path = "/model" if model_files else "/model/model.gguf"
+    if "sglang" in eng_l:
+        engine_command = ["python3", "-m", "sglang.launch_server", "--model-path", model_path,
+                          "--host", "0.0.0.0", "--port", "8000", "--context-length", "4096",
+                          "--served-model-name", "m", "--disable-cuda-graph"]
+        # sm_75 (Turing): sgl_kernel собран без sm_75 -> native/torch fallbacks.
+        if "sm75" in eng_l or sgl_shim:
+            engine_command += ["--attention-backend", "torch_native",
+                               "--sampling-backend", "pytorch", "--dtype", "float16"]
+        engine_args = []
+    elif "vllm" in eng_l:
+        engine_command = ["vllm", "serve", model_path, "--host", "0.0.0.0", "--port", "8000",
+                          "--max-model-len", "4096", "--gpu-memory-utilization", "0.90",
+                          "--swap-space", "0", "--served-model-name", "m"]
+        engine_args = []
+    else:
+        engine_command = None
+        engine_args = ["--model", model_path, "--host", "0.0.0.0", "--port", "8000",
+                       "--ctx-size", "4096", "--n-gpu-layers", "99" if gpu else "0"]
+    if sgl_shim:
+        engine_env = engine_env + [{"name": "PYTHONPATH", "value": "/opt/sgl-sm75"}]
+    _engine_c = {"name": "engine", "image": engine_image, "env": engine_env,
+                 "ports": [{"name": "openai", "containerPort": 8000}],
+                 "resources": {"limits": limits},
+                 "securityContext": dict(hardened, readOnlyRootFilesystem=False),
+                 "volumeMounts": [{"name": "model", "mountPath": "/model", "readOnly": True}]
+                                 + ([{"name": "sgl-shim", "mountPath": "/opt/sgl-sm75", "readOnly": True}]
+                                    if sgl_shim else [])
+                                 + ([{"name": "dev", "mountPath": "/dev"},
+                                     {"name": "cudalibs", "mountPath": "/usr/lib/x86_64-linux-gnu", "readOnly": True}]
+                                    if (gpu and gpu_mode == "hostdev") else []),
+                 "readinessProbe": {"httpGet": {"path": "/v1/models", "port": 8000},
+                                    "initialDelaySeconds": 10, "periodSeconds": 5, "failureThreshold": 60}}
+    if engine_command:
+        _engine_c["command"] = engine_command
+    else:
+        _engine_c["args"] = engine_args
     containers = [
-        {"name": "engine", "image": engine_image, "env": engine_env, "args": engine_args,
-         "securityContext": dict(hardened, readOnlyRootFilesystem=False),
-         "ports": [{"name": "openai", "containerPort": 8000}],
-         "resources": {"limits": limits},
-         "securityContext": dict(hardened, readOnlyRootFilesystem=False),
-         "volumeMounts": [{"name": "model", "mountPath": "/model", "readOnly": True}]
-                         + ([{"name": "dev", "mountPath": "/dev"},
-                             {"name": "cudalibs", "mountPath": "/usr/lib/x86_64-linux-gnu", "readOnly": True}]
-                            if (gpu and gpu_mode == "hostdev") else []),
-         "readinessProbe": {"httpGet": {"path": "/v1/models", "port": 8000},
-                            "initialDelaySeconds": 10, "periodSeconds": 5, "failureThreshold": 60}},
+        _engine_c,
         {"name": "probe", "image": "python:3.12-slim",
          "command": ["python", "-c", _PROBE_SRC],
          "securityContext": dict(hardened, readOnlyRootFilesystem=False),
-         "env": [{"name": "PROMPTS_JSON", "value": json_dumps({"cases": prompts or []})},
-                 {"name": "PROMPT_SET", "value": prompt_set},
+         "volumeMounts": ([{"name": "prompts", "mountPath": "/prompts", "readOnly": True}]
+                          if prompts_configmap else []),
+         "env": (([{"name": "PROMPTS_URL", "value": prompts_url}] if prompts_url else
+                  ([{"name": "PROMPTS_FILE", "value": "/prompts/prompts.json"}] if prompts_configmap else
+                   [{"name": "PROMPTS_JSON", "value": json_dumps({"cases": prompts or []})}]))
+                 + [{"name": "PROMPT_SET", "value": prompt_set},
                  {"name": "BUNDLE_ID", "value": bundle_id},
                  {"name": "SCAN_ID", "value": scan_id or ("bundle-test-" + bundle_id)},
                  {"name": "ENGINE_IMAGE", "value": engine_image},
                  {"name": "TESTING_URL", "value": testing_url},
                  {"name": "MLSCAN_KEY", "value": api_key},
-                 {"name": "MAX_TOKENS", "value": str(int(max_tokens))}],
+                 {"name": "MAX_TOKENS", "value": str(int(max_tokens))}]),
          "resources": {"limits": {"memory": "1Gi", "cpu": "1"}},
          "securityContext": dict(hardened, readOnlyRootFilesystem=False)},
     ]
@@ -298,6 +371,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
             "spec": {
                 "automountServiceAccountToken": False,
                 "restartPolicy": "Never",
+                "imagePullSecrets": [{"name": "harbor-pull"}],
                 "securityContext": ({"fsGroup": uid, "seccompProfile": {"type": "RuntimeDefault"}}
                                     if ebpf_agent else
                                     {"runAsNonRoot": True, "runAsUser": uid, "runAsGroup": uid,
@@ -305,21 +379,26 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                 "initContainers": [{
                     "name": "model-fetcher", "image": "python:3.12-slim",
                     "command": ["python", "-c", _FETCH_SRC],
-                    "env": ([{"name": "FETCH_URL", "value": model_url},
-                             {"name": "FETCH_SHA", "value": model_sha256},
-                             {"name": "FETCH_DEST", "value": "/model/model.gguf"},
-                             {"name": "S3_KEY", "value": model_key}]
+                    "env": (([{"name": "FETCH_MANIFEST", "value": json_dumps(model_files)}] if model_files else
+                             [{"name": "FETCH_URL", "value": model_url},
+                              {"name": "FETCH_SHA", "value": model_sha256},
+                              {"name": "FETCH_DEST", "value": "/model/model.gguf"},
+                              {"name": "S3_KEY", "value": model_key}])
                             + [{"name": k, "value": v} for k, v in (s3_env or {}).items()]),
                     "resources": {"limits": {"memory": "2Gi", "cpu": "1"}},
                     "securityContext": dict(hardened, readOnlyRootFilesystem=False),
                     "volumeMounts": ([{"name": "model", "mountPath": "/model"}]
                                      + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
-                                        if (model_key and s3_env) else [])),
+                                        if ((model_key and s3_env) or (model_files and s3_env)) else [])),
                 }],
                 "containers": containers,
                 "volumes": ([{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}}]
                             + ([{"name": "s3client", "configMap": {"name": s3_client_configmap}}]
-                               if (model_key and s3_env) else [])) 
+                               if ((model_key and s3_env) or (model_files and s3_env)) else [])) 
+                           + ([{"name": "prompts", "configMap": {"name": prompts_configmap}}]
+                              if prompts_configmap else [])
+                           + ([{"name": "sgl-shim", "configMap": {"name": "sgl-shim"}}]
+                              if sgl_shim else [])
                            + ([{"name": "dev", "hostPath": {"path": "/dev"}}]
                               if (gpu and gpu_mode == "hostdev") else [])
                            + ([{"name": "cudalibs", "hostPath": {"path": "/usr/lib/x86_64-linux-gnu"}}]
