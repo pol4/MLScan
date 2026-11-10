@@ -151,9 +151,9 @@ def authenticate(headers):
     if not AUTH_ENABLED:
         return {"subject": "anonymous", "roles": ["admin"]}
     if TRUST_PROXY:
-        user = (headers.get("X-Auth-Request-User") or "").strip()
+        user = (headers.get("X-Forwarded-User") or headers.get("X-Auth-Request-User") or "").strip()
         if user:
-            groups = (headers.get("X-Auth-Request-Groups") or "").strip()
+            groups = (headers.get("X-Forwarded-Groups") or headers.get("X-Auth-Request-Groups") or "").strip()
             gl = {g.strip() for g in groups.split(",") if g.strip()}
             roles = ["admin"] if ("mlscan-admins" in gl or "admin" in gl) else ["viewer"]
             return {"subject": user, "roles": roles}
