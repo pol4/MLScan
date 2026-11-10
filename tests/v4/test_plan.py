@@ -44,12 +44,21 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(p["testpacks"][0]["steps"], ["load", "invoke", "assert"])
         self.assertEqual(p["observation"]["require"], ["process", "network"])
         self.assertEqual(p["policy"]["version"], 3)
+        self.assertIn("actual_runtime_class", p["engine"])
+        self.assertFalse(p["engine"]["host_execution"])
 
     def test_degraded_cpu_fallback(self):
         p = plan.build_plan(_llm(), PACKS, artifact_kind="llm-safetensors", engine="kind:llm",
                             available=["kata", "kata-btf"], gpu_available=False, allow_cpu_fallback=True)
         self.assertEqual(p["engine"]["runtime_class"], "kata-btf")
         self.assertTrue(p["engine"]["degraded"])
+
+    def test_actual_runtime_host_execution(self):
+        p = plan.build_plan(_llm(), PACKS, available=["kata", "kata-btf"], gpu_available=True,
+                            actual_runtime_class="nvidia")
+        self.assertEqual(p["engine"]["runtime_class"], "kata-btf")
+        self.assertEqual(p["engine"]["actual_runtime_class"], "nvidia")
+        self.assertTrue(p["engine"]["host_execution"])
 
     def test_refuse_without_gpu(self):
         p = plan.build_plan(_llm(), PACKS, available=["kata"], gpu_available=False, allow_cpu_fallback=False)

@@ -3491,7 +3491,8 @@ class Handler(BaseHTTPRequestHandler):
         return v4plan.build_plan(desc, packs, artifact_kind=artifact_kind, engine=engine,
                                  policy={"id": pol["id"], "version": pol["version"]},
                                  available=_v4_available_runtime_classes(),
-                                 gpu_available=bool(LLM_TEST_GPU), allow_cpu_fallback=True)
+                                 gpu_available=bool(LLM_TEST_GPU), allow_cpu_fallback=True,
+                                 actual_runtime_class=LLM_TEST_RUNTIME_CLASS)
 
     def _v4_bundle_plan(self, bundle_id: str) -> dict:
         try:

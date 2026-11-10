@@ -27,7 +27,7 @@ def _union_observation(packs: Iterable[dict[str, Any]]) -> list[str]:
 def build_plan(desc: _ed.EngineDescriptor, packs: list[dict[str, Any]], *,
                artifact_kind: str = "", engine: str = "", policy: dict[str, Any] | None = None,
                available: Iterable[str] | None = None, gpu_available: bool = False,
-               allow_cpu_fallback: bool = True) -> dict[str, Any]:
+               allow_cpu_fallback: bool = True, actual_runtime_class: str = "") -> dict[str, Any]:
     """Собрать план проверки.
 
     ``packs`` — уже отобранные пакеты (см. ``tests.testpack.select_packs``). RuntimeClass выбирается
@@ -42,6 +42,8 @@ def build_plan(desc: _ed.EngineDescriptor, packs: list[dict[str, Any]], *,
         "engine": {
             "id": desc.id, "kind": desc.kind, "oci": desc.oci,
             "runtime_class": rc.get("runtime_class", ""),
+            "actual_runtime_class": actual_runtime_class or "",
+            "host_execution": (actual_runtime_class or "").lower() in ("nvidia", "runc"),
             "degraded": bool(rc.get("degraded")),
             "reason": rc.get("reason", ""),
             "resources": desc.resource_profile(),
