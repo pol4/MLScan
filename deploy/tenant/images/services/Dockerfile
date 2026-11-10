@@ -15,4 +15,6 @@ COPY deploy/v3/analysis/static_stream.py deploy/v3/analysis/archive_walk.py depl
 COPY deploy/v3/security/evidence.py deploy/v3/security/kms.py /opt/v3security/
 COPY deploy/v3/obs/metrics.py deploy/v3/obs/slo.py /opt/v3obs/
 COPY deploy/v3/migration/migrate.py /opt/v3migration/
+# v4 (унифицированная песочница): движки как данные + политика вердикта
+COPY deploy/v4 /opt/v4
 CMD ["python3"]
