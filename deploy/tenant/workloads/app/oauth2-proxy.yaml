@@ -27,6 +27,9 @@ spec:
           args:
             - --provider=keycloak-oidc
             - --oidc-issuer-url=https://kc.platform.rtx.local/realms/tenants
+            # не падать на старте, если Keycloak временно отдаёт 503 (discovery недоступен)
+            - --skip-oidc-discovery
+            - --oidc-jwks-url=https://kc.platform.rtx.local/realms/tenants/protocol/openid-connect/certs
             - --client-id=$(OIDC_CLIENT_ID)
             - --client-secret=$(OIDC_CLIENT_SECRET)
             - --cookie-secret=$(COOKIE_SECRET)

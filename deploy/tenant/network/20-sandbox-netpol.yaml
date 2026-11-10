@@ -116,3 +116,20 @@ spec:
         - podSelector: {}
       ports:
         - {protocol: TCP, port: 8090}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-s3-rgw-egress
+  namespace: t-mlscan-sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rook-ceph
+      ports:
+        - {protocol: TCP, port: 8080}
+        - {protocol: TCP, port: 80}

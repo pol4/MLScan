@@ -8,7 +8,6 @@ resources:
   - 04-storage.yaml
   - 05-config.yaml
   - 06-rbac-app.yaml
-  - 07-garage.yaml
   - 10-ingress.yaml
   - 20-db-migrate.yaml
 configMapGenerator:

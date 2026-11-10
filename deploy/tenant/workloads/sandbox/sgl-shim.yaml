@@ -1,0 +1,35 @@
+# SGLang v0.5.9 на Turing (sm_75): sgl_kernel собран без sm_75, поэтому
+# RMSNorm/SiLU заменяются на torch-реализации, а attention/sampling идут
+# через torch_native/pytorch (флаги добавляет llm_env при LLM_SGLANG_SM75=1).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sgl-shim
+  namespace: t-mlscan-sandbox
+  labels: {app.kubernetes.io/part-of: mlscan}
+data:
+  sitecustomize.py: |
+    import torch
+    try:
+        import sgl_kernel as _sk
+    except Exception:
+        _sk = None
+    if _sk is not None:
+        def _rmsnorm(x, w, eps, out=None):
+            orig = x.dtype
+            xf = x.float()
+            v = xf.pow(2).mean(dim=-1, keepdim=True)
+            y = (xf * torch.rsqrt(v + eps) * w.float()).to(orig)
+            if out is not None:
+                out.copy_(y)
+                return out
+            return y
+        def _fused_add_rmsnorm(x, residual, w, eps):
+            residual.add_(x)
+            x.copy_(_rmsnorm(residual, w, eps))
+        def _silu_and_mul(x, out):
+            d = x.shape[-1] // 2
+            out.copy_(torch.nn.functional.silu(x[..., :d]) * x[..., d:])
+        _sk.rmsnorm = _rmsnorm
+        _sk.fused_add_rmsnorm = _fused_add_rmsnorm
+        _sk.silu_and_mul = _silu_and_mul
