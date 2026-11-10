@@ -246,3 +246,23 @@ CREATE TABLE IF NOT EXISTS v4_engine_descriptors (
   body JSONB NOT NULL DEFAULT '{}'::jsonb,
   created TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- v4: пакеты тестов (TestPack) и датасеты (Dataset)
+CREATE TABLE IF NOT EXISTS v4_testpacks (
+  id TEXT NOT NULL,
+  version INT NOT NULL,
+  body JSONB NOT NULL DEFAULT '{}'::jsonb,
+  hash TEXT DEFAULT '',
+  created TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (id, version)
+);
+CREATE TABLE IF NOT EXISTS v4_datasets (
+  ref TEXT PRIMARY KEY,
+  kind TEXT,
+  name TEXT,
+  version INT,
+  cases INT DEFAULT 0,
+  hash TEXT DEFAULT '',
+  body JSONB DEFAULT '[]'::jsonb,
+  created TIMESTAMPTZ NOT NULL DEFAULT now()
+);

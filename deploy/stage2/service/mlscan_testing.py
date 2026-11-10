@@ -1170,8 +1170,11 @@ try:  # v4: движки как данные + политика вердикта
     import scoring.policy as v4policy  # noqa: E402
     import scoring.simulator as v4sim  # noqa: E402
     import engines.descriptor as v4ed  # noqa: E402
+    import tests.testpack as v4testpack  # noqa: E402
+    import tests.runner as v4runner  # noqa: E402
+    import tests.datasets as v4datasets  # noqa: E402
 except Exception as _v4exc:  # noqa: BLE001
-    v4policy = v4sim = v4ed = None  # type: ignore
+    v4policy = v4sim = v4ed = v4testpack = v4runner = v4datasets = None  # type: ignore
     print(f"[testing] v4 modules unavailable: {_v4exc}", file=sys.stderr)
 
 
@@ -2091,6 +2094,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._v4_policy_get(u.path[len("/v4/policies/"):].strip("/"))
         if u.path == "/v4/engines":
             return self._v4_engines_list()
+        if u.path == "/v4/testpacks":
+            return self._v4_testpacks_list()
+        if u.path.startswith("/v4/testpacks/"):
+            return self._v4_testpack_get(u.path[len("/v4/testpacks/"):].strip("/"))
+        if u.path == "/v4/datasets":
+            return self._v4_datasets_list()
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
             return self._bundle_test_get(u.path[len("/bundles/"):-len("/test")].strip("/"))
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
@@ -3217,6 +3226,141 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             plan = {"runtime_class": "", "degraded": True, "reason": str(exc)}
         return self._json(201, {"descriptor": d.to_dict(), "plan": plan})
+
+    # ---- v4: пакеты тестов (TestPack) и датасеты (Dataset) ----------------
+    def _v4_db_packs(self) -> list:
+        if not DB_ENABLED:
+            return []
+        try:
+            rows = db_query("SELECT DISTINCT ON (id) id,version,body,hash FROM v4_testpacks "
+                            "ORDER BY id, version DESC") or []
+        except Exception:  # noqa: BLE001
+            return []
+        out = []
+        for r in rows:
+            b = _v4_jsonb(r[2]) or {}
+            out.append({"pack": b, "hash": r[3] or b.get("hash", ""), "source": "db", "version": int(r[1])})
+        return out
+
+    def _v4_all_packs(self) -> list:
+        packs: dict[str, dict] = {}
+        if v4testpack is not None:
+            for p in v4testpack.all_builtin():
+                packs[p["id"]] = {"pack": p, "hash": p.get("hash"), "source": "builtin", "version": p["version"]}
+        for item in self._v4_db_packs():
+            packs[item["pack"].get("id", "")] = item
+        return list(packs.values())
+
+    def _v4_testpacks_list(self) -> None:
+        out = [{"id": it["pack"]["id"], "version": it["version"], "hash": it.get("hash"),
+                "applies_to": it["pack"].get("applies_to", {}),
+                "steps": len(it["pack"].get("steps", [])), "source": it["source"]}
+               for it in self._v4_all_packs()]
+        return self._json(200, {"testpacks": sorted(out, key=lambda x: x["id"]),
+                                "v4": v4testpack is not None})
+
+    def _v4_testpack_get(self, pid: str) -> None:
+        for it in self._v4_all_packs():
+            if it["pack"].get("id") == pid:
+                p = dict(it["pack"]); p["hash"] = it.get("hash"); p["source"] = it["source"]
+                return self._json(200, {"pack": p})
+        return self._json(404, {"error": "testpack not found"})
+
+    def _v4_testpack_save(self) -> None:
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        if v4testpack is None:
+            return self._json(503, {"error": "v4 modules unavailable"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        pack = body.get("pack") or body
+        try:
+            c = v4testpack.compile_pack(pack)
+        except ValueError as exc:
+            return self._json(400, {"error": str(exc)})
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        try:
+            rows = db_query("SELECT COALESCE(MAX(version),0) FROM v4_testpacks WHERE id=" + _lit(c["id"]))
+            ver = int(rows[0][0]) if rows else 0
+        except Exception:  # noqa: BLE001
+            ver = 0
+        ver += 1
+        c["version"] = ver
+        db_exec("INSERT INTO v4_testpacks(id,version,body,hash) VALUES ("
+                + _lit(c["id"]) + "," + str(ver) + ","
+                + _lit(json.dumps(c, ensure_ascii=False)) + "," + _lit(c["hash"]) + ") "
+                "ON CONFLICT (id,version) DO UPDATE SET body=EXCLUDED.body, hash=EXCLUDED.hash, created=now()")
+        return self._json(201, {"id": c["id"], "version": ver, "hash": c["hash"]})
+
+    def _v4_testpack_plan(self) -> None:
+        if v4testpack is None:
+            return self._json(503, {"error": "v4 modules unavailable"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        ak = body.get("artifact_kind") or ""
+        eng = body.get("engine") or ""
+        packs = [it["pack"] for it in self._v4_all_packs()]
+        sel = v4testpack.select_packs(packs, artifact_kind=ak, engine=eng)
+        out = [{"id": p["id"], "version": p["version"], "hash": p.get("hash"),
+                "steps": [s.get("type") for s in p.get("steps", [])],
+                "observation": p.get("observation"), "budgets": p.get("budgets")} for p in sel]
+        return self._json(200, {"artifact_kind": ak, "engine": eng, "packs": out})
+
+    def _v4_prompt_datasets(self) -> list:
+        """Датасеты из существующих наборов вопросов: ds://prompts/<version>@1."""
+        if not DB_ENABLED:
+            return []
+        try:
+            rows = db_query("SELECT prompt_set, COUNT(*) FROM llm_prompts GROUP BY prompt_set") or []
+        except Exception:  # noqa: BLE001
+            return []
+        return [{"ref": "ds://prompts/" + str(ver) + "@1", "kind": "prompts", "name": str(ver),
+                 "version": 1, "cases": int(cnt or 0), "source": "prompt_set"} for ver, cnt in rows]
+
+    def _v4_datasets_list(self) -> None:
+        out = self._v4_prompt_datasets()
+        seen = {d["ref"] for d in out}
+        if DB_ENABLED:
+            try:
+                rows = db_query("SELECT ref,kind,name,version,cases,hash FROM v4_datasets ORDER BY ref") or []
+            except Exception:  # noqa: BLE001
+                rows = []
+            for r in rows:
+                if r[0] in seen:
+                    continue
+                out.append({"ref": r[0], "kind": r[1], "name": r[2], "version": r[3], "cases": r[4],
+                            "hash": r[5] or "", "source": "db"})
+        return self._json(200, {"datasets": out, "v4": v4datasets is not None})
+
+    def _v4_dataset_save(self) -> None:
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        if v4datasets is None:
+            return self._json(503, {"error": "v4 modules unavailable"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        ref = (body.get("ref") or "").strip()
+        cases = body.get("cases")
+        if not isinstance(cases, list):
+            return self._json(400, {"error": "cases должен быть списком"})
+        try:
+            meta = v4datasets.parse_ref(ref)
+        except ValueError as exc:
+            return self._json(400, {"error": str(exc)})
+        h = v4datasets.dataset_hash(cases)
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        db_exec("INSERT INTO v4_datasets(ref,kind,name,version,cases,hash,body) VALUES ("
+                + _lit(ref) + "," + _lit(meta["kind"]) + "," + _lit(meta["name"]) + ","
+                + str(int(meta["version"] or 0)) + "," + str(len(cases)) + "," + _lit(h) + ","
+                + _lit(json.dumps(cases, ensure_ascii=False)) + ") "
+                "ON CONFLICT (ref) DO UPDATE SET cases=EXCLUDED.cases, hash=EXCLUDED.hash, "
+                "body=EXCLUDED.body, created=now()")
+        return self._json(201, {"ref": ref, "cases": len(cases), "hash": h})
 
     def _hf_quota_get(self) -> None:
         """N4: суточные лимиты HF-загрузок (тенант/значение; None = лимит по конфигурации)."""
@@ -4401,6 +4545,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._v4_policy_publish(u.path[len("/v4/policies/"):-len("/publish")].strip("/"))
         if u.path == "/v4/engines":
             return self._v4_engine_register()
+        if u.path == "/v4/testpacks/plan":
+            return self._v4_testpack_plan()
+        if u.path == "/v4/testpacks":
+            return self._v4_testpack_save()
+        if u.path == "/v4/datasets":
+            return self._v4_dataset_save()
         if u.path.startswith("/v3/artifacts/"):
             rest = u.path[len("/v3/artifacts/"):].strip("/")
             if rest.endswith("/bind"):

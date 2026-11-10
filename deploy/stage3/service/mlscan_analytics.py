@@ -724,6 +724,15 @@ V3UI_MARKUP = """
   </div>
   <div class='upload' style='margin-top:0'><b>Движки инференса (дескрипторы)</b>
     <div id='v4eng-list' style='font-size:12px;color:#9aa4b2'></div></div>
+  <div class='upload' style='margin-top:0'><b>Пакеты тестов (v4 — TestPack)</b>
+    <input id='v4tp-kind' type='text' placeholder='artifact_kind (напр. llm-safetensors)' style='width:24%'>
+    <input id='v4tp-engine' type='text' placeholder='engine (напр. kind:llm)' style='width:18%'>
+    <button type='button' id='v4tp-plan'>Подобрать</button>
+    <div id='v4tp-list' style='font-size:12px;color:#9aa4b2;margin-top:6px'></div>
+    <pre id='v4tp-out' style='white-space:pre-wrap;font-size:12px;color:#cfd6e0;margin:6px 0'></pre>
+  </div>
+  <div class='upload' style='margin-top:0'><b>Датасеты (v4)</b>
+    <div id='v4ds-list' style='font-size:12px;color:#9aa4b2'></div></div>
   <div class='upload' style='margin-top:0'><b>Квоты HF (per-tenant)</b>
     <input id='v3qa-tenant' type='text' placeholder='tenant' style='width:14%'>
     <input id='v3qa-bytes' type='number' placeholder='daily_bytes (пусто = снять)' style='width:16%'>
@@ -1342,6 +1351,15 @@ document.getElementById('f').addEventListener('submit',e=>{
     let pol=null;try{pol=JSON.parse(g('v4pol-json').value||'null');}catch(e){}
     post('/v4/policies/'+encodeURIComponent(id)+'/simulate',pol?{policy:pol,cases:cases}:{cases:cases});});
   loadList();loadPolicy();engines();
+})();
+(function(){const g=id=>document.getElementById(id);const out=g('v4tp-out');if(!out)return;
+  const show=o=>{out.textContent=(typeof o==='string')?o:JSON.stringify(o,null,2);};
+  const loadTp=async()=>{try{const r=await fetch('/v4/testpacks');const d=await r.json();
+    g('v4tp-list').innerHTML=(d.testpacks||[]).map(p=>'<div>'+p.id+' v'+p.version+' · шагов '+p.steps+' · '+(p.source||'')+'</div>').join('')||'—';}catch(e){show('ERR '+e.message);}};
+  const loadDs=async()=>{try{const r=await fetch('/v4/datasets');const d=await r.json();
+    g('v4ds-list').innerHTML=(d.datasets||[]).map(x=>'<div>'+x.ref+' · кейсов '+x.cases+' · '+(x.source||'')+'</div>').join('')||'—';}catch(e){g('v4ds-list').textContent='ERR '+e.message;}};
+  g('v4tp-plan').addEventListener('click',async()=>{try{const r=await fetch('/v4/testpacks/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({artifact_kind:g('v4tp-kind').value.trim(),engine:g('v4tp-engine').value.trim()})});const d=await r.json();show(d);}catch(e){show('ERR '+e.message);}});
+  loadTp();loadDs();
 })();
 (function(){const sb=document.getElementById('imgsign-btn');
   sb&&sb.addEventListener('click',()=>{
