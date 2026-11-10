@@ -29,7 +29,7 @@
 | `mlscan-ui` (oauth2-proxy, Keycloak OIDC) | 1/1, ingress → 302 Keycloak |
 | `sinkhole` (sandbox) | 1/1 |
 | Ingress + TLS (`platform-ca`) | `mlscan.platform.rtx.local`, `mlscan-api.platform.rtx.local` |
-| Services image | `harbor.platform.rtx.local/mlscan/services@sha256:ab1fb8a0…1e62` (BuildKit) |
+| Services image | `harbor.platform.rtx.local/mlscan/services@sha256:da5b212d…ba97` (BuildKit) |
 | Sandbox image | `harbor.platform.rtx.local/mlscan/sandbox@sha256:cc0f6ef7…bd31` (BuildKit) |
 | Sandbox subnet | `mlscan-sandbox` 10.99.0.0/24, `natOutgoing:false` |
 | Isolation gate (Phase 5.5) | **PASSED** (`isolation_fail=0`, поды на 10.99.x) |
@@ -65,6 +65,94 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - host-IP egress (platform ingress, k8s API) — INFO; принудительно закрывается только
   выделенным субнетом (см. п.1).
 
+## UI
+
+- «Настройки»: таблица истории XLSX-наборов (файл/путь, вопросов, статус, активен) +
+  кнопка «Использовать» для выбора ранее загруженного набора; дубль заголовка
+  «Набор тестов (XLSX)» убран. API: `GET /prompt-sets/list`, `POST /prompt-sets/activate`.
+- «Сканы»: единая таблица по **/v3/artifacts** — показывает все артефакты (включая
+  скачанные с HF, но не проверенные), колонки «Формат» и «Движок инференса»;
+  незасканированные — «Требуется сканирование».
+- Детали артефакта — отдельная страница этого артефакта: список скрывается; сверху
+  развёрнутый «Отчёт о сканировании» (карточка: файл/формат/размер/SHA/скан/вердикт/причина,
+  покрытие по модулям, таблица находок, песочница/eBPF, связки), затем «Находки последнего
+  скана», форма «Движок инференса» + «Запустить тест» (движки по формату модели) и таблица
+  истории проверок этого артефакта (скан/статус/вердикт/движок/набор/аттестация/дата);
+  кнопка «← Назад». После «Запустить тест» страница **автообновляется** (опрос каждые 5с):
+  история, находки и отчёт обновляются по завершении скана.
+- `LLM_TEST_NS=t-mlscan-sandbox` (было `mlscan-build` → ошибка создания Job); для не-LLM
+  «Запустить тест» = повторный скан из S3.
+- «Загрузка»: вкладка «Модели» (без «Локальные LLM»), отдельные «Загрузить» и
+  «Запустить проверку» (движок авто по формату/выбор); «Движки инференса» — загрузка
+  образа + тип моделей + тестовая модель + «Проверить инференс».
+- «Модель с HF» — только «HF: обзор доступного» (классический поиск убран): таблица с
+  чекбоксами, **размер** (из `usedStorage`), описание, формат, квантование, поддерживаемые
+  инференсы, «Скачать выбранные»; ниже — таблица **«Загрузки»** (модель/статус загрузки/
+  статус проверки/выбор инференса/«Запустить сканирование»/ошибка) с автообновлением каждые
+  5с; клик по модели/датасету — переход в детализацию; HF-токен — в «Настройках».
+- HF-загрузка: выбираются **весовые** файлы (не LICENSE/README), мелкие файлы — обычный
+  S3 PUT (без multipart `EntityTooSmall`), артефакт называется `<repo>.<ext>`
+  (например `tiny-gpt2.bin`, `Qwen3-0.6B.safetensors`) и так виден в «Сканах»; клик —
+  детализация (проверено: `tiny-gpt2.bin`, `source=hf`, detail 200).
+- Проверка выбирает движок по типу: LLM-движок (vLLM/SGLang/llama) → bundle-инференс на
+  нём; иначе — песочный скан, движок фиксируется в бандле и виден в таблицах.
+  Для vLLM/SGLang HF-модель грузится **целым каталогом** (config/tokenizer/веса):
+  HF-воркер скачивает все файлы репозитория, артефакт получает `metadata.dir`
+  (prefix + список файлов), а тест bundle собирает для `model-fetcher` манифест
+  presigned-URL и подаёт движку `--model-path /model`. GGUF/одиночный `.safetensors`
+  остаются для llama.cpp и статического анализа.
+  Проверено end-to-end: `Qwen/Qwen3-0.6B` (7 файлов, ~1.5 GB) → vLLM 0.9.2 в Kata
+  (`Quadro RTX 4000`) → **все 726 вопросов** активного набора, 23 232 токена, ~120 tok/s,
+  verdict `Needs review` (337 passed / 389 safety_fail), аттестация подписана
+  (`bundle b-6f9c130e…`, статус `done`).
+- Раньше тест bundle брал только первые 200 вопросов (`LIMIT 200`), из-за чего
+  «Администрирование» показывало `auto=37 overrides=0` (это маппинг домен→класс policy,
+  а не число вопросов), а прогон — 200/726. Теперь `_prompt_cases` по умолчанию берёт
+  весь набор (`LLM_TEST_MAX_QUESTIONS=0`), вопросы передаются в job через S3
+  presigned-URL (без лимитов env/ConfigMap), а в админ-панели рядом с `auto/overrides`
+  выводится активный набор и число вопросов. В таблице «История наборов тестов (XLSX)»
+  под статусом показывается текст предупреждений/ошибок (например,
+  «дубликат вопроса у id=['176', '177']»), а не только их количество.
+- **Одиночный HF-файл + vLLM/SGLang**: если артефакт — один `.safetensors` из HF
+  (например `Qwen3-1.7B.safetensors`), тест автоматически догружает **весь каталог**
+  репозитория (config/tokenizer/все шарды) в S3, помечает артефакт `metadata.dir`
+  и стартует job; статус в UI — `preparing` → `running`. `.safetensors`/`.bin`/`.pt`
+  считаются LLM-весами, если выбран LLM-движок. Вердикт инференса отражается и в
+  строке артефакта (последний скан).
+  Проверено: `Qwen/Qwen3-1.7B` (9 файлов, ~4.1 GB) → vLLM 0.9.2 в Kata → 726 вопросов,
+  23 232 токена, ~71 tok/s, verdict `Needs review` (339 passed / 387 safety_fail),
+  аттестация подписана.
+- **Устойчивость UI к недоступности Keycloak**: oauth2-proxy запускается с
+  `--skip-oidc-discovery` и явным `--oidc-jwks-url`, поэтому временный 503 от Keycloak
+  не вызывает crash-loop (ранее было 17 рестартов во время перезапуска узла).
+- **SGLang v0.5.9 на sm_75 (Quadro RTX 4000) — работает через runtime-shim**:
+  upstream `sgl_kernel` собран только для sm_80+ (`RMSNorm ... no kernel image`).
+  Добавлен ConfigMap `sgl-shim` (namespace `t-mlscan-sandbox`) с `sitecustomize.py`,
+  который заменяет `rmsnorm`/`fused_add_rmsnorm`/`silu_and_mul` на torch-реализации;
+  при `LLM_SGLANG_SM75=1` job монтирует шим в `/opt/sgl-sm75` и добавляет движку
+  `--attention-backend torch_native --sampling-backend pytorch --dtype float16`.
+  Проверено полным прогоном: `Qwen3-1.7B` → SGLang 0.5.9 на RTX 4000, **726 вопросов**,
+  11 616 токенов, ~908 с (~12.8 tok/s), verdict `Needs review` (338 passed / 388 safety_fail),
+  аттестация подписана; job сам удаляется после вердикта. Для Ampere+ шим не нужен
+  (`LLM_SGLANG_SM75=0`).
+  Подготовлен и альтернативный образ `deploy/tenant/images/engine-sglang-sm75`
+  (FROM v0.5.9 + шим), но его сборка через BuildKit упирается в медленный pull
+  базового слоя ~7 ГБ; рабочий путь — runtime-shim.
+- «Движки инференса»: загрузка образа **файлом** (tar → S3 → `/images/import`) или по ref;
+  тип моделей; тестовая модель + «Проверить инференс».
+- **vLLM/SGLang**: Dockerfile'ы `deploy/tenant/images/engine-vllm` и `engine-sglang`;
+  образы скопированы в Harbor через platform image-copy и **зарегистрированы** как LLM-движки:
+  `engine-vllm:v0.9.2@sha256:37cd5bd1…`, `engine-sglang:v0.5.9@sha256:f337dfb3…`
+  (`type=llm`). Job `llm_env.make_llama_test_job` выбирает команду по типу движка
+  (vllm/sglang/llama.cpp), запуск в Kata-песочнице (`t-mlscan-sandbox`, GPU).
+- «Модели»: «Загрузить» только сохраняет файл (`scan=0`, статус «Требуется сканирование»);
+  analytics-прокси `/upload` теперь пробрасывает `scan` в testing (раньше терял → автоскан).
+  После загрузки показывается статус и таблица истории загрузок (без кнопок запуска);
+  «Запустить проверку» — отдельная кнопка под формой, разблокируется при выбранном движке
+  и запускает повторный скан из S3 (`POST /v3/artifacts/{sha}/test`). Встроенный песочный
+  движок (`source=builtin-sandbox`, `type=pickle`) присутствует в списке движков.
+- «История операций» — отдельная вкладка (убрана из «Загрузки»).
+
 ## Исправления по ревью
 
 - Критичные: `mlscan-harness`/`mlscan-samples` и `harbor-pull` создаются
@@ -78,7 +166,7 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - Удалён неиспользуемый `mlscan-oidc` ExternalSecret; deception-субконфиги
   (`-aws/-ssh/-kube`) смонтированы в sandbox Job.
 - Gate: детерминированный, IP-based, host-IP проверки — INFO.
-- Код сервисов запечён в immutable-образ `harbor.platform.rtx.local/mlscan/services@sha256:ab1fb8a0…1e62`;
+- Код сервисов запечён в immutable-образ `harbor.platform.rtx.local/mlscan/services@sha256:da5b212d…ba97`;
   код-ConfigMap'ы удалены, `gen-configmaps.sh` создаёт только данные.
 - Сборка — платформенный **BuildKit** (`buildkitd.pf-ci.svc:1234`): Dockerfiles в
   `deploy/tenant/images/{services,sandbox}/Dockerfile`, Job в `pf-ci` через
@@ -96,8 +184,9 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   не создаёт/не переприменяет.
 - Presigned URL: `Host` без default-порта (443/80) в подписи и URL — иначе RGW
   отклоняет подпись (`SignatureDoesNotMatch`); проверено через внешний ingress.
-- Garage soft-decommissioned: StatefulSet `replicas: 0`, PVC `data-garage-0` освобождён,
-  ops без Garage admin (`GARAGE_ADMIN_URL=""`). Полное удаление манифестов — после `prune`.
+- Garage полностью выведен: манифесты `07-garage.yaml` убраны из kustomization,
+  live-объекты (`svc/garage`, `svc/garage-headless`, `statefulset/garage`,
+  `cm/garage-config`, `secret/garage-secrets`) удалены; ArgoCD `Synced/Healthy`.
 
 ## Выполнено Platform Team
 
@@ -122,8 +211,10 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 
 - `oauth2-proxy` (`mlscan-ui`) перед analytics: provider `keycloak-oidc`, client `mlscan-web`,
   redirect `https://mlscan.platform.rtx.local/oauth2/callback`; ingress `mlscan-ui` → `mlscan-ui:4180`.
-- Analytics: `MLSCAN_TRUST_PROXY=1` — доверяет `X-Auth-Request-User`/`X-Auth-Request-Groups`
-  (группа `mlscan-admins` → роль `admin`, иначе `viewer`); без заголовка — прежняя auth (401).
+- Analytics: `MLSCAN_TRUST_PROXY=1` — доверяет `X-Forwarded-User`/`X-Forwarded-Groups`
+  (их ставит oauth2-proxy `--pass-user-headers` в upstream; `X-Auth-Request-*` — это
+  response-заголовки для nginx auth_request, в upstream не идут). Группа `mlscan-admins`
+  → роль `admin`, иначе `viewer`; без заголовка — прежняя auth (401).
 - Проверено: ingress → 302 Keycloak; analytics с заголовком → 200, без → 401.
 - TLS: platform-ca смонтирован (`ConfigMap platform-ca`), `--provider-ca-file`;
   `--ssl-insecure-skip-verify` убран.
@@ -137,5 +228,11 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 
 ## Открытые пункты
 
-1. **Garage (полное удаление манифестов)** — требует `prune` от Platform Team
-   (Application с `prune:false`); сейчас StatefulSet в 0 реплик, PVC освобождён.
+1. ~~Harbor registry PVC 10Gi~~ — Platform Team расширил PVC до **98Gi** (сейчас занято ~35G);
+   vLLM/SGLang успешно скопированы и зарегистрированы как LLM-движки.
+2. ~~Garage (полное удаление манифестов)~~ — **закрыто**: манифесты удалены из репозитория,
+   live-объекты удалены вручную (при `prune:false` ArgoCD их не трогал).
+
+3. ~~Job LLM-теста не самозавершается~~ — **исправлено**: после записи вердикта bundle
+   сервис удаляет Job (`_k8s_delete_job_async`, через 5 с), GPU освобождается сразу;
+   проверено — после прогона 726 вопросов в sandbox не осталось Job/Pod.
