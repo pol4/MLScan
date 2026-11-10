@@ -87,6 +87,24 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(out["status"], "ok")            # пустой датасет не ошибка
         self.assertEqual(out["results"].get("total", 0), 0)
 
+    def test_probe_plugin_and_findings_assert(self):
+        import tests.plugins as _pl
+
+        @_pl.register("crit")
+        def _crit(ctx):
+            return [{"id": "X-1", "severity": "critical", "category": "probe"}]
+
+        pack = {"id": "t-fnd", "version": 1,
+                "steps": [{"type": "probe", "plugin": "crit"},
+                          {"type": "assert", "over": ["findings"],
+                           "rules": [{"type": "no_finding_severity", "severity": "critical"}]}]}
+        out = runner.run_pack(pack, FakeEngine(), ds.DatasetRepo())
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(len(out["findings"]), 1)
+        fa = out["steps"][1]["detail"]["findings_assert"]
+        self.assertFalse(fa["ok"])
+        self.assertIn("finding:critical", fa["fails"])
+
     def test_invalid_pack_raises(self):
         with self.assertRaises(ValueError):
             runner.run_pack({"id": "x", "version": 1, "steps": [{"type": "invoke"}]}, FakeEngine(), ds.DatasetRepo())

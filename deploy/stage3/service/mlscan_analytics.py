@@ -733,6 +733,11 @@ V3UI_MARKUP = """
   </div>
   <div class='upload' style='margin-top:0'><b>Датасеты (v4)</b>
     <div id='v4ds-list' style='font-size:12px;color:#9aa4b2'></div></div>
+  <div class='upload' style='margin-top:0'><b>План проверки bundle (v4)</b>
+    <input id='v4bp-id' type='text' placeholder='bundle_id (напр. b-…)' style='width:34%'>
+    <button type='button' id='v4bp-go'>Показать план</button>
+    <pre id='v4bp-out' style='white-space:pre-wrap;font-size:12px;color:#cfd6e0;margin:6px 0'></pre>
+  </div>
   <div class='upload' style='margin-top:0'><b>Квоты HF (per-tenant)</b>
     <input id='v3qa-tenant' type='text' placeholder='tenant' style='width:14%'>
     <input id='v3qa-bytes' type='number' placeholder='daily_bytes (пусто = снять)' style='width:16%'>
@@ -1360,6 +1365,11 @@ document.getElementById('f').addEventListener('submit',e=>{
     g('v4ds-list').innerHTML=(d.datasets||[]).map(x=>'<div>'+x.ref+' · кейсов '+x.cases+' · '+(x.source||'')+'</div>').join('')||'—';}catch(e){g('v4ds-list').textContent='ERR '+e.message;}};
   g('v4tp-plan').addEventListener('click',async()=>{try{const r=await fetch('/v4/testpacks/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({artifact_kind:g('v4tp-kind').value.trim(),engine:g('v4tp-engine').value.trim()})});const d=await r.json();show(d);}catch(e){show('ERR '+e.message);}});
   loadTp();loadDs();
+})();
+(function(){const g=id=>document.getElementById(id);const out=g('v4bp-out');if(!out)return;
+  g('v4bp-go').addEventListener('click',async()=>{const id=(g('v4bp-id').value||'').trim();if(!id)return;
+    try{const r=await fetch('/v4/bundles/'+encodeURIComponent(id)+'/plan');out.textContent=JSON.stringify(await r.json(),null,2);}
+    catch(e){out.textContent='ERR '+e.message;}});
 })();
 (function(){const sb=document.getElementById('imgsign-btn');
   sb&&sb.addEventListener('click',()=>{

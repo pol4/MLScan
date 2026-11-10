@@ -79,6 +79,25 @@ def _eval_rules(rules: list[dict[str, Any]], answer: str) -> list[str]:
     return fails
 
 
+FINDING_RULE_TYPES = ("no_finding_severity", "max_findings")
+
+
+def _eval_findings_rules(rules: list[dict[str, Any]], findings: list[dict[str, Any]]) -> list[str]:
+    """Проверить правила над находками (severity/количество). Возвращает список провалов."""
+    fails: list[str] = []
+    for r in rules or []:
+        t = r.get("type")
+        if t == "no_finding_severity":
+            sev = str(r.get("severity", "critical")).lower()
+            if any(str(f.get("severity", "")).lower() == sev for f in findings or []):
+                fails.append(f"finding:{sev}")
+        elif t == "max_findings":
+            n = int(r.get("n", 0) or 0)
+            if len(findings or []) > n:
+                fails.append(f"too_many_findings:{len(findings)}")
+    return fails
+
+
 def _aggregate(responses: list[dict[str, Any]], rules: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(responses)
     passed = 0
@@ -155,8 +174,22 @@ def run_pack(pack: dict[str, Any], engine: Any, datasets: Any, *,
                     rec["detail"] = ctl("load", {}) if callable(ctl) else "no loader"
 
             elif st == "probe":
-                fn = _get(engine, "probe")
-                rec["detail"] = fn(step.get("plugin")) if callable(fn) else "no probe"
+                from . import plugins as _plugins
+                name = step.get("plugin")
+                eng_manifest = {}
+                mf = _get(engine, "manifest")
+                if callable(mf):
+                    try:
+                        eng_manifest = mf() or {}
+                    except Exception:  # noqa: BLE001
+                        eng_manifest = {}
+                found = _plugins.run(name, {"engine": step.get("engine", ""),
+                                            "engine_manifest": eng_manifest, "datasets": datasets})
+                findings.extend(found)
+                fn = _get(engine, "probe")     # фолбэк: собственный probe движка
+                if not found and callable(fn):
+                    fn(name)
+                rec["detail"] = {"plugin": name, "findings": len(found)}
 
             elif st in ("invoke", "stream", "adversarial"):
                 ref = _resolve_dataset_ref(pack, step)
@@ -196,13 +229,22 @@ def run_pack(pack: dict[str, Any], engine: Any, datasets: Any, *,
                 rules = step.get("rules")
                 if isinstance(rules, str) or not rules:
                     rules = [{"type": "refusal_on_critical"}, {"type": "not_empty"}]
-                agg = _aggregate(responses, rules) if "responses" in over else None
-                if agg is not None:
+                resp_rules = [r for r in rules if r.get("type") not in FINDING_RULE_TYPES]
+                fnd_rules = [r for r in rules if r.get("type") in FINDING_RULE_TYPES]
+                if "responses" in over and resp_rules:
+                    agg = _aggregate(responses, resp_rules)
                     assert_agg = agg
                     rec["detail"] = {"assert": {k: agg[k] for k in ("total", "passed", "safety_fail", "pass_rate")}}
                 if observer is not None and "events" in over:
                     f = _get(observer, "findings")
                     findings.extend(list(f()) if callable(f) else [])
+                if "findings" in over and fnd_rules:
+                    ff = _eval_findings_rules(fnd_rules, findings)
+                    d = rec.get("detail")
+                    if not isinstance(d, dict):
+                        d = {}
+                    d["findings_assert"] = {"ok": not ff, "fails": ff}
+                    rec["detail"] = d
 
             elif st == "snapshot":
                 fn = _get(engine, "snapshot")
