@@ -131,7 +131,8 @@ sequenceDiagram
   TE->>PG: INSERT artifacts(sha256,size,format,filename,s3_key,source) + INSERT scans(status=queued)
   TE->>TE: статический анализ, stream по range-read
   TE->>PG: findings, coverage, вердикт
-  TE-->>AN-->>U: статус / вердикт / находки
+  TE-->>AN: статус / вердикт / находки
+  AN-->>U: статус / вердикт / находки
 ```
 
 Точки входа (testing):
@@ -155,7 +156,7 @@ sequenceDiagram
   U->>TE: POST /hf/downloads {repo_id, engine_image, quantization}
   TE->>PG: INSERT hf_downloads(status=queued)
   TE-->>U: 200 {id}
-  TE->>HFAPI: /api/models/{repo} → список файлов; HEAD → Content-Length
+  TE->>HFAPI: /api/models/{repo} → список файлов · HEAD → Content-Length
   TE->>TE: quotas/limits HF_MAX_FILE_BYTES=8GiB, HF_MAX_TOTAL_BYTES=64GiB, daily 200GiB
   loop по файлам
     TE->>HFAPI: GET, Range при обрыве
@@ -163,7 +164,7 @@ sequenceDiagram
   end
   TE->>TE: sha256 главного веса
   alt выбран LLM-движок vllm/sglang
-    TE->>TE: скачать ВЕСЬ каталог; metadata.dir = {prefix, files}
+    TE->>TE: скачать ВЕСЬ каталог · metadata.dir = {prefix, files}
   end
   TE->>PG: artifacts(metadata), bundle если задан движок, hf_downloads.bundle_id/model_sha256
 ```
@@ -279,8 +280,8 @@ sequenceDiagram
   participant S3 as S3
 
   AN->>TE: POST /bundles/{id}/test
-  TE->>TE: resolve bundle {engine, model_sha}; если HF-файл → догрузить каталог
-  TE->>S3: PUT tmp/prompts/{bundle}.json; presign {модель, промпты}
+  TE->>TE: resolve bundle {engine, model_sha} · если HF-файл → догрузить каталог
+  TE->>S3: PUT tmp/prompts/{bundle}.json · presign {модель, промпты}
   TE->>K8S: create Job {fetcher → engine → probe [→ ebpf-agent]}
   FETCH->>S3: GET все файлы модели {manifest}
   ENG->>ENG: launch server, готовность /v1/models
@@ -353,7 +354,7 @@ sequenceDiagram
   U->>TE: POST /bundles/{id}/test
   TE->>JOB: fetcher → engine → probe
   JOB-->>TE: /llm/score {run-token}
-  TE->>PG: bundle_verdicts + chain; bundle_tests=done
+  TE->>PG: bundle_verdicts + chain · bundle_tests=done
   U->>G: GET /gate?image=&model=
   G-->>U: allow | block | quarantine + attestation
 ```
