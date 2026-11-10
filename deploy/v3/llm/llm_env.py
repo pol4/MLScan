@@ -246,6 +246,9 @@ _PROBE_SRC = (
 )
 
 
+_V4_PROBE_SRC = ("import sys; sys.path.insert(0,'/opt/v4'); "                "from tests import probe; raise SystemExit(probe.main())")
+
+
 def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, model_sha256: str,
                         prompts: list, testing_url: str, api_key: str, prompt_set: str = "",
                         scan_id: str = "", namespace: str = NAMESPACE, gpu: bool = True,
@@ -258,7 +261,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         model_files: list | None = None, prompts_configmap: str = "",
                         prompts_url: str = "", sgl_shim: bool = False,
                         testpack_url: str = "", testpack_meta: str = "",
-                        engine_descriptor: dict | None = None, deception: bool = True) -> dict:
+                        engine_descriptor: dict | None = None, deception: bool = True,
+                        v4_probe: bool = False, probe_image: str = "") -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -360,8 +364,10 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
             pass
     containers = [
         _engine_c,
-        {"name": "probe", "image": "python:3.12-slim",
-         "command": ["python", "-c", _PROBE_SRC],
+        {"name": "probe",
+         "image": (probe_image if (v4_probe and probe_image) else "python:3.12-slim"),
+         "command": (["python3", "-c", _V4_PROBE_SRC] if (v4_probe and probe_image)
+                     else ["python", "-c", _PROBE_SRC]),
          "securityContext": dict(hardened, readOnlyRootFilesystem=False),
          "volumeMounts": ([{"name": "prompts", "mountPath": "/prompts", "readOnly": True}]
                           if prompts_configmap else []),

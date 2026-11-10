@@ -269,6 +269,7 @@ def run_pack(pack: dict[str, Any], engine: Any, datasets: Any, *,
         "results": (assert_agg if assert_agg is not None
                     else (_aggregate(responses, [{"type": "not_empty"}]) if responses else {})),
         "findings": findings,
+        "responses": responses,
         "coverage": {"steps_done": done, "steps_total": len(pack["steps"])},
         "budgets_used": {"wall_s": round(_now(clock) - t0, 3), "tokens": tokens},
         "error": error,

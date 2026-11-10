@@ -25,7 +25,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: testing
-          image: harbor.platform.rtx.local/mlscan/services@sha256:4b3c729a88d90dcb86bca4d885db8add04cbca95bff9ca27166d44481acc72dc
+          image: harbor.platform.rtx.local/mlscan/services@sha256:b67043dcbccbf9de968c803bc5c8778d1523adcb9ef03d0822fb93a8c166485c
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_testing.py"]
           env:
@@ -38,6 +38,9 @@ spec:
             - {name: LLM_TEST_DECEPTION, value: "1"}
             # in-guest eBPF-observer: включать (1) после появления kata-btf (BTF-ядро) и Kyverno-allowance
             - {name: LLM_TEST_EBPF, value: "0"}
+            # probe как v4-раннер (образ сервисов); 1 — включить v4-probe
+            - {name: LLM_V4_PROBE, value: "1"}
+            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:b67043dcbccbf9de968c803bc5c8778d1523adcb9ef03d0822fb93a8c166485c"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}
             - {name: PORT, value: "8080"}
