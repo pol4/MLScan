@@ -1,0 +1,134 @@
+# Архитектура v4 — ПРЕДЛОЖЕНИЕ для Platform Team (ArgoCD `tenant-mlscan` это НЕ применяет).
+#
+# Инвариант v4: любые Job/Pod проверки артефактов в namespace `t-mlscan-sandbox` используют только
+# Kata-профили (`kata`/`kata-btf`/`kata-gpu`); host-профили (`nvidia`/`runc`) запрещены; образы — по
+# digest; securityContext — hardened; контейнеру `ebpf-agent` разрешены только caps BPF/PERFMON.
+#
+# Применение (силами платформы):  kubectl apply -f kyverno-tenant-sandbox.yaml
+# Проверка:  Job с runtimeClassName: nvidia  →  должен быть отклонён admission.
+# Замечание: политики cluster-scoped; их следует применять после согласования (ослабление PSA
+# namespace при включении in-guest observer — см. `deploy/v3/sandbox/kata-btf/30-allow-ebpf-agent.yaml`).
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mlscan-tenant-sandbox-runtime
+  annotations:
+    policies.kyverno.io/title: MLScan tenant sandbox runtime (v4)
+    policies.kyverno.io/description: "Разрешены только Kata-профили; образы по digest"
+spec:
+  background: false
+  validationFailureAction: Enforce
+  rules:
+    - name: require-kata-runtime-class
+      match:
+        any:
+          - resources:
+              kinds: [Job, Pod]
+              namespaces: [t-mlscan-sandbox]
+      validate:
+        message: "разрешены только RuntimeClass kata/kata-btf/kata-gpu (host-профили nvidia/runc запрещены)"
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.runtimeClassName || request.object.spec.template.spec.runtimeClassName }}"
+                operator: AnyNotIn
+                value: ["kata", "kata-btf", "kata-gpu"]
+    - name: require-digest-images
+      match:
+        any:
+          - resources:
+              kinds: [Job, Pod]
+              namespaces: [t-mlscan-sandbox]
+      validate:
+        message: "образы контейнеров должны быть закреплены по digest (@sha256:…)"
+        pattern:
+          spec:
+            template:
+              spec:
+                containers:
+                  - image: "*@sha256:*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mlscan-tenant-sandbox-hardened
+  annotations:
+    policies.kyverno.io/title: MLScan tenant sandbox hardened (v4)
+spec:
+  background: false
+  validationFailureAction: Enforce
+  rules:
+    - name: no-privileged-host-dangerous-caps
+      match:
+        any:
+          - resources:
+              kinds: [Job, Pod]
+              namespaces: [t-mlscan-sandbox]
+      validate:
+        message: "запрещены privileged/host*/опасные capabilities; ebpf-agent допускает только BPF/PERFMON"
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.spec.template.spec.containers[?name!='ebpf-agent'].securityContext.capabilities.add[] | [?@ != 'ALL'] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ request.object.spec.template.spec.containers[?name!='ebpf-agent'].securityContext.runAsNonRoot | [?@ != `true`] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ request.object.spec.template.spec.containers[].securityContext.capabilities.drop[] | [?@ != 'ALL'] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ request.object.spec.template.spec.containers[].securityContext.privileged || `false` }}"
+                operator: AnyIn
+                value: [true, "true", "True", 1, "1"]
+              - key: "{{ request.object.spec.template.spec.hostNetwork || `false` }}"
+                operator: Equals
+                value: true
+              - key: "{{ request.object.spec.template.spec.hostPID || `false` }}"
+                operator: Equals
+                value: true
+    - name: ebpf-agent-caps-allowlist
+      match:
+        any:
+          - resources:
+              kinds: [Job, Pod]
+              namespaces: [t-mlscan-sandbox]
+      validate:
+        message: "контейнер ebpf-agent может добавлять только caps BPF/PERFMON"
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.template.spec.containers[?name=='ebpf-agent'].securityContext.capabilities.add[] }}"
+                operator: AnyNotIn
+                value: ["BPF", "PERFMON"]
+---
+# ВКЛЮЧАТЬ ПОСЛЕ перевода ядра гостя на kata-btf и включения observer (LLM_TEST_EBPF=1),
+# а также после того как Job будет помечаться label-ом mlscan.io/unified-check=true:
+#
+# apiVersion: kyverno.io/v1
+# kind: ClusterPolicy
+# metadata: { name: mlscan-tenant-sandbox-observer }
+# spec:
+#   background: false
+#   validationFailureAction: Enforce
+#   rules:
+#     - name: require-observer-and-traps
+#       match:
+#         any:
+#           - resources:
+#               kinds: [Job]
+#               namespaces: [t-mlscan-sandbox]
+#               selector:
+#                 matchLabels: { mlscan.io/unified-check: "true" }
+#       validate:
+#         message: "проверочные Job'ы v4 обязаны включать observer и traps (deception)"
+#         deny:
+#           conditions:
+#             any:
+#               - key: "{{ request.object.spec.template.spec.containers[?name=='observer'] | length(@) }}"
+#                 operator: Equals
+#                 value: 0
+#               - key: "{{ request.object.spec.template.spec.volumes[?name=='deception'] | length(@) }}"
+#                 operator: Equals
+#                 value: 0
