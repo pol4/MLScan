@@ -1,0 +1,36 @@
+# Kata-native CDI GPU device plugin — DaemonSet.
+# Замените IMAGE на собранный образ (напр. harbor.platform.rtx.local/nvidia/kata-native-gpu-plugin:<tag>).
+# Требуется: k8s>=1.29 (CDIDevices), CDI-spec на узле (напр. /etc/cdi/nvidia-tu104.json,
+# kind nvidia.com/TU104GL_QUADRO_RTX_4000). RuntimeClass НЕ нужен (плагин host-network).
+#
+# ПРИМЕЧАНИЕ: этот плагин ЗАМЕНЯЕТ GPU-Operator sandbox-device-plugin для нашего кейса.
+# Если оператор держит свой sandbox-DS — отключите его на узле (label
+# nvidia.com/gpu.deploy.sandbox-device-plugin=false), чтобы не было двух плагинов
+# на один resourceName.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kata-native-gpu-device-plugin
+  namespace: kube-system
+  labels: { app: kata-native-gpu-device-plugin }
+spec:
+  selector: { matchLabels: { name: kata-native-gpu-device-plugin } }
+  template:
+    metadata: { labels: { name: kata-native-gpu-device-plugin } }
+    spec:
+      priorityClassName: system-node-critical
+      hostNetwork: true
+      tolerations:
+        - { operator: Exists, effect: NoSchedule }
+        - { operator: Exists, effect: NoExecute }
+      containers:
+        - name: plugin
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: IfNotPresent
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          volumeMounts:
+            - { name: device-plugin, mountPath: /var/lib/kubelet/device-plugins }
+            - { name: cdi, mountPath: /etc/cdi, readOnly: true }
+      volumes:
+        - { name: device-plugin, hostPath: { path: /var/lib/kubelet/device-plugins } }
+        - { name: cdi, hostPath: { path: /etc/cdi } }
