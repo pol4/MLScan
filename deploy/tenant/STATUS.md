@@ -274,8 +274,11 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - **Открыто (observer)**: гость `kata-gpu` **без BTF** (`/sys/kernel/btf/vmlinux`) -> `ebpf-agent`
   падает; `LLM_TEST_EBPF=0` (временно). Запросили BTF-вариант nvidia-gpu у платформы; после него —
   включим observer и закроем инвариант наблюдения v4.
-- **Регресс сканов (обнаружено)**: dynamic-этап скан-джобов падает на скачивании артефакта:
-  `HTTP Error 404` (объекты в S3 есть — `s3client.exists=True`). Не связано с `kata-btf`/observer
-  (воспроизводится и на `kata`). Скан-путь возвращён на `kata`/`SANDBOX_EBPF=0`; нужна отдельная
-  диагностика URL/маршрута скачивания (artifacts/8090 или presigned). Observer для сканов проверялся:
-  события и находка `LLM-B-02` успешно дошли (`/llm/events` 200), но job падал из-за 404 ниже по стеку.
+- **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
+  сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
+  не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
+  `artifact_token` и класть `s3_key` в запись re-scan. Проверено: `zip` (усечённый) -> `Inconclusive`
+  (легитимно), `pickle` -> `Safe`, `sandbox_s≈10с` (динамика идёт).
+- **Observer на scan-пути включён и проверен**: `SANDBOX_RUNTIME_CLASS=kata-btf` (только у него есть BTF;
+  `kata` -> `NO_BTF`), `SANDBOX_EBPF=1`. Скан под `kata-btf`: job `Completed` (harness + `ebpf-agent`),
+  события ушли в `/llm/events` (200). Для benign-артефакта находок нет (ожидаемо).

@@ -25,14 +25,14 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: testing
-          image: harbor.platform.rtx.local/mlscan/services@sha256:b50efe75505173cb8507e10c1b4e238686c6d7dc71003416e2cd7a113bcac083
+          image: harbor.platform.rtx.local/mlscan/services@sha256:04acc7ca3d420881e615be611958f8cd8b0d52cfe620e3bab8cb033fda387038
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_testing.py"]
           env:
             - {name: SANDBOX_NS, value: t-mlscan-sandbox}
             # v4: наблюдаемость сканов (kata-btf даёт BTF; agent root-в-госте + caps)
-            - {name: SANDBOX_EBPF, value: "0"}
-            - {name: SANDBOX_RUNTIME_CLASS, value: kata}
+            - {name: SANDBOX_EBPF, value: "1"}
+            - {name: SANDBOX_RUNTIME_CLASS, value: kata-btf}
             - {name: LLM_TEST_NS, value: t-mlscan-gpu}
             - {name: LLM_TEST_URL, value: "http://mlscan-testing.t-mlscan-app.svc.cluster.local:8080"}
             - {name: LLM_TEST_RUNTIME_CLASS, value: kata-gpu}
@@ -46,7 +46,7 @@ spec:
             - {name: LLM_TEST_EBPF, value: "0"}
             # probe как v4-раннер (образ сервисов); 1 — включить v4-probe
             - {name: LLM_V4_PROBE, value: "1"}
-            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:b50efe75505173cb8507e10c1b4e238686c6d7dc71003416e2cd7a113bcac083"}
+            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:04acc7ca3d420881e615be611958f8cd8b0d52cfe620e3bab8cb033fda387038"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}
             - {name: PORT, value: "8080"}

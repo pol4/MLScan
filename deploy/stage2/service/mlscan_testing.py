@@ -4409,12 +4409,14 @@ class Handler(BaseHTTPRequestHandler):
                                         "hint": "нет S3-ключа для повторного скана"})
             s3_key, size, fname, afmt = rows2[0]
             new_scan = uuid.uuid4().hex
+            token = uuid.uuid4().hex   # нужен для /a/<scan>/<token>/<name> (иначе пустой токен -> 404)
             if DB_ENABLED:
                 db_exec("INSERT INTO scans(scan_id,artifact_id,status,stage,progress,kind) "
                         "SELECT " + _lit(new_scan) + ",id,'queued','queued',0,'model' "
                         "FROM artifacts WHERE sha256=" + _lit(sha))
             rec = {"scan_id": new_scan, "name": fname, "format": afmt, "size": int(size or 0),
-                   "kind": "model", "sha256": sha, "state": "queued", "stage": "queued",
+                   "kind": "model", "sha256": sha, "artifact_token": token, "s3_key": s3_key,
+                   "state": "queued", "stage": "queued",
                    "progress": 0, "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
             save_scan(rec)
             threading.Thread(target=_run_direct_with_task,
