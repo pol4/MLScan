@@ -307,6 +307,9 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
             {"name": "AWS_SHARED_CREDENTIALS_FILE", "value": "/deception/.aws/credentials"},
             {"name": "AWS_CONFIG_FILE", "value": "/deception/.aws/config"},
             {"name": "KUBECONFIG", "value": "/deception/.kube/config"}]
+    # Kyverno (t-mlscan-*): все образы по digest — переиспользуем services-образ для служебных контейнеров
+    util_image = (probe_image or os.environ.get("SERVICES_IMAGE", "") or "python:3.12-slim")
+
     eng_l = (engine_image or "").lower()
     model_path = "/model" if model_files else "/model/model.gguf"
     if "sglang" in eng_l:
@@ -392,7 +395,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
         # B1: образ сенсора (digest-pinned) предпочтительнее ConfigMap; при отсутствии — python + ConfigMap
         _ebpf_image = ebpf_image or os.environ.get("EBPF_AGENT_IMAGE", "")
         containers.append({
-            "name": "ebpf-agent", "image": _ebpf_image or "python:3.12-slim",
+            "name": "ebpf-agent", "image": _ebpf_image or util_image,
             "command": ["python", "/opt/ebpf/ebpf_agent.py", "--duration", str(int(ttl_seconds) - 30),
                         "--post", testing_url, "--key", api_key,
                         "--scan-id", scan_id or ("bundle-test-" + bundle_id), "--nonce", "",
@@ -425,7 +428,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                                     {"runAsNonRoot": True, "runAsUser": uid, "runAsGroup": uid,
                                      "fsGroup": uid, "seccompProfile": {"type": "RuntimeDefault"}}),
                 "initContainers": [{
-                    "name": "model-fetcher", "image": "python:3.12-slim",
+                    "name": "model-fetcher", "image": util_image,
                     "command": ["python", "-c", _FETCH_SRC],
                     "env": (([{"name": "FETCH_MANIFEST", "value": json_dumps(model_files)}] if model_files else
                              [{"name": "FETCH_URL", "value": model_url},

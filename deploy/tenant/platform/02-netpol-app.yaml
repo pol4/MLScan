@@ -123,6 +123,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: t-mlscan-sandbox
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: t-mlscan-gpu
       ports:
         - {protocol: TCP, port: 8080}
         - {protocol: TCP, port: 8090}
