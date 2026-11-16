@@ -30,6 +30,9 @@ spec:
           command: ["python", "/opt/svc/mlscan_testing.py"]
           env:
             - {name: SANDBOX_NS, value: t-mlscan-sandbox}
+            # v4: наблюдаемость сканов (kata-btf даёт BTF; agent root-в-госте + caps)
+            - {name: SANDBOX_EBPF, value: "0"}
+            - {name: SANDBOX_RUNTIME_CLASS, value: kata}
             - {name: LLM_TEST_NS, value: t-mlscan-gpu}
             - {name: LLM_TEST_URL, value: "http://mlscan-testing.t-mlscan-app.svc.cluster.local:8080"}
             - {name: LLM_TEST_RUNTIME_CLASS, value: kata-gpu}
