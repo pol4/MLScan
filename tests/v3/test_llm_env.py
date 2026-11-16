@@ -169,6 +169,26 @@ class GpuEnvTest(unittest.TestCase):
         self.assertIn("deception", names)                  # Ф5: ловушки на инференс-пути
         self.assertEqual(spec["runtimeClassName"], "kata")
 
+    def test_gpu_resource_key_override(self):
+        # ключ ресурса проявляется в режиме device-plugin (limits)
+        prev = os.environ.get("MLSCAN_GPU_MODE")
+        os.environ["MLSCAN_GPU_MODE"] = "device-plugin"
+        try:
+            job = llm_env.make_llama_test_job(
+                bundle_id="b-test123", engine_image="reg/llama@sha256:" + "a" * 64,
+                model_url="https://s3/presigned", model_sha256="b" * 64,
+                prompts=[{"id": "q1", "prompt": "x"}],
+                testing_url="http://t", api_key="k", prompt_set="ps", gpu=True,
+                runtime_class="kata-gpu", gpu_resource="nvidia.com/TU104GL_QUADRO_RTX_4000")
+            eng = job["spec"]["template"]["spec"]["containers"][0]
+            self.assertEqual(eng["resources"]["limits"].get("nvidia.com/TU104GL_QUADRO_RTX_4000"), 1)
+            self.assertNotIn("nvidia.com/gpu", eng["resources"]["limits"])
+        finally:
+            if prev is None:
+                os.environ.pop("MLSCAN_GPU_MODE", None)
+            else:
+                os.environ["MLSCAN_GPU_MODE"] = prev
+
     def test_llm_test_job_probe_payload(self):
         spec = self._llm_job()["spec"]["template"]["spec"]
         probe = spec["containers"][1]

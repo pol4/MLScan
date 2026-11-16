@@ -262,7 +262,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         prompts_url: str = "", sgl_shim: bool = False,
                         testpack_url: str = "", testpack_meta: str = "",
                         engine_descriptor: dict | None = None, deception: bool = True,
-                        v4_probe: bool = False, probe_image: str = "") -> dict:
+                        v4_probe: bool = False, probe_image: str = "",
+                        gpu_resource: str = "") -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -281,7 +282,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
     limits = {"memory": f"{int(res.get('ram_gb', 32))}Gi", "cpu": str(res.get("cpu", "4")),
               "ephemeral-storage": f"{int(res.get('disk_gb', 40))}Gi"}
     if gpu and gpu_mode == "device-plugin":
-        limits["nvidia.com/gpu"] = 1
+        # v4: ключ GPU-ресурса настраиваемый (nvidia.com/gpu | nvidia.com/<MODEL> для Kata-passthrough)
+        limits[gpu_resource or os.environ.get("LLM_TEST_GPU_RESOURCE", "nvidia.com/gpu")] = 1
     engine_env = [{"name": "LLAMA_ARG_HOST", "value": "0.0.0.0"},
                   # числовой UID без записи в /etc/passwd -> torch.getpass.getuser() падает
                   {"name": "USER", "value": "mlscan"}, {"name": "LOGNAME", "value": "mlscan"},

@@ -25,7 +25,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: testing
-          image: harbor.platform.rtx.local/mlscan/services@sha256:a6842860fe7209a80cea9e979bf37516fa0a2e9d5f7f7b692429d3767cbc186b
+          image: harbor.platform.rtx.local/mlscan/services@sha256:d8e813b7bfff1691686bc39e32de652428c08148be867c0355b702e98deb1bf1
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_testing.py"]
           env:
@@ -36,11 +36,13 @@ spec:
             - {name: LLM_TEST_GPU, value: "1"}
             - {name: LLM_SGLANG_SM75, value: "1"}
             - {name: LLM_TEST_DECEPTION, value: "1"}
+            # ключ GPU-ресурса: nvidia.com/gpu | nvidia.com/<MODEL> (Kata passthrough)
+            - {name: LLM_TEST_GPU_RESOURCE, value: "nvidia.com/gpu"}
             # in-guest eBPF-observer: включать (1) после появления kata-btf (BTF-ядро) и Kyverno-allowance
             - {name: LLM_TEST_EBPF, value: "0"}
             # probe как v4-раннер (образ сервисов); 1 — включить v4-probe
             - {name: LLM_V4_PROBE, value: "1"}
-            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:a6842860fe7209a80cea9e979bf37516fa0a2e9d5f7f7b692429d3767cbc186b"}
+            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:d8e813b7bfff1691686bc39e32de652428c08148be867c0355b702e98deb1bf1"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}
             - {name: PORT, value: "8080"}
