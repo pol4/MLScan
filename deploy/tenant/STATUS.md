@@ -264,3 +264,13 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 3. ~~Job LLM-теста не самозавершается~~ — **исправлено**: после записи вердикта bundle
    сервис удаляет Job (`_k8s_delete_job_async`, через 5 с), GPU освобождается сразу;
    проверено — после прогона 726 вопросов в sandbox не осталось Job/Pod.
+- **v4 GPU-в-Kata — ПРОВЕРЕНО (LLM-инференс)**: LLM-тесты идут в ns `t-mlscan-gpu`
+  (`runtimeClassName: kata-gpu`, лимит только `nvidia.com/gpu`; Kata VM фиксирована 32G/4vcpu),
+  `LLM_TEST_NS=t-mlscan-gpu`, `MLSCAN_GPU_MODE=device-plugin`. vLLM 0.9.2 + Qwen3-1.7B из S3:
+  короткий (12) -> `Safe`, полный **726 -> `Needs review`** (23 232 токена). Раньше корректно работал
+  host-`nvidia`; теперь — микро-ВМ. Правки тенанта: `kata_vm` (убирать cpu/memory-лимиты), digest-образ
+  `util_image` для fetcher/ebpf (Kyverno `require-digest-images-jobs`), netpol `allow-sandbox-artifacts`
+  пускает `t-mlscan-gpu` (ingress к `mlscan-testing:8080/8090`).
+- **Открыто (observer)**: гость `kata-gpu` **без BTF** (`/sys/kernel/btf/vmlinux`) -> `ebpf-agent`
+  падает; `LLM_TEST_EBPF=0` (временно). Запросили BTF-вариант nvidia-gpu у платформы; после него —
+  включим observer и закроем инвариант наблюдения v4.
