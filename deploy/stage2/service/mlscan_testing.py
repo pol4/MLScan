@@ -3039,6 +3039,7 @@ class Handler(BaseHTTPRequestHandler):
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
             scan_id=scan_id, namespace=LLM_TEST_NS, gpu=gpu,
             runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),
+            kata_vm=str(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS).lower().startswith("kata"),
             max_tokens=int(body.get("max_tokens") or LLM_TEST_MAX_TOKENS),
             resources={"ram_gb": int(body.get("ram_gb") or LLM_TEST_RAM_GB),
                        "disk_gb": int(body.get("disk_gb") or LLM_TEST_DISK_GB), "cpu": "4"},

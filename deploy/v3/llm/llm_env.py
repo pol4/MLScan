@@ -263,7 +263,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         testpack_url: str = "", testpack_meta: str = "",
                         engine_descriptor: dict | None = None, deception: bool = True,
                         v4_probe: bool = False, probe_image: str = "",
-                        gpu_resource: str = "") -> dict:
+                        gpu_resource: str = "", kata_vm: bool = False) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -463,6 +463,12 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
     }
     if runtime_class:
         spec["template"]["spec"]["runtimeClassName"] = runtime_class
+    if kata_vm:
+        # v4/Kata: VM (vcpu/mem) выводится из limits пода => для kata-gpu оставляем ТОЛЬКО nvidia.com/gpu
+        for _c in (spec["template"]["spec"].get("initContainers") or []) + (spec["template"]["spec"].get("containers") or []):
+            lim = ((_c.get("resources") or {}).get("limits") or {})
+            for k in ("cpu", "memory"):
+                lim.pop(k, None)
     return {"apiVersion": "batch/v1", "kind": "Job",
             "metadata": {"name": f"mlscan-llm-test-{bundle_id[:24].replace('_', '-')}",
                          "namespace": namespace,
