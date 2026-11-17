@@ -28,6 +28,8 @@ done
 echo "[mirror-gitea] fetch $remote (prune)"
 git -c "http.https://$host.proxy=" fetch "$remote" --prune
 
-echo "[mirror-gitea] push ${force:+--force }$remote --all --tags"
-git -c "http.https://$host.proxy=" push $force "$remote" --all --tags
+echo "[mirror-gitea] push ${force:+--force }$remote (branches)"
+git -c "http.https://$host.proxy=" push $force "$remote" --all
+echo "[mirror-gitea] push ${force:+--force }$remote (tags)"
+git -c "http.https://$host.proxy=" push $force "$remote" --tags
 echo "[mirror-gitea] ok"
