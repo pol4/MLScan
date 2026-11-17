@@ -290,12 +290,15 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   в RC `kata-gpu` `mount -t tracefs` -> ok, `/sys/kernel/tracing/events/syscalls` есть,
   `BPF_PROG_LOAD(raw_tp)` -> `fd=3`. Тенант: агент монтирует tracefs и стартует от root с этими caps
   (`deploy/v3/llm/llm_env.py`), `LLM_TEST_EBPF=1`. (`req-20261117-005` Verified.)
-- **БЛОКЕР (новый, `kata-gpu` GPU-passthrough)**: после апдейта гостевого ядра до v4 GPU-поды в RC
-  `kata-gpu` (`nvidia.com/gpu:1`) не выходят в Running — застревают в `ContainerCreating`
-  (`FailedCreatePodSandBox DeadlineExceeded`, ранее «sandbox name reserved»). Не-GPU под в `kata-gpu`
-  поднимается за <45с (`uname=6.18.56-nvidia-gpu`), узел Ready, allocatable GPU=2. До апдейта ядра
-  GPU-LLM прогон поднимался. Блокирует финальный 726q-прогон с наблюдателем. Запрошено у платформы:
-  `req-20261117-006`. Код наблюдателя (tracefs + caps) уже в образе `services:5d7d712`.
+- **GPU-путь ВОССТАНОВЛЕН; observer на GPU заблокирован несовместимостью ядра и NVIDIA-модулей**
+  (`req-20261117-006`): tracing-ядро v4 меняет `struct module`, ломая vendor-модули NVIDIA
+  (`module nvidia: .gnu.linkonce.this_module section size must match`), поэтому платформа откатила
+  ядро `kata-gpu` на **v3 (BTF-only)** и сняла исключение `SYS_ADMIN` для `ebpf-agent`. Независимая
+  проверка тенанта: GPU-под в `kata-gpu` снова `Succeeded` (`uname=6.18.56-nvidia-gpu`, BTF есть,
+  `nvidia-smi` видит RTX 4000); короткий LLM-прогон (5q, GPU) — `done`/`Safe`. `LLM_TEST_EBPF=0`
+  (observer на GPU невозможен на v3). **Нужно решение оператора**: пересобрать модули NVIDIA под
+  tracing-ядро (крупная привилегированная задача) либо принять observer только на scan-пути
+  (`kata-btf`).
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
