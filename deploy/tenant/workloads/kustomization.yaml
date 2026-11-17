@@ -17,3 +17,4 @@ resources:
   - sandbox/artifacts-proxy.yaml
   - sandbox/sgl-shim.yaml
   - sandbox/ebpf-agent.yaml
+  - gpu
