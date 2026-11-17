@@ -299,6 +299,11 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   (observer на GPU невозможен на v3). **Нужно решение оператора**: пересобрать модули NVIDIA под
   tracing-ядро (крупная привилегированная задача) либо принять observer только на scan-пути
   (`kata-btf`).
+- **Решение оператора (17.11): пересобрать модули NVIDIA под tracing-ядро.** Заявка платформе
+  `req-20261117-007`: пересобрать vendor-модули NVIDIA (615.71.09) под tracing-конфиг v4 и перепаковать
+  Kata extension-образ (ext4 + dm-verity, verity params), затем вернуть tracing-ядро и Kyverno-исключение
+  caps `BPF/PERFMON/SYS_ADMIN` для `ebpf-agent`. Тенант после выката: вернуть `LLM_TEST_EBPF=1`, прогнать
+  726q и зафиксировать `LLM-B-01`. До этого — `LLM_TEST_EBPF=0`, observer только на scan-пути.
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
