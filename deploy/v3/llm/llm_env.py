@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 
 try:  # v4: движок как данные (образ/команда/ресурсы из EngineDescriptor)
@@ -396,17 +397,21 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
         _ebpf_image = ebpf_image or os.environ.get("EBPF_AGENT_IMAGE", "")
         containers.append({
             "name": "ebpf-agent", "image": _ebpf_image or util_image,
-            "command": ["python", "/opt/ebpf/ebpf_agent.py", "--duration", str(int(ttl_seconds) - 30),
-                        "--post", testing_url, "--key", api_key,
-                        "--scan-id", scan_id or ("bundle-test-" + bundle_id), "--nonce", "",
-                        "--trigger-shell"],
+            # F5: tracefs нужен агенту для raw-tracepoint; в госте mount требует CAP_SYS_ADMIN.
+            "command": ["sh", "-c",
+                        "mount -t tracefs tracefs /sys/kernel/tracing 2>/dev/null || true; "
+                        "exec python /opt/ebpf/ebpf_agent.py --duration " + str(int(ttl_seconds) - 30)
+                        + " --post " + shlex.quote(testing_url)
+                        + " --key " + shlex.quote(api_key)
+                        + " --scan-id " + shlex.quote(scan_id or ("bundle-test-" + bundle_id))
+                        + " --nonce '' --trigger-shell"],
             "env": ([{"name": "EBPF_DUMP_SLOTS", "value": "1"}, {"name": "EBPF_DUMP_RINGS", "value": "1"}]
                     if os.environ.get("MLSCAN_EBPF_DEBUG") == "1" else []),
             # в этой сборке Kata eBPF доступен только root-в-госте (non-root даёт EPERM даже с CAP_BPF):
             # агент — наш доверенный код, движок остаётся non-root; под изолирован в микро-ВМ.
             "securityContext": {"runAsNonRoot": False, "runAsUser": 0,
                                 "allowPrivilegeEscalation": False,
-                                "capabilities": {"drop": ["ALL"], "add": ["BPF", "PERFMON"]}},
+                                "capabilities": {"drop": ["ALL"], "add": ["BPF", "PERFMON", "SYS_ADMIN"]}},
             "volumeMounts": ([] if _ebpf_image else
                              [{"name": "ebpf", "mountPath": "/opt/ebpf", "readOnly": True}]),
             "resources": {"limits": {"memory": "512Mi", "cpu": "1"}}})

@@ -283,16 +283,13 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   `mlscan-deception-aws`, `mlscan-deception-kube`, `mlscan-deception-ssh`, `mlscan-ebpf-agent`,
   `sgl-shim`) объявлены отдельным kustomize-оверлеем `deploy/tenant/workloads/gpu/` (данные
   идентичны `workloads/sandbox/`, namespace `t-mlscan-gpu`). Argo `tenant-mlscan` = `Synced/Healthy`.
-- **БЛОКЕР (observer на LLM-пути, `kata-gpu`)**: `LLM_TEST_EBPF=1` в `kata-gpu` не работает — ядро
-  гостя `6.18.56-nvidia-gpu` отвергает raw-tracepoint BPF: `BPF_PROG_LOAD` -> `EINVAL (22)`,
-  verifier log пуст. В `kata-btf` то же минимальное ядро загружается (`fd=3`, verifier log есть);
-  BTF и `CapEff` (`0xc000000000` = CAP_BPF|CAP_PERFMON) в обоих гостах совпадают. Вывод: ядру nvidia-gpu
-  не хватает поддержки tracepoint-BPF (вероятно `CONFIG_BPF_EVENTS=y`). Запрошено у платформы:
-  `req-20261117-005` — **Acknowledged**: платформа подтвердила причину (нет BPF tracing в конфиге
-  nvidia-gpu ядра: BPF_EVENTS/TRACEPOINTS/FTRACE/TRACING) и пересобирает гостевое ядро (план:
-  включить опции, пересобрать, развернуть через GitOps image v4, приёмка — загрузка raw-tp программы
-  + наличие tracefs). Тенант: `LLM_TEST_EBPF=0` на GPU-пути (rollback применён); scan-путь (`kata-btf`)
-  работает. После фикса — вернуть `LLM_TEST_EBPF=1`, прогнать 726q, зафиксировать `LLM-B-01`.
+- **РЕШЕНО (observer на LLM-пути, `kata-gpu`)**: ядро гостя v4
+  (`platform/kata-nvidia-gpu-btf-kernel:v4`) включает BPF tracing
+  (BPF_EVENTS/TRACEPOINTS/TRACING/FTRACE/KPROBE/UPROBE/BPF_JIT/DEBUG_FS) + BTF; Kyverno
+  hardened-политика разрешает `ebpf-agent` caps BPF/PERFMON/SYS_ADMIN. Независимая проверка тенанта:
+  в RC `kata-gpu` `mount -t tracefs` -> ok, `/sys/kernel/tracing/events/syscalls` есть,
+  `BPF_PROG_LOAD(raw_tp)` -> `fd=3`. Тенант: агент монтирует tracefs и стартует от root с этими caps
+  (`deploy/v3/llm/llm_env.py`), `LLM_TEST_EBPF=1`. (`req-20261117-005` Verified.)
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
