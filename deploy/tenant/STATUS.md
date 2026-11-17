@@ -304,6 +304,9 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   Kata extension-образ (ext4 + dm-verity, verity params), затем вернуть tracing-ядро и Kyverno-исключение
   caps `BPF/PERFMON/SYS_ADMIN` для `ebpf-agent`. Тенант после выката: вернуть `LLM_TEST_EBPF=1`, прогнать
   726q и зафиксировать `LLM-B-01`. До этого — `LLM_TEST_EBPF=0`, observer только на scan-пути.
+  Статус: `req-20261117-007` **Acknowledged** — платформа начала разведку (наличие драйвера NVIDIA
+  615.71.09, инструментов ext4/dm-verity, формата extension-образа); план: собрать модули под v4,
+  перепаковать extension, вернуть tracing-ядро (image v5) + Kyverno SYS_ADMIN, приёмка GPU+raw_tp+tracefs.
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
