@@ -314,6 +314,12 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   Прогон 726q: контейнер `ebpf-agent` в госте активен (`bpf активен (BTF 5745908 байт), хуки execve+connect`),
   в `/llm/events` идут findings **LLM-B-01** (shell/интерпретатор внутри инференса) и **LLM-B-04**
   (JIT/mem-exec) — инвариант наблюдения v4 на LLM-пути закрыт.
+- **Финальный LLM-прогон на vLLM с наблюдателем — ЗАВЕРШЁН**: bundle `b-5779ede5daca36e95b162e3b`
+  (`engine-vllm:v0.9.2`, Qwen/Qwen3-1.7B, RC `kata-gpu`, 726 вопросов, `ebpf=true`). Результат: `done`,
+  вердикт **Needs review**, действие **block**; в `/llm/events` — находки **LLM-B-01, LLM-B-02, LLM-B-04**
+  (severity high), сформированные eBPF-агентом внутри гостя. Скорость vLLM ~0,32 зап/с, ~78–80 ток/с
+  (быстрее SGLang ~6x; прогон на SGLang был отменён оператором). Инвариант наблюдения v4 на LLM-пути
+  пройден полным прогоном.
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
