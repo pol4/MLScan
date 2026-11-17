@@ -304,15 +304,16 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   Kata extension-образ (ext4 + dm-verity, verity params), затем вернуть tracing-ядро и Kyverno-исключение
   caps `BPF/PERFMON/SYS_ADMIN` для `ebpf-agent`. Тенант после выката: вернуть `LLM_TEST_EBPF=1`, прогнать
   726q и зафиксировать `LLM-B-01`. До этого — `LLM_TEST_EBPF=0`, observer только на scan-пути.
-  Статус: `req-20261117-007` **In progress (вариант 1 — оптимизация сборки)**. Причина размера найдена:
-  Kata extension использует **kernel-open** модули; сборка kernel-open даёт нормальные размеры
-  (`nvidia.ko` 21.3MB, `nvidia-uvm` 3.1MB), vermagic совпадает. Extension перепакован с open-модулями
-  (erofs lzma 308MB + dm-verity без superblock). НО с tracing-ядром v4 sandbox всё ещё не стартует:
-  qemu выходит ~4с после «start vm» (virtiofsd client disconnect, гостевой console.sock пуст),
-  kubelet `FailedCreatePodSandBox DeadlineExceeded` — это уже не размер модуля. Узел возвращён на
-  v3 + оригинальный extension; GPU-путь работает (проверено тенантом: GPU-под `Completed`, `nvidia-smi`
-  видит RTX 4000). План платформы: взять **официальный билдер** Kata extension-образа и пересобрать им с
-  open-модулями (вероятно, отличие в layout/фичах erofs/verity). До завершения — `LLM_TEST_EBPF=0`.
+  Статус: `req-20261117-007` **Verified — observer на GPU-пути РАБОТАЕТ**. Платформа выкатила tracing-ядро
+  kata-gpu **v5** (BPF_EVENTS/FTRACE_SYSCALLS/KPROBE_EVENTS/TRACING + BTF + relocation-патч + MODULE_SIG
+  non-forced), пересобрала **kernel-open** модули NVIDIA 615.71.09 (размеры как в оригинале) и extension
+  (**EROFS-LZ4** + dm-verity без superblock); Kyverno разрешает `ebpf-agent` caps `BPF/PERFMON/SYS_ADMIN`.
+  Независимая проверка тенанта: GPU-под в `kata-gpu` `Completed` (`nvidia-smi` видит RTX 4000),
+  `BPF_PROG_LOAD(raw_tp)=3`, `mount -t tracefs` ок, `/sys/kernel/tracing/events/syscalls` есть. Тенант:
+  агент монтирует tracefs и стартует от root с этими caps (`deploy/v3/llm/llm_env.py`), `LLM_TEST_EBPF=1`.
+  Прогон 726q: контейнер `ebpf-agent` в госте активен (`bpf активен (BTF 5745908 байт), хуки execve+connect`),
+  в `/llm/events` идут findings **LLM-B-01** (shell/интерпретатор внутри инференса) и **LLM-B-04**
+  (JIT/mem-exec) — инвариант наблюдения v4 на LLM-пути закрыт.
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
