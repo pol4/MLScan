@@ -279,10 +279,16 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   транзиентный), в трекаемый `git.platform.rtx.local/mlscan/mlscan.git` внесён коммит `993adb9`
   (`LLM_TEST_EBPF: 0 -> 1`); Argo app `tenant-mlscan` на rev `993adb9`, Deployment `mlscan-testing`
   раскатан, в running-поде `LLM_TEST_EBPF=1`. Phase-5.5 gate пройден (`isolation_fail=0`, job completed).
-- **Остаток тенанта**: Argo `tenant-mlscan` в `OutOfSync` из-за дрейфа 6 ConfigMap в `t-mlscan-gpu`
-  (`mlscan-deception`, `mlscan-deception-aws`, `mlscan-deception-kube`, `mlscan-deception-ssh`,
-  `mlscan-ebpf-agent`, `sgl-shim`) — живые версии отличаются от git; нужно привести их в git
-  (или принять откат Argo). Платформенных действий больше не требуется.
+- **Остаток тенанта — РЕШЁН**: 6 общих ConfigMap в `t-mlscan-gpu` (`mlscan-deception`,
+  `mlscan-deception-aws`, `mlscan-deception-kube`, `mlscan-deception-ssh`, `mlscan-ebpf-agent`,
+  `sgl-shim`) объявлены отдельным kustomize-оверлеем `deploy/tenant/workloads/gpu/` (данные
+  идентичны `workloads/sandbox/`, namespace `t-mlscan-gpu`). Argo `tenant-mlscan` = `Synced/Healthy`.
+- **БЛОКЕР (observer на LLM-пути, `kata-gpu`)**: `LLM_TEST_EBPF=1` в `kata-gpu` не работает — ядро
+  гостя `6.18.56-nvidia-gpu` отвергает raw-tracepoint BPF: `BPF_PROG_LOAD` -> `EINVAL (22)`,
+  verifier log пуст. В `kata-btf` то же минимальное ядро загружается (`fd=3`, verifier log есть);
+  BTF и `CapEff` (`0xc000000000` = CAP_BPF|CAP_PERFMON) в обоих гостах совпадают. Вывод: ядру nvidia-gpu
+  не хватает поддержки tracepoint-BPF (вероятно `CONFIG_BPF_EVENTS=y`). Запрошено у платформы:
+  `req-20261117-005`. До фикса observer на GPU-пути выключен; scan-путь (`kata-btf`) продолжает работать.
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
