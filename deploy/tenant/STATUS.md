@@ -304,9 +304,14 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   Kata extension-образ (ext4 + dm-verity, verity params), затем вернуть tracing-ядро и Kyverno-исключение
   caps `BPF/PERFMON/SYS_ADMIN` для `ebpf-agent`. Тенант после выката: вернуть `LLM_TEST_EBPF=1`, прогнать
   726q и зафиксировать `LLM-B-01`. До этого — `LLM_TEST_EBPF=0`, observer только на scan-пути.
-  Статус: `req-20261117-007` **Acknowledged** — платформа начала разведку (наличие драйвера NVIDIA
-  615.71.09, инструментов ext4/dm-verity, формата extension-образа); план: собрать модули под v4,
-  перепаковать extension, вернуть tracing-ядро (image v5) + Kyverno SYS_ADMIN, приёмка GPU+raw_tp+tracefs.
+  Статус: `req-20261117-007` **Partially applied / Blocked (module size)**. Платформа собрала модули
+  NVIDIA 615.71.09 под tracing-ядро v4 и перепаковала extension (erofs + dm-verity **без superblock**);
+  гость грузится, verity/vfio OK. НО `nvidia.ko` = 116MB (`.rodata` 86MB) -> загрузка модуля в госте
+  дольше CRI-таймаута (~2мин) -> sandbox не создаётся (`DeadlineExceeded`), даже non-GPU. Узел возвращён
+  на v3 + оригинальный extension; GPU-путь снова работает (проверено тенантом). **Нужно решение
+  оператора**: (1) оптимизировать сборку модулей (разобраться с `.rodata` 86MB; open vs proprietary,
+  `nv-strip`/`nv-kernel-open`); (2) поднять CRI/kubelet `runtime-request-timeout` на узле (быстро, но
+  медленный старт sandbox останется); (3) observer только на scan-пути (`kata-btf`).
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
