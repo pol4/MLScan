@@ -6,8 +6,12 @@
 #   - the target remote is Gitea itself (no recursion);
 #   - MLSCAN_SKIP_MIRROR=1 is set (escape hatch).
 #
+# Resilience: by default a mirror failure only warns and lets the GitHub push
+# proceed (Gitea outages must not block development). Set MLSCAN_REQUIRE_MIRROR=1
+# to make mirror failures fatal.
+#
 # Git passes: $1 = remote name, $2 = remote URL.
-set -eu
+set -u
 
 remote_url="${2:-}"
 
@@ -19,4 +23,13 @@ esac
 repo_root="$(git rev-parse --show-toplevel)"
 [ -x "$repo_root/scripts/mirror-gitea.sh" ] || exit 0
 
-exec "$repo_root/scripts/mirror-gitea.sh"
+if "$repo_root/scripts/mirror-gitea.sh"; then
+  exit 0
+fi
+
+echo "[mirror-gitea] WARNING: Gitea mirror failed; GitHub push continues." >&2
+echo "[mirror-gitea] run scripts/mirror-gitea.sh to sync the ArgoCD source later." >&2
+if [ "${MLSCAN_REQUIRE_MIRROR:-0}" = "1" ]; then
+  exit 1
+fi
+exit 0
