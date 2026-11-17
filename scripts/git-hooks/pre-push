@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+# pre-push: mirror every push to GitHub (origin) into the platform Gitea repo.
+# Part of option (b): GitHub stays the working repo, Gitea is the ArgoCD source.
+#
+# Skips when:
+#   - the target remote is Gitea itself (no recursion);
+#   - MLSCAN_SKIP_MIRROR=1 is set (escape hatch).
+#
+# Git passes: $1 = remote name, $2 = remote URL.
+set -eu
+
+remote_url="${2:-}"
+
+case "$remote_url" in
+  *git.platform.rtx.local*) exit 0 ;;
+esac
+[ "${MLSCAN_SKIP_MIRROR:-0}" = "1" ] && exit 0
+
+repo_root="$(git rev-parse --show-toplevel)"
+[ -x "$repo_root/scripts/mirror-gitea.sh" ] || exit 0
+
+exec "$repo_root/scripts/mirror-gitea.sh"

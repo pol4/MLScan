@@ -265,15 +265,24 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
    сервис удаляет Job (`_k8s_delete_job_async`, через 5 с), GPU освобождается сразу;
    проверено — после прогона 726 вопросов в sandbox не осталось Job/Pod.
 - **v4 GPU-в-Kata — ПРОВЕРЕНО (LLM-инференс)**: LLM-тесты идут в ns `t-mlscan-gpu`
-  (`runtimeClassName: kata-gpu`, лимит только `nvidia.com/gpu`; Kata VM фиксирована 32G/4vcpu),
+  (`runtimeClassName: kata-gpu`, лимит только `nvidia.com/gpu`; Kata VM 64G/8vcpu после req-004),
   `LLM_TEST_NS=t-mlscan-gpu`, `MLSCAN_GPU_MODE=device-plugin`. vLLM 0.9.2 + Qwen3-1.7B из S3:
   короткий (12) -> `Safe`, полный **726 -> `Needs review`** (23 232 токена). Раньше корректно работал
   host-`nvidia`; теперь — микро-ВМ. Правки тенанта: `kata_vm` (убирать cpu/memory-лимиты), digest-образ
   `util_image` для fetcher/ebpf (Kyverno `require-digest-images-jobs`), netpol `allow-sandbox-artifacts`
   пускает `t-mlscan-gpu` (ingress к `mlscan-testing:8080/8090`).
-- **Открыто (observer)**: гость `kata-gpu` **без BTF** (`/sys/kernel/btf/vmlinux`) -> `ebpf-agent`
-  падает; `LLM_TEST_EBPF=0` (временно). Запросили BTF-вариант nvidia-gpu у платформы; после него —
-  включим observer и закроем инвариант наблюдения v4.
+- **BTF в `kata-gpu` РЕШЕНО платформой** (req-002 P1): гостевое ядро `6.18.56-nvidia-gpu`
+  пересобрано с `CONFIG_DEBUG_INFO_BTF=y`, `/sys/kernel/btf/vmlinux` есть, GPU-устройства на месте;
+  VM 64G/8vcpu (req-004, решение A). Независимая проверка тенанта: RC `kata-gpu`, `uname=6.18.56-nvidia-gpu`,
+  MemTotal≈64G, nproc=8, `/dev/nvidia0|nvidiactl|nvidia-uvm`, `nvidia-smi` видит RTX 4000.
+- **РЕШЕНО (observer на LLM-пути)**: git-разрыв закрыт платформой — Gitea доступен (прежний 503
+  транзиентный), в трекаемый `git.platform.rtx.local/mlscan/mlscan.git` внесён коммит `993adb9`
+  (`LLM_TEST_EBPF: 0 -> 1`); Argo app `tenant-mlscan` на rev `993adb9`, Deployment `mlscan-testing`
+  раскатан, в running-поде `LLM_TEST_EBPF=1`. Phase-5.5 gate пройден (`isolation_fail=0`, job completed).
+- **Остаток тенанта**: Argo `tenant-mlscan` в `OutOfSync` из-за дрейфа 6 ConfigMap в `t-mlscan-gpu`
+  (`mlscan-deception`, `mlscan-deception-aws`, `mlscan-deception-kube`, `mlscan-deception-ssh`,
+  `mlscan-ebpf-agent`, `sgl-shim`) — живые версии отличаются от git; нужно привести их в git
+  (или принять откат Argo). Платформенных действий больше не требуется.
 - **Регресс сканов ИСПРАВЛЕН**: сканы, запущенные через `/v3/artifacts/<sha>/test` (re-scan), не
   сохраняли `artifact_token`/`s3_key` -> URL артефакта `/a/<scan>//<name>` -> nginx (variable proxy_pass,
   не схлопывает `//`) -> mlscan-testing regex не матчит -> **404** -> `dynamic: failed`. Фикс: генерировать
