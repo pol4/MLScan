@@ -24,7 +24,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: integrations
-          image: harbor.platform.rtx.local/mlscan/services@sha256:30dd155a621f7a5bff489ba44877233092572facdd40aba25454a4874cbad2f1
+          image: harbor.platform.rtx.local/mlscan/services@sha256:ab6c052ec40ce62e16683a9c9ce9db29a52b4269952096c6ab65258b81ee7bb8
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_integrations.py"]
           env:
