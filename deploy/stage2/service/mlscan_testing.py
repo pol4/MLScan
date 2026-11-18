@@ -143,6 +143,10 @@ LLM_V4_PROBE = os.environ.get("LLM_V4_PROBE", "0") == "1"   # probe = v4-ран�
 SERVICES_IMAGE = os.environ.get("SERVICES_IMAGE", "")               # образ сервисов (для v4-probe)
 LLM_TEST_GPU_RESOURCE = os.environ.get("LLM_TEST_GPU_RESOURCE", "nvidia.com/gpu")
 LLM_TEST_GPU_COUNT = int(os.environ.get("LLM_TEST_GPU_COUNT", "1"))
+# Бюджет старта/загрузки модели (секунды): очень большие модели грузятся десятки минут.
+# Итоговое значение может быть переопределено дескриптором движка (runtime.readiness.timeout_s)
+# или телом запроса запуска (engine_wait_s); probe получает его как ENGINE_WAIT.
+LLM_TEST_ENGINE_WAIT = int(os.environ.get("LLM_TEST_ENGINE_WAIT", "2400"))
 LLM_TEST_DISK_GB = int(os.environ.get("LLM_TEST_DISK_GB", "40"))
 LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 IMAGES_REQUIRE_SIGNED = os.environ.get("IMAGES_REQUIRE_SIGNED", "0") == "1"   # B4-lite: политика подписи
@@ -3018,7 +3022,16 @@ class Handler(BaseHTTPRequestHandler):
             _desc = _v4_engine_descriptor_for(engine)
             engine_descriptor = _desc.to_dict() if _desc is not None else None
         except Exception:  # noqa: BLE001
-            engine_descriptor = None
+            _desc, engine_descriptor = None, None
+        # Бюджет старта/загрузки модели: тело запроса > дескриптор движка > env.
+        try:
+            engine_wait_s = int(body.get("engine_wait_s") or 0)
+        except (TypeError, ValueError):
+            engine_wait_s = 0
+        if not engine_wait_s and _desc is not None:
+            engine_wait_s = _desc.startup_timeout_s(default=LLM_TEST_ENGINE_WAIT)
+        if not engine_wait_s:
+            engine_wait_s = LLM_TEST_ENGINE_WAIT
         job = v3llmenv.make_llama_test_job(
             bundle_id=bundle_id, engine_image=engine, model_url=url, model_sha256=model_sha,
             model_key=("" if mfiles else key), model_files=mfiles,
@@ -3038,6 +3051,7 @@ class Handler(BaseHTTPRequestHandler):
             v4_probe=LLM_V4_PROBE, probe_image=SERVICES_IMAGE,
             gpu_resource=LLM_TEST_GPU_RESOURCE,
             gpu_count=int(body.get("gpu_count") or LLM_TEST_GPU_COUNT),
+            engine_wait_s=engine_wait_s,
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
             scan_id=scan_id, namespace=LLM_TEST_NS, gpu=gpu,
             runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),

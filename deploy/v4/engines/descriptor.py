@@ -69,6 +69,20 @@ class EngineDescriptor:
         rt = self.runtime or {}
         if "readiness" in rt and not isinstance(rt["readiness"], dict):
             errs.append("runtime.readiness must be an object")
+        for key in ("startup_timeout_s",):
+            if key in rt:
+                try:
+                    if int(rt[key]) <= 0:
+                        errs.append(f"runtime.{key} must be a positive integer (seconds)")
+                except (TypeError, ValueError):
+                    errs.append(f"runtime.{key} must be an integer (seconds)")
+        rd = rt.get("readiness")
+        if isinstance(rd, dict) and "timeout_s" in rd:
+            try:
+                if int(rd["timeout_s"]) <= 0:
+                    errs.append("runtime.readiness.timeout_s must be a positive integer (seconds)")
+            except (TypeError, ValueError):
+                errs.append("runtime.readiness.timeout_s must be an integer (seconds)")
         res = rt.get("resources")
         if res is not None and not isinstance(res, dict):
             errs.append("runtime.resources must be an object")
@@ -86,6 +100,28 @@ class EngineDescriptor:
 
     def resource_profile(self) -> dict[str, Any]:
         return dict((self.runtime or {}).get("resources") or {})
+
+    # Максимально допустимый бюджет старта — 6 часов (очень большие модели/медленное хранилище).
+    STARTUP_TIMEOUT_MAX = 21600
+
+    def startup_timeout_s(self, default: int = 2400) -> int:
+        """Бюджет времени на старт/загрузку модели, секунды.
+
+        Источник (по приоритету): `runtime.readiness.timeout_s`, затем `runtime.startup_timeout_s`;
+        иначе `default`. Большие модели могут грузиться десятки минут — значение зажимается
+        сверху ``STARTUP_TIMEOUT_MAX`` (6 ч) и снизу 30 с. Планировщик job'а передаёт это значение
+        probe'у как `ENGINE_WAIT` и в k8s `startupProbe`.
+        """
+        rt = self.runtime or {}
+        rd = rt.get("readiness") if isinstance(rt.get("readiness"), dict) else {}
+        for v in (rd.get("timeout_s"), rt.get("startup_timeout_s")):
+            try:
+                if v is not None:
+                    n = int(v)
+                    return max(30, min(n, self.STARTUP_TIMEOUT_MAX))
+            except (TypeError, ValueError):
+                continue
+        return max(30, min(int(default or 2400), self.STARTUP_TIMEOUT_MAX))
 
     def compatible(self, artifact_kind: str) -> bool:
         """Совместим ли движок с видом артефакта.

@@ -333,3 +333,22 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - **Observer на scan-пути включён и проверен**: `SANDBOX_RUNTIME_CLASS=kata-btf` (только у него есть BTF;
   `kata` -> `NO_BTF`), `SANDBOX_EBPF=1`. Скан под `kata-btf`: job `Completed` (harness + `ebpf-agent`),
   события ушли в `/llm/events` (200). Для benign-артефакта находок нет (ожидаемо).
+
+### Длительный старт очень больших моделей (2026-11-18)
+
+- **Проблема**: для модели, не помещающейся в 1 GPU (`Qwen3-4B`, 8.06 GB, `tensor-parallel=2`),
+  продуктовый тест bundle не доходил до вердикта: probe завершался `ENGINE_NOT_READY` (exit 4) ровно
+  через 180 с, тогда как TP=2-движок поднимается ~210–230 с (несколько worker-инициализаций).
+  Проверено напрямую: `Qwen3-4B` TP=2 в `kata-gpu` (веса 3.82 GiB/GPU, 8.06 GB суммарно),
+  5/5 ответов (51.3 tok/s), observer активен (LLM-B-01/03/04). Блокер детерминированный для TP>1.
+- **Фикс (тенант)**: бюджет старта/загрузки модели вынесен в **данные** движка:
+  `deploy/v4/engines/descriptor.py` — `runtime.readiness.timeout_s` / `runtime.startup_timeout_s`,
+  метод `startup_timeout_s()` (по умолчанию 2400 с = 40 мин, диапазон 30…21600 = 6 ч), валидация;
+  `deploy/v3/llm/llm_env.py` — probe получает `ENGINE_WAIT` (секунды), контейнер `engine` получает
+  k8s `startupProbe` с тем же бюджетом, окно наблюдения (`ebpf --duration`) и `ttl` = `engine_wait_s + 1800`;
+  `deploy/stage2/service/mlscan_testing.py` — приоритет: тело запроса `engine_wait_s` → дескриптор →
+  env `LLM_TEST_ENGINE_WAIT` (2400). Архитектура: `Arch_v4/02-engine-framework.md` §3.1.
+- **Проверено**: unit зелёные (tests/v4 = 51, tests/v3 = 204); сгенерированный Job — `ENGINE_WAIT=2400`,
+  `startupProbe` `periodSeconds=15, failureThreshold=160`; `ttlSecondsAfterFinished=4800`.
+- **Осталось**: применить — пересобрать/перевыпустить образ `mlscan/services` (pin по digest) и
+  синхронизировать с ArgoCD.

@@ -48,6 +48,9 @@ spec:
             - {name: LLM_TEST_EBPF, value: "1"}
             # probe как v4-раннер (образ сервисов); 1 — включить v4-probe
             - {name: LLM_V4_PROBE, value: "1"}
+            # Бюджет старта/загрузки модели (сек). Большие модели грузятся десятки минут;
+            # переопределяется дескриптором движка (runtime.readiness.timeout_s) или телом запроса.
+            - {name: LLM_TEST_ENGINE_WAIT, value: "2400"}
             - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:759b81f281683a547c64683ac34daa3973e92210c81add755f0ecbb3c8a44f87"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}

@@ -117,6 +117,26 @@ class DescriptorTest(unittest.TestCase):
         d = self._llm()
         self.assertEqual(ed.EngineDescriptor.from_dict(d.to_dict()).to_dict(), d.to_dict())
 
+    def test_startup_timeout(self):
+        # по умолчанию — 40 минут (большие модели)
+        self.assertEqual(self._llm().startup_timeout_s(), 2400)
+        # из readiness.timeout_s (приоритет) для длительного старта
+        d1 = self._llm(runtime={"readiness": {"timeout_s": 1800}, "startup_timeout_s": 600})
+        self.assertEqual(d1.startup_timeout_s(), 1800)
+        # из startup_timeout_s, если readiness.timeout_s нет
+        d2 = self._llm(runtime={"startup_timeout_s": 3600})
+        self.assertEqual(d2.startup_timeout_s(), 3600)
+        # зажим сверху 6 ч
+        self.assertEqual(self._llm(runtime={"startup_timeout_s": 99999}).startup_timeout_s(), 21600)
+        # кастомный дефолт и деградация при мусоре
+        self.assertEqual(self._llm().startup_timeout_s(default=600), 600)
+        self.assertEqual(self._llm(runtime={"startup_timeout_s": "oops"}).startup_timeout_s(default=900), 900)
+        # валидация: неположительные значения — ошибка
+        self.assertTrue(any("startup_timeout_s" in e
+                            for e in self._llm(runtime={"startup_timeout_s": 0}).validate()))
+        self.assertTrue(any("readiness.timeout_s" in e
+                            for e in self._llm(runtime={"readiness": {"timeout_s": -5}}).validate()))
+
 
 if __name__ == "__main__":
     unittest.main()

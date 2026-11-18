@@ -41,7 +41,7 @@ capabilities:
   protocols: [openai-http, raw-http]
 runtime:
   start: "python -m vllm.entrypoints.openai.api_server --model {{model}} --port 8000"
-  readiness: { type: http, path: /v1/models, port: 8000, timeout_s: 600 }
+  readiness: { type: http, path: /v1/models, port: 8000, timeout_s: 2400 }  # бюджет старта/загрузки, сек
   ports: [8000]
   resources: { cpu: "4", ram_gb: 24, gpu: 1, disk_gb: 40 }
 integrity: { signed: true, sbom: true }   # подпись образа/описание
@@ -49,6 +49,25 @@ integrity: { signed: true, sbom: true }   # подпись образа/опис
 
 Поля важны для **планирования** (ресурсы, GPU), **наблюдения** (порты) и **тестов** (возможности:
 стриминг/батч/tools нужны, чтобы TestPack мог использовать соответствующие шаги).
+
+### 3.1 Длительный старт больших моделей
+
+Очень большие модели (десятки ГБ, шардирование `tensor-parallel`, холодное хранилище) грузятся
+**существенно дольше** одной-двух минут — на практике до **30–40 минут**. Бюджет времени на старт
+описывается **данными** движка, а не хардкодом:
+
+- `runtime.readiness.timeout_s` (предпочтительно) либо `runtime.startup_timeout_s` — секунды;
+  допустимый диапазон **30 … 21600** (6 ч), по умолчанию `2400` (40 мин).
+  Значение валидируется (`EngineDescriptor.validate`) и нормализуется `EngineDescriptor.startup_timeout_s()`.
+- Приоритет при запуске job'а bundle: **тело запроса** (`engine_wait_s`) → **дескриптор движка**
+  (`startup_timeout_s()`) → **env** `LLM_TEST_ENGINE_WAIT` (по умолчанию 2400).
+- Значение проецируется в job тремя способами: probe (`v3`/`v4`) получает его как env `ENGINE_WAIT`
+  (в **секундах**); контейнер `engine` получает k8s `startupProbe` с тем же бюджетом
+  (`periodSeconds: 15 × failureThreshold`), поэтому `readiness`/`liveness` не срабатывают до готовности;
+  окно наблюдения (`ebpf-agent --duration`) и `ttlSecondsAfterFinished` выводятся как
+  `engine_wait_s + 1800` (загрузка + генерация).
+- Инвариант: долгий старт **не** приводит к `ENGINE_NOT_READY` и не считается «сбоем движка», пока не
+  исчерпан объявленный бюджет; при `tensor-parallel > 1` старт растёт (несколько worker-инициализаций).
 
 ## 4. Engine adapter (единый контракт)
 

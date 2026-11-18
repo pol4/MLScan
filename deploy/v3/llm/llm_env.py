@@ -207,7 +207,9 @@ _PROBE_SRC = (
     "import json,os,sys,time,urllib.request\n"
     "op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
     "base=os.environ.get('ENGINE_URL','http://127.0.0.1:8000')+'/v1'\n"
-    "for _ in range(int(os.environ.get('ENGINE_WAIT','180'))):\n"
+    # ENGINE_WAIT — бюджет на старт/загрузку модели в СЕКУНДАХ (большие модели грузятся десятки минут).
+    "_dl=time.monotonic()+int(os.environ.get('ENGINE_WAIT','2400'))\n"
+    "while time.monotonic()<_dl:\n"
     "    try: op.open(base+'/models',timeout=3); break\n"
     "    except Exception: time.sleep(2)\n"
     "tu=os.environ.get('TESTPACK_URL','')\n"
@@ -265,11 +267,19 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         engine_descriptor: dict | None = None, deception: bool = True,
                         v4_probe: bool = False, probe_image: str = "",
                         gpu_resource: str = "", gpu_count: int = 1,
+                        engine_wait_s: int = 0,
                         kata_vm: bool = False) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
+    `engine_wait_s` — бюджет на старт/загрузку модели в секундах (очень большие модели могут
+    грузиться десятки минут). 0/пусто → `LLM_TEST_ENGINE_WAIT` (по умолчанию 2400 с).
     """
+    engine_wait_s = int(engine_wait_s or 0) or int(os.environ.get("LLM_TEST_ENGINE_WAIT", "2400"))
+    if engine_wait_s < 30:
+        engine_wait_s = 30
+    # Общее окно прогона: загрузка модели + генерация; используется для наблюдения (ebpf) и ttl.
+    run_budget_s = engine_wait_s + 1800
     if "@sha256:" not in (engine_image or ""):
         raise ValueError("engine image должен быть по digest")
     if not model_url and not model_files:
@@ -354,7 +364,12 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                                      {"name": "cudalibs", "mountPath": "/usr/lib/x86_64-linux-gnu", "readOnly": True}]
                                     if (gpu and gpu_mode == "hostdev") else []),
                  "readinessProbe": {"httpGet": {"path": "/v1/models", "port": 8000},
-                                    "initialDelaySeconds": 10, "periodSeconds": 5, "failureThreshold": 60}}
+                                    "periodSeconds": 10, "failureThreshold": 6},
+                 # Длительный старт: пока startupProbe не пройден, readiness/liveness не считаются.
+                 # Бюджет = engine_wait_s (для очень больших моделей — десятки минут).
+                 "startupProbe": {"httpGet": {"path": "/v1/models", "port": 8000},
+                                  "periodSeconds": 15,
+                                  "failureThreshold": max(4, (int(engine_wait_s) + 14) // 15)}}
     if engine_command:
         _engine_c["command"] = engine_command
     else:
@@ -393,7 +408,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                  {"name": "ENGINE_IMAGE", "value": engine_image},
                  {"name": "TESTING_URL", "value": testing_url},
                  {"name": "MLSCAN_KEY", "value": api_key},
-                 {"name": "MAX_TOKENS", "value": str(int(max_tokens))}]),
+                 {"name": "MAX_TOKENS", "value": str(int(max_tokens))},
+                 {"name": "ENGINE_WAIT", "value": str(int(engine_wait_s))}]),
          "resources": {"limits": {"memory": "1Gi", "cpu": "1"}},
          "securityContext": dict(hardened, readOnlyRootFilesystem=False)},
     ]
@@ -405,7 +421,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
             # F5: tracefs нужен агенту для raw-tracepoint; в госте mount требует CAP_SYS_ADMIN.
             "command": ["sh", "-c",
                         "mount -t tracefs tracefs /sys/kernel/tracing 2>/dev/null || true; "
-                        "exec python /opt/ebpf/ebpf_agent.py --duration " + str(int(ttl_seconds) - 30)
+                        "exec python /opt/ebpf/ebpf_agent.py --duration " + str(max(600, int(run_budget_s) - 30))
                         + " --post " + shlex.quote(testing_url)
                         + " --key " + shlex.quote(api_key)
                         + " --scan-id " + shlex.quote(scan_id or ("bundle-test-" + bundle_id))
@@ -424,7 +440,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
     if gpu and gpu_mode == "cdi":
         annotations["cdi.k8s.io/mlscan-gpu"] = gpu_cdi_devices    # containerd сам инжектит устройства
     spec = {
-        "backoffLimit": 0, "ttlSecondsAfterFinished": int(ttl_seconds),
+        "backoffLimit": 0, "ttlSecondsAfterFinished": max(int(ttl_seconds), int(run_budget_s) + 600),
         "template": {
             "metadata": ({"labels": {"app": "mlscan-llm-test", "bundle": bundle_id[:40]},
                           "annotations": annotations} if annotations else

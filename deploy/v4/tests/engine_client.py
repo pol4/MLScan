@@ -20,7 +20,9 @@ class EngineClient:
         self.base = (base or os.environ.get("ENGINE_URL", "http://127.0.0.1:8000")).rstrip("/")
         self.model = model
         self.timeout = int(timeout)
-        self.wait_s = int(wait_s if wait_s is not None else os.environ.get("ENGINE_WAIT", "180"))
+        # ENGINE_WAIT — бюджет готовности/загрузки модели, секунды. Большие модели (десятки ГБ)
+        # могут грузиться много минут, поэтому дефолт высокий и настраивается дескриптором/job'ом.
+        self.wait_s = int(wait_s if wait_s is not None else os.environ.get("ENGINE_WAIT", "2400"))
         self._op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def _v1(self, path: str) -> str:
