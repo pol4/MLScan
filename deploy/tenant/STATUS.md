@@ -422,3 +422,16 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   проверено в кластере (dry-run Job на PVC): `[gc] entries=1 before=7.51G` — модуль в образе, PVC монтируется.
   Тесты: `tests/v3/test_model_cache_gc.py`.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
+
+### DoD v4: вердикт с `policy_version` + TestPack (2026-11-18)
+
+- Закрыт последний DoD-пункт (`Arch_v4/10` §4): вердикт LLM-теста выносится политикой и теперь
+  несёт её идентичность. В `_write_bundle_verdict` (server-side) добавлены в **подписанную**
+  аттестацию (`statement.predicate.versions`) и в `metrics`/ответ: `policy_id`, `policy_version`,
+  `policy_sig`. Проверено на прогоне Qwen3-4B (5q): `metrics: {policy_id: default,
+  policy_version: 3}`; `predicate.versions = {prompt_set: ps-5054d0275317, engine: …engine-vllm…,
+  testpack: llm-basic, policy_id: default, policy_version: 3, policy_sig: hmac:…}`.
+- Тем самым подтверждён и e2e-пункт «bundle с TestPack»: живой probe использует `runner`/`TestPack`
+  (`testpack: llm-basic` в вердикте), движок — по дескриптору.
+- Образ `services:polver@sha256:2bdc9f5c…` выкачен (testing + GC CronJob), Argo Synced.
+- **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
