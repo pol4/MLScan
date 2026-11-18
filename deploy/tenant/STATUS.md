@@ -356,3 +356,20 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   (rev `59903da3`), `mlscan-testing` выкатился. E2E-подтверждение через продуктовый поток:
   Qwen3-4B, TP=2, `kata-gpu`, 5 вопросов → **status `done`, verdict `Safe`, 5/5**, `secs=24.4`,
   observer: LLM-B-01/03/04. Ранее (до фикса) тот же прогон давал `ENGINE_NOT_READY`.
+
+### План v4: прогресс инкремента (2026-11-18)
+
+- **Ф1 (E1–E4)**: `EngineDescriptor` + `plan.py` + тесты; реестр дескрипторов (`/v4/engines`,
+  `v4_engine_descriptors`) и генерация Job из дескриптора — есть (аддитивно: `runtime.start`
+  переопределяет команду движка при наличии).
+- **Ф2 (T1–T5)**: `TestPack`/`runner`/`plugins`/`datasets` + реестр (`/v4/testpacks`, `/v4/datasets`,
+  таблицы `v4_*`) — есть; **добавлено T5** — `deploy/v4/tests/recording.py` (кассеты: запись/реплей
+  без движка, строгий fail-closed реплей, `input_hash`) + `case_from_result()` (мост T5→P3-бэктест);
+  unit `tests/v4/test_recording.py` (7 тестов).
+- **Ф3 (P1–P5)**: `policy`+`simulator` + API `/v4/policies` (draft→simulate→publish, подпись);
+  вердикт LLM-теста идёт через политику (`_policy_llm_verdict`, профиль `llm`), дефолт воспроизводит
+  пороги v3. P6 (UI-редактор) — не сделано.
+- **Ф5 (I3)**: правило «`coverage < required` ⇒ `Inconclusive`» реализовано в `scoring/policy.py`
+  (наблюдение обязательно для `Safe`). I2 (admission host-`nvidia`) — за платформой; G4 (кэш модели
+  по digest/доставка Range) — не сделано.
+- **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 204 OK.
