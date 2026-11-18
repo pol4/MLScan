@@ -141,35 +141,52 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
 
 # --- N2: запускаемый job теста bundle (реальный движок + набор вопросов -> /llm/score) ----------
 _FETCH_SRC = (
-    "import hashlib,json,os,shutil,sys,urllib.request\n"
+    "import hashlib,json,os,shutil,sys,time,urllib.request\n"
     "MODEL=os.environ.get('MODEL_DIR','/model')\n"
-    "os.makedirs(MODEL,exist_ok=True)\n"
     "manifest=os.environ.get('FETCH_MANIFEST','')\n"
-    # G4: read-mostly кэш модели по digest. CACHE_DIR — точка монтирования PVC, CACHE_KEY — sha256.
+    # G4: read-mostly кэш модели по digest (per-sha раскладка). CACHE_DIR — mount PVC, CACHE_KEY — sha256.
+    # Загрузка идёт прямо в CACHE_DIR/<key>.tmp/files и публикуется атомарно (rename -> .ready);
+    # engine читает CACHE_DIR/<key>/files (ro, subPath) — копия в /model не нужна. Публикация под lock.
     "CACHE=os.environ.get('CACHE_DIR',''); CKEY=os.environ.get('CACHE_KEY','')\n"
-    "cbase=os.path.join(CACHE,CKEY) if (CACHE and CKEY) else ''\n"
-    "def cready():\n"
-    "    return bool(cbase) and os.path.exists(os.path.join(cbase,'.ready'))\n"
-    "def crestore(root):\n"
-    "    src=os.path.join(cbase,'files')\n"
-    "    for dp,_,fs in os.walk(src):\n"
-    "        for fn in fs:\n"
-    "            s=os.path.join(dp,fn); rel=os.path.relpath(s,src); d=os.path.join(root,rel)\n"
-    "            os.makedirs(os.path.dirname(d),exist_ok=True)\n"
-    "            try: os.link(s,d)\n"
-    "            except Exception: shutil.copy2(s,d)\n"
-    "def cstore(root):\n"
-    "    if not cbase: return\n"
-    "    tmp=cbase+'.tmp'\n"
+    "CBASE=os.path.join(CACHE,CKEY) if (CACHE and CKEY) else ''\n"
+    "STAGE=(CBASE+'.tmp') if CBASE else ''\n"
+    "LOCK=(CBASE+'.lock') if CBASE else ''\n"
+    "RDY=os.path.join(CBASE,'.ready') if CBASE else ''\n"
+    "ROOT=os.path.join(STAGE,'files') if CBASE else MODEL\n"
+    "WAIT=int(os.environ.get('CACHE_LOCK_WAIT','600'))\n"
+    "os.makedirs(ROOT,exist_ok=True)\n"
+    "def ready():\n"
+    "    return bool(RDY) and os.path.exists(RDY)\n"
+    "def lock():\n"
+    "    if not LOCK: return True\n"
     "    try:\n"
-    "        if os.path.exists(tmp): shutil.rmtree(tmp,ignore_errors=True)\n"
-    "        shutil.copytree(root,os.path.join(tmp,'files'))\n"
-    "        open(os.path.join(tmp,'.ready'),'w').close()\n"
-    "        if os.path.exists(cbase): shutil.rmtree(cbase,ignore_errors=True)\n"
-    "        os.rename(tmp,cbase); print('CACHE_STORE',CKEY,flush=True)\n"
+    "        fd=os.open(LOCK,os.O_CREAT|os.O_EXCL|os.O_WRONLY); os.close(fd); return True\n"
+    "    except FileExistsError:\n"
+    "        return False\n"
+    "def unlock():\n"
+    "    if LOCK and os.path.exists(LOCK):\n"
+    "        try: os.remove(LOCK)\n"
+    "        except Exception: pass\n"
+    "def wait_ready(sec):\n"
+    "    t=time.time()+max(int(sec),0)\n"
+    "    while time.time()<t:\n"
+    "        if ready(): return True\n"
+    "        time.sleep(3)\n"
+    "    return False\n"
+    "def acquire():\n"
+    "    if lock(): return True\n"
+    "    if wait_ready(WAIT): return False    # другой writer уже наполнил кэш\n"
+    "    unlock(); return lock()              # протухший lock — забираем\n"
+    "def publish():\n"
+    "    if not CBASE: return\n"
+    "    try:\n"
+    "        os.makedirs(STAGE,exist_ok=True)\n"
+    "        open(os.path.join(STAGE,'.ready'),'w').close()\n"
+    "        if os.path.exists(CBASE): shutil.rmtree(CBASE,ignore_errors=True)\n"
+    "        os.rename(STAGE,CBASE); print('CACHE_STORE',CKEY,flush=True)\n"
     "    except Exception as exc:\n"
     "        print('CACHE_STORE_ERR',type(exc).__name__,exc,flush=True)\n"
-    "        shutil.rmtree(tmp,ignore_errors=True)\n"
+    "        shutil.rmtree(STAGE,ignore_errors=True)\n"
     "def sha_file(p):\n"
     "    h=hashlib.sha256()\n"
     "    with open(p,'rb') as f:\n"
@@ -192,60 +209,54 @@ _FETCH_SRC = (
     "            try: resp.close()\n"
     "            except Exception: pass\n"
     "    return h.hexdigest()\n"
+    "def http_get(url,out):\n"
+    "    os.makedirs(os.path.dirname(out),exist_ok=True)\n"
+    "    op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
+    "    h=hashlib.sha256()\n"
+    "    with op.open(url,timeout=1800) as r, open(out,'wb') as f:\n"
+    "        while True:\n"
+    "            b=r.read(1<<20)\n"
+    "            if not b: break\n"
+    "            h.update(b); f.write(b)\n"
+    "    return h.hexdigest()\n"
     "if manifest:\n"
     "    files=json.loads(manifest)\n"
-    "    if cready():\n"
-    "        crestore(MODEL); print('CACHE_HIT',CKEY,len(files),flush=True); sys.exit(0)\n"
+    "    if ready() or not acquire():\n"
+    "        print('CACHE_HIT',CKEY,len(files),flush=True); sys.exit(0)\n"
+    "    os.makedirs(ROOT,exist_ok=True)\n"
     "    s3=None\n"
     "    if any('key' in it for it in files):\n"
     "        sys.path.insert(0,'/opt/s3')\n"
     "        from s3client import S3\n"
     "        s3=S3(os.environ['S3_ENDPOINT'],os.environ['S3_ACCESS_KEY'],os.environ['S3_SECRET_KEY'],\n"
     "              region=os.environ.get('S3_REGION','garage'),bucket=os.environ['S3_BUCKET'],timeout=600)\n"
-    "    op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
     "    for it in files:\n"
-    "        out=os.path.join(MODEL,it['dest'])\n"
-    "        if it.get('key'):\n"
-    "            got=s3get(s3,it['key'],out)\n"
-    "        else:\n"
-    "            os.makedirs(os.path.dirname(out),exist_ok=True)\n"
-    "            h=hashlib.sha256()\n"
-    "            with op.open(it['url'],timeout=1800) as r, open(out,'wb') as f:\n"
-    "                while True:\n"
-    "                    b=r.read(1<<20)\n"
-    "                    if not b: break\n"
-    "                    h.update(b); f.write(b)\n"
-    "            got=h.hexdigest()\n"
+    "        out=os.path.join(ROOT,it['dest'])\n"
+    "        got=s3get(s3,it['key'],out) if it.get('key') else http_get(it['url'],out)\n"
     "        print('FETCHED',out,os.path.getsize(out),got,flush=True)\n"
-    "    cstore(MODEL)\n"
-    "    sys.exit(0)\n"
-    "dest=os.environ.get('FETCH_DEST') or os.path.join(MODEL,'model.gguf')\n"
+    "    publish(); unlock(); sys.exit(0)\n"
+    "dest=os.environ.get('FETCH_DEST') or os.path.join(ROOT,'model.gguf')\n"
     "sha=os.environ.get('FETCH_SHA','')\n"
     "key=os.environ.get('S3_KEY','')\n"
-    "_cfile=os.path.join(cbase,'files',os.path.basename(dest)) if cbase else ''\n"
-    "if cbase and os.path.exists(os.path.join(cbase,'.ready')) and os.path.exists(_cfile):\n"
-    "    os.makedirs(os.path.dirname(dest),exist_ok=True)\n"
-    "    try: os.link(_cfile,dest)\n"
-    "    except Exception: shutil.copy2(_cfile,dest)\n"
-    "    got=sha_file(dest); print('CACHE_HIT',CKEY,flush=True)\n"
-    "elif key and os.path.exists('/opt/s3/s3client.py'):\n"
+    "if ready():\n"
+    "    f=os.path.join(CBASE,'files',os.path.relpath(dest,ROOT))\n"
+    "    if os.path.exists(f):\n"
+    "        got=sha_file(f); print('CACHE_HIT',CKEY,flush=True)\n"
+    "        if sha and got!=sha: print('SHA_MISMATCH',got,sha,flush=True); sys.exit(3)\n"
+    "        sys.exit(0)\n"
+    "if not acquire():\n"
+    "    print('CACHE_HIT',CKEY,flush=True); sys.exit(0)\n"
+    "os.makedirs(os.path.dirname(dest),exist_ok=True)\n"
+    "if key and os.path.exists('/opt/s3/s3client.py'):\n"
     "    sys.path.insert(0,'/opt/s3')\n"
     "    from s3client import S3\n"
     "    s3=S3(os.environ['S3_ENDPOINT'],os.environ['S3_ACCESS_KEY'],os.environ['S3_SECRET_KEY'],\n"
     "          region=os.environ.get('S3_REGION','garage'),bucket=os.environ['S3_BUCKET'],timeout=600)\n"
     "    got=s3get(s3,key,dest)\n"
-    "    print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
-    "    cstore(MODEL)\n"
     "else:\n"
-    "    h=hashlib.sha256(); op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
-    "    with op.open(os.environ['FETCH_URL'],timeout=1800) as r, open(dest,'wb') as f:\n"
-    "        while True:\n"
-    "            b=r.read(1<<20)\n"
-    "            if not b: break\n"
-    "            h.update(b); f.write(b)\n"
-    "    got=h.hexdigest()\n"
-    "    print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
-    "    cstore(MODEL)\n"
+    "    got=http_get(os.environ['FETCH_URL'],dest)\n"
+    "print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
+    "publish(); unlock()\n"
     "if sha and got!=sha: print('SHA_MISMATCH',got,sha,flush=True); sys.exit(3)\n"
 )
 
@@ -314,7 +325,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         v4_probe: bool = False, probe_image: str = "",
                         gpu_resource: str = "", gpu_count: int = 1,
                         engine_wait_s: int = 0,
-                        model_cache: str = "", model_cache_mount: str = "/cache",
+                        model_cache: str = "", model_cache_mount: str = "/model",
                         kata_vm: bool = False) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
@@ -399,7 +410,9 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                  "ports": [{"name": "openai", "containerPort": 8000}],
                  "resources": {"limits": limits},
                  "securityContext": dict(hardened, readOnlyRootFilesystem=False),
-                 "volumeMounts": [{"name": "model", "mountPath": "/model", "readOnly": True}]
+                 "volumeMounts": [dict({"name": ("model-cache" if model_cache else "model"),
+                                        "mountPath": "/model", "readOnly": True},
+                                       **({"subPath": model_sha256 + "/files"} if model_cache else {}))]
                                  + ([{"name": "sgl-shim", "mountPath": "/opt/sgl-sm75", "readOnly": True}]
                                     if sgl_shim else [])
                                  + ([{"name": "deception", "mountPath": "/deception", "readOnly": True},
@@ -513,17 +526,14 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                                 {"name": "CACHE_KEY", "value": model_sha256}] if model_cache else [])),
                     "resources": {"limits": {"memory": "2Gi", "cpu": "1"}},
                     "securityContext": dict(hardened, readOnlyRootFilesystem=False),
-                    "volumeMounts": ([{"name": "model", "mountPath": "/model"}]
-                                     + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
-                                        if ((model_key and s3_env) or (model_files and s3_env)) else [])
-                                     + ([{"name": "model-cache", "mountPath": model_cache_mount}]
-                                        if model_cache else [])),
+                     "volumeMounts": ([{"name": ("model-cache" if model_cache else "model"), "mountPath": "/model"}]
+                                      + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
+                                         if ((model_key and s3_env) or (model_files and s3_env)) else [])),
                 }],
                 "containers": containers,
-                "volumes": ([{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}}]
-                            + ([{"name": "model-cache",
-                                "persistentVolumeClaim": {"claimName": model_cache}}]
-                               if model_cache else [])
+                "volumes": ([({"name": "model-cache", "persistentVolumeClaim": {"claimName": model_cache}}
+                              if model_cache else
+                              {"name": "model", "emptyDir": {"sizeLimit": model_volume_size}})]
                             + ([{"name": "s3client", "configMap": {"name": s3_client_configmap}}]
                                if ((model_key and s3_env) or (model_files and s3_env)) else [])) 
                            + ([{"name": "prompts", "configMap": {"name": prompts_configmap}}]

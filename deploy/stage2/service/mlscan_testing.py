@@ -151,7 +151,7 @@ LLM_TEST_ENGINE_WAIT = int(os.environ.get("LLM_TEST_ENGINE_WAIT", "2400"))
 # запрещены Kyverno, поэтому кэш — на общем PVC; при выключенном флаге поведение не меняется.
 LLM_MODEL_CACHE = os.environ.get("LLM_MODEL_CACHE", "0") == "1"
 LLM_MODEL_CACHE_PVC = os.environ.get("LLM_MODEL_CACHE_PVC", "mlscan-model-cache")
-LLM_MODEL_CACHE_MOUNT = os.environ.get("LLM_MODEL_CACHE_MOUNT", "/cache")
+LLM_MODEL_CACHE_MOUNT = os.environ.get("LLM_MODEL_CACHE_MOUNT", "/model")
 LLM_TEST_DISK_GB = int(os.environ.get("LLM_TEST_DISK_GB", "40"))
 LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 IMAGES_REQUIRE_SIGNED = os.environ.get("IMAGES_REQUIRE_SIGNED", "0") == "1"   # B4-lite: политика подписи

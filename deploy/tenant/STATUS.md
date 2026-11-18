@@ -394,3 +394,20 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   Выключен по умолчанию (`LLM_MODEL_CACHE`); тесты: `tests/v3/test_llm_fetch_cache.py` (каталог+файл,
   CACHE_HIT, SHA_MISMATCH, no-cache).
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 211 OK.
+
+### G4-full: модель напрямую из общего PVC (2026-11-18, по рекомендации платформы)
+
+- По итогам обмена с платформой (см. `msg-g4-model-cache-review-20261118` / ответ платформы):
+  правка перенесена в **`make_llama_test_job`** (а не мёртвый `make_scan_job`). Том `model` при
+  включённом кэше теперь **`persistentVolumeClaim: mlscan-model-cache`** (emptyDir убран):
+  `model-fetcher` монтирует PVC rw в `/model` и пишет per-sha (`/model/<sha256>.tmp/files` →
+  атомарная публикация `rename` + `.ready` под lock `O_EXCL`); `engine` монтирует тот же PVC с
+  **`subPath=<sha256>/files` readOnly** в `/model` — копия в emptyDir больше не нужна. `events`
+  и пр. без изменений; `fsGroup: 65532` уже задан.
+- Race-safety для 2 параллельных джобов: lock `CACHE_DIR/<key>.lock` (`O_EXCL`), при занятости —
+  ожидание `.ready` (env `CACHE_LOCK_WAIT`, дефолт 600 с), протухший lock переиспользуется.
+- Тесты: `tests/v3/test_llm_fetch_cache.py` (staging+publish, CACHE_HIT, SHA_MISMATCH, no-cache,
+  stale-lock, wait-for-ready). Замечания платформы учтены: per-sha обязателен; `ebpf-agent /model`
+  неприменим (агент модель не монтирует) — платформа подтвердила; GC кэша — tenant-side (платформа
+  даёт ёмкость + алерт `MlscanModelCacheFillingUp` >85%).
+- **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 213 OK.
