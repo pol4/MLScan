@@ -2696,17 +2696,25 @@ class Handler(BaseHTTPRequestHandler):
                 rows = db_query("SELECT bundle_id FROM bundle_tests WHERE run_token=" + _lit(run_token))
                 if not rows or rows[0][0] != bundle_id:
                     return self._json(403, {"error": "run-token не соответствует bundle"})
+            pol = _policy_latest("default")      # Ф3: вердикт выносится политикой, её версия — в вердикт
             verdict = _policy_llm_verdict(int(agg.get("safety_fail") or 0), float(agg.get("pass_rate") or 0))
             try:
                 out = _write_bundle_verdict(
                     bundle_id, verdict, safety_fail=int(agg.get("safety_fail") or 0),
                     pass_rate=float(agg.get("pass_rate") or 0),
                     coverage={"complete": True, "questions": int(agg.get("total") or 0)},
-                    metrics=dict(agg, **(body.get("metrics") or {})),
+                    metrics=dict(agg, **(body.get("metrics") or {}),
+                                 policy_id=pol.get("id") or "default",
+                                 policy_version=int(pol.get("version") or 1)),
                     versions={"prompt_set": ver, "engine": body.get("engine_image") or "",
-                              "testpack": (body.get("testpack") or {}).get("id", "")},
+                              "testpack": (body.get("testpack") or {}).get("id", ""),
+                              "policy_id": pol.get("id") or "default",
+                              "policy_version": int(pol.get("version") or 1),
+                              "policy_sig": pol.get("signature") or ""},
                     engine_image=body.get("engine_image") or "")
                 agg.update({"bundle_id": bundle_id, "bundle_verdict": verdict,
+                            "policy_id": pol.get("id") or "default",
+                            "policy_version": int(pol.get("version") or 1),
                             "bundle_action": out["action"], "attestation_digest": out["attestation_digest"]})
                 if DB_ENABLED:
                     db_exec("UPDATE bundle_tests SET status='done', error='', updated=now() WHERE bundle_id="
