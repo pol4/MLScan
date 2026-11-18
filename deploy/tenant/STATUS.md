@@ -418,6 +418,7 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   удаляет готовые `<sha>` (есть `.ready`) по `last_used` (`.used` обновляется fetcher'ом при
   использовании) до `GC_TARGET_GB` (по умолчанию 200G < порога алерта 85%); не трогает активные
   (`<sha>.lock`), свежие (`GC_MIN_IDLE_S`, 6ч) и `GC_KEEP` новейших; подчищает брошенные `<sha>.tmp`
-  и протухшие `.lock`. Запуск — CronJob `mlscan-model-cache-gc` (mount PVC rw, образ services).
+  и протухшие `.lock`. Запуск — CronJob `mlscan-model-cache-gc` (mount PVC rw, образ services);
+  проверено в кластере (dry-run Job на PVC): `[gc] entries=1 before=7.51G` — модуль в образе, PVC монтируется.
   Тесты: `tests/v3/test_model_cache_gc.py`.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.

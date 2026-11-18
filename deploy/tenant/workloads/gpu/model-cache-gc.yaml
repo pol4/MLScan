@@ -45,6 +45,7 @@ spec:
                 requests: {memory: "64Mi", cpu: "50m"}
                 limits: {memory: "256Mi", cpu: "500m"}
               securityContext:
+                runAsNonRoot: true
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
                 capabilities: {drop: ["ALL"]}
