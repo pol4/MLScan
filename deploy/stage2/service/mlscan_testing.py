@@ -147,6 +147,11 @@ LLM_TEST_GPU_COUNT = int(os.environ.get("LLM_TEST_GPU_COUNT", "1"))
 # Итоговое значение может быть переопределено дескриптором движка (runtime.readiness.timeout_s)
 # или телом запроса запуска (engine_wait_s); probe получает его как ENGINE_WAIT.
 LLM_TEST_ENGINE_WAIT = int(os.environ.get("LLM_TEST_ENGINE_WAIT", "2400"))
+# G4: read-mostly кэш модели по digest (PVC ceph-rwx в LLM-namespace). Хост-каталоги (hostPath)
+# запрещены Kyverno, поэтому кэш — на общем PVC; при выключенном флаге поведение не меняется.
+LLM_MODEL_CACHE = os.environ.get("LLM_MODEL_CACHE", "0") == "1"
+LLM_MODEL_CACHE_PVC = os.environ.get("LLM_MODEL_CACHE_PVC", "mlscan-model-cache")
+LLM_MODEL_CACHE_MOUNT = os.environ.get("LLM_MODEL_CACHE_MOUNT", "/cache")
 LLM_TEST_DISK_GB = int(os.environ.get("LLM_TEST_DISK_GB", "40"))
 LLM_TEST_URL = os.environ.get("LLM_TEST_URL", "http://mlscan-testing.mlscan-testing.svc.cluster.local:8080")
 IMAGES_REQUIRE_SIGNED = os.environ.get("IMAGES_REQUIRE_SIGNED", "0") == "1"   # B4-lite: политика подписи
@@ -3052,6 +3057,8 @@ class Handler(BaseHTTPRequestHandler):
             gpu_resource=LLM_TEST_GPU_RESOURCE,
             gpu_count=int(body.get("gpu_count") or LLM_TEST_GPU_COUNT),
             engine_wait_s=engine_wait_s,
+            model_cache=(LLM_MODEL_CACHE_PVC if LLM_MODEL_CACHE else ""),
+            model_cache_mount=LLM_MODEL_CACHE_MOUNT,
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
             scan_id=scan_id, namespace=LLM_TEST_NS, gpu=gpu,
             runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),

@@ -540,6 +540,17 @@ def _post_events(args, batch: list) -> None:
         print("[ebpf-agent] /llm/events ошибка:", type(exc).__name__, exc, flush=True)
 
 
+def _engine_ready(url: str, timeout: float = 2.0) -> bool:
+    """I4: готов ли движок (для перехода фазы load -> invoke). Только stdlib, без прокси."""
+    try:
+        import urllib.request
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with op.open(url.rstrip("/") + "/v1/models", timeout=timeout):
+            return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="")
@@ -549,10 +560,19 @@ def main() -> int:
     ap.add_argument("--scan-id", default="")
     ap.add_argument("--nonce", default="")
     ap.add_argument("--phase", default="probe")
+    # I4: динамическая фаза — пока движок не готов, события помечаются фазой загрузки модели
+    # (--load-phase); после готовности (/v1/models) — фазой --phase. Для сканов флаг не нужен.
+    ap.add_argument("--dynamic-phase", action="store_true",
+                    help="I4: помечать события фазами load/invoke по готовности движка")
+    ap.add_argument("--load-phase", default="load")
+    ap.add_argument("--engine-url", default=os.environ.get("ENGINE_URL", "http://127.0.0.1:8000"))
     ap.add_argument("--stop-file", default="", help="выйти, когда появится файл (скан завершён)")
     ap.add_argument("--trigger-shell", action="store_true",
                     help="самопроверка: выполнить 'sh -c true' (execve shell внутри гостя)")
     args = ap.parse_args()
+
+    # Текущая фаза наблюдения (I4). Без --dynamic-phase совпадает с --phase (поведение как раньше).
+    PHASE = args.load_phase if args.dynamic_phase else args.phase
 
     try:                                    # BPF-память учитывается в memlock в госте Kata
         import resource
@@ -583,6 +603,7 @@ def main() -> int:
     events: list[dict] = []
     pending: list[dict] = []
     t_end = time.time() + max(args.duration, 5)
+    last_phase_check = 0.0
     last_post = 0.0
     seen = set()
     def drain() -> None:
@@ -597,7 +618,7 @@ def main() -> int:
             key = ("process_exec", path)
             if key not in seen:
                 seen.add(key)
-                ev = {"type": "process_exec", "phase": args.phase, "probe_id": "ebpf-agent",
+                ev = {"type": "process_exec", "phase": PHASE, "probe_id": "ebpf-agent",
                       "process": {"binary": path.strip(), "exe": path.strip(),
                                   "args": [], "pid": ex.get("pid")},
                       "details": f"comm={path.strip()} syscall=execve pid={ex.get('pid')}",
@@ -612,7 +633,7 @@ def main() -> int:
                 if key in seen:
                     continue
                 seen.add(key)
-                ev = {"type": "file", "phase": args.phase, "probe_id": "ebpf-agent",
+                ev = {"type": "file", "phase": PHASE, "probe_id": "ebpf-agent",
                       "process": {"binary": "", "args": [], "pid": 0},
                       "file": {"path": path}, "details": f"openat path={path}",
                       "nonce": args.nonce, "ts": time.time()}
@@ -633,7 +654,7 @@ def main() -> int:
                     if key in seen:
                         continue
                     seen.add(key)
-                    ev = {"type": "memory", "phase": args.phase, "probe_id": "ebpf-agent",
+                    ev = {"type": "memory", "phase": PHASE, "probe_id": "ebpf-agent",
                           "process": {"binary": "", "args": [], "pid": r.get("pid")}, "exec": True,
                           "details": f"syscall={desc} prot=0x{prot:x} pid={r.get('pid')}",
                           "nonce": args.nonce, "ts": time.time()}
@@ -642,7 +663,7 @@ def main() -> int:
                     if key in seen:
                         continue
                     seen.add(key)
-                    ev = {"type": "module", "phase": args.phase, "probe_id": "ebpf-agent",
+                    ev = {"type": "module", "phase": PHASE, "probe_id": "ebpf-agent",
                           "process": {"binary": "", "args": [], "pid": r.get("pid")},
                           "details": f"syscall={desc} arg=0x{val:x} pid={r.get('pid')}",
                           "nonce": args.nonce, "ts": time.time()}
@@ -656,7 +677,7 @@ def main() -> int:
                 key = ("network", ip)
                 if key not in seen:
                     seen.add(key)
-                    ev = {"type": "network", "phase": args.phase, "probe_id": "ebpf-agent",
+                    ev = {"type": "network", "phase": PHASE, "probe_id": "ebpf-agent",
                           "dst": {"ip": ip, "port": port},
                           "details": f"comm={cn.get('buf', '').strip()} peers={[p_['ip'] for p_ in peers]}",
                           "nonce": args.nonce, "ts": time.time()}
@@ -665,6 +686,11 @@ def main() -> int:
 
     while time.time() < t_end:
         time.sleep(0.25)          # кольцо путей быстро «проворачивается» -> читаем чаще
+        if args.dynamic_phase and PHASE != args.phase and (time.time() - last_phase_check) >= 2.0:
+            last_phase_check = time.time()
+            if _engine_ready(args.engine_url):
+                PHASE = args.phase     # I4: движок готов -> фаза инференса (sticky)
+                print("[ebpf-agent] фаза наблюдения ->", PHASE, flush=True)
         drain()
         if args.post and pending and (last_post == 0.0 or (time.time() - last_post) >= 3.0):
             _post_events(args, pending); pending = []; last_post = time.time()

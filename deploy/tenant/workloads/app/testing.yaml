@@ -51,6 +51,10 @@ spec:
             # Бюджет старта/загрузки модели (сек). Большие модели грузятся десятки минут;
             # переопределяется дескриптором движка (runtime.readiness.timeout_s) или телом запроса.
             - {name: LLM_TEST_ENGINE_WAIT, value: "2400"}
+            # G4: read-mostly кэш моделей по digest (PVC ceph-rwx, см. workloads/gpu/model-cache.yaml).
+            - {name: LLM_MODEL_CACHE, value: "1"}
+            - {name: LLM_MODEL_CACHE_PVC, value: "mlscan-model-cache"}
+            - {name: LLM_MODEL_CACHE_MOUNT, value: "/cache"}
             - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:ab6c052ec40ce62e16683a9c9ce9db29a52b4269952096c6ab65258b81ee7bb8"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}

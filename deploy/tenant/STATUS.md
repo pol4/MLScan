@@ -373,3 +373,24 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   (наблюдение обязательно для `Safe`). I2 (admission host-`nvidia`) — за платформой; G4 (кэш модели
   по digest/доставка Range) — не сделано.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 204 OK.
+
+### Закрытие открытых пунктов плана (2026-11-18)
+
+- **I2 (admission host-`nvidia`)** — уже реализовано платформой: Kyverno ClusterPolicy
+  `mlscan-tenant-sandbox-runtime` запрещает в `t-mlscan-sandbox`/`t-mlscan-gpu` любой
+  `runtimeClassName` вне `kata/kata-btf/kata-gpu` (host-`nvidia`/`runc` отклоняются). Проверено
+  `kubectl get clusterpolicy` (Ready).
+- **P6 (UI политики)** — реализовано: страница аналитики (`mlscan-analytics`, `/`) содержит редактор
+  политики (`v4pol-id/json/cases` + save/publish/simulate), `POST /v4/policies*` проксируется.
+  Проверено ответом UI (`v4pol-*` присутствуют в HTML).
+- **I4 (eBPF в каждой фазе)** — добавлена динамическая фаза в observer: `ebpf_agent.py`
+  (`--dynamic-phase`): до готовности движка события помечаются `load`, после `/v1/models` — `probe`
+  (sticky). Job LLM-pass передаёт `--dynamic-phase`. Для сканов поведение не меняется. ConfigMap-копии
+  синхронизируются генератором `scripts/sync-ebpf-configmaps.py` (идемпотентно). Тест:
+  `tests/v3/test_ebpf_phase.py`.
+- **G4 (кэш модели по digest)** — tenant-половина: read-mostly кэш на общем PVC (`ceph-rwx`),
+  `model-fetcher` кладёт/берёт модель по `sha256` (`CACHE_DIR`/`CACHE_KEY`, `.ready`-маркер, атомарная
+  публикация). hostPath запрещён Kyverno → кэш на PVC (`workloads/gpu/model-cache.yaml`, 300Gi).
+  Выключен по умолчанию (`LLM_MODEL_CACHE`); тесты: `tests/v3/test_llm_fetch_cache.py` (каталог+файл,
+  CACHE_HIT, SHA_MISMATCH, no-cache).
+- **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 211 OK.

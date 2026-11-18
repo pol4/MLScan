@@ -10,3 +10,4 @@ resources:
   - deception.yaml
   - ebpf-agent.yaml
   - sgl-shim.yaml
+  - model-cache.yaml

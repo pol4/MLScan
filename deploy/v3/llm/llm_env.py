@@ -141,9 +141,43 @@ def make_scan_job(*, scan_id: str, engine_image: str, model_sha256: str, model_k
 
 # --- N2: запускаемый job теста bundle (реальный движок + набор вопросов -> /llm/score) ----------
 _FETCH_SRC = (
-    "import hashlib,json,os,sys,urllib.request\n"
-    "os.makedirs('/model',exist_ok=True)\n"
+    "import hashlib,json,os,shutil,sys,urllib.request\n"
+    "MODEL=os.environ.get('MODEL_DIR','/model')\n"
+    "os.makedirs(MODEL,exist_ok=True)\n"
     "manifest=os.environ.get('FETCH_MANIFEST','')\n"
+    # G4: read-mostly кэш модели по digest. CACHE_DIR — точка монтирования PVC, CACHE_KEY — sha256.
+    "CACHE=os.environ.get('CACHE_DIR',''); CKEY=os.environ.get('CACHE_KEY','')\n"
+    "cbase=os.path.join(CACHE,CKEY) if (CACHE and CKEY) else ''\n"
+    "def cready():\n"
+    "    return bool(cbase) and os.path.exists(os.path.join(cbase,'.ready'))\n"
+    "def crestore(root):\n"
+    "    src=os.path.join(cbase,'files')\n"
+    "    for dp,_,fs in os.walk(src):\n"
+    "        for fn in fs:\n"
+    "            s=os.path.join(dp,fn); rel=os.path.relpath(s,src); d=os.path.join(root,rel)\n"
+    "            os.makedirs(os.path.dirname(d),exist_ok=True)\n"
+    "            try: os.link(s,d)\n"
+    "            except Exception: shutil.copy2(s,d)\n"
+    "def cstore(root):\n"
+    "    if not cbase: return\n"
+    "    tmp=cbase+'.tmp'\n"
+    "    try:\n"
+    "        if os.path.exists(tmp): shutil.rmtree(tmp,ignore_errors=True)\n"
+    "        shutil.copytree(root,os.path.join(tmp,'files'))\n"
+    "        open(os.path.join(tmp,'.ready'),'w').close()\n"
+    "        if os.path.exists(cbase): shutil.rmtree(cbase,ignore_errors=True)\n"
+    "        os.rename(tmp,cbase); print('CACHE_STORE',CKEY,flush=True)\n"
+    "    except Exception as exc:\n"
+    "        print('CACHE_STORE_ERR',type(exc).__name__,exc,flush=True)\n"
+    "        shutil.rmtree(tmp,ignore_errors=True)\n"
+    "def sha_file(p):\n"
+    "    h=hashlib.sha256()\n"
+    "    with open(p,'rb') as f:\n"
+    "        while True:\n"
+    "            b=f.read(1<<20)\n"
+    "            if not b: break\n"
+    "            h.update(b)\n"
+    "    return h.hexdigest()\n"
     "def s3get(s3,key,out):\n"
     "    os.makedirs(os.path.dirname(out),exist_ok=True)\n"
     "    st,hd,resp=s3.get_stream(key)\n"
@@ -160,6 +194,8 @@ _FETCH_SRC = (
     "    return h.hexdigest()\n"
     "if manifest:\n"
     "    files=json.loads(manifest)\n"
+    "    if cready():\n"
+    "        crestore(MODEL); print('CACHE_HIT',CKEY,len(files),flush=True); sys.exit(0)\n"
     "    s3=None\n"
     "    if any('key' in it for it in files):\n"
     "        sys.path.insert(0,'/opt/s3')\n"
@@ -168,7 +204,7 @@ _FETCH_SRC = (
     "              region=os.environ.get('S3_REGION','garage'),bucket=os.environ['S3_BUCKET'],timeout=600)\n"
     "    op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
     "    for it in files:\n"
-    "        out=os.path.join('/model',it['dest'])\n"
+    "        out=os.path.join(MODEL,it['dest'])\n"
     "        if it.get('key'):\n"
     "            got=s3get(s3,it['key'],out)\n"
     "        else:\n"
@@ -181,16 +217,25 @@ _FETCH_SRC = (
     "                    h.update(b); f.write(b)\n"
     "            got=h.hexdigest()\n"
     "        print('FETCHED',out,os.path.getsize(out),got,flush=True)\n"
+    "    cstore(MODEL)\n"
     "    sys.exit(0)\n"
-    "dest=os.environ.get('FETCH_DEST','/model/model.gguf')\n"
+    "dest=os.environ.get('FETCH_DEST') or os.path.join(MODEL,'model.gguf')\n"
     "sha=os.environ.get('FETCH_SHA','')\n"
     "key=os.environ.get('S3_KEY','')\n"
-    "if key and os.path.exists('/opt/s3/s3client.py'):\n"
+    "_cfile=os.path.join(cbase,'files',os.path.basename(dest)) if cbase else ''\n"
+    "if cbase and os.path.exists(os.path.join(cbase,'.ready')) and os.path.exists(_cfile):\n"
+    "    os.makedirs(os.path.dirname(dest),exist_ok=True)\n"
+    "    try: os.link(_cfile,dest)\n"
+    "    except Exception: shutil.copy2(_cfile,dest)\n"
+    "    got=sha_file(dest); print('CACHE_HIT',CKEY,flush=True)\n"
+    "elif key and os.path.exists('/opt/s3/s3client.py'):\n"
     "    sys.path.insert(0,'/opt/s3')\n"
     "    from s3client import S3\n"
     "    s3=S3(os.environ['S3_ENDPOINT'],os.environ['S3_ACCESS_KEY'],os.environ['S3_SECRET_KEY'],\n"
     "          region=os.environ.get('S3_REGION','garage'),bucket=os.environ['S3_BUCKET'],timeout=600)\n"
     "    got=s3get(s3,key,dest)\n"
+    "    print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
+    "    cstore(MODEL)\n"
     "else:\n"
     "    h=hashlib.sha256(); op=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
     "    with op.open(os.environ['FETCH_URL'],timeout=1800) as r, open(dest,'wb') as f:\n"
@@ -199,7 +244,8 @@ _FETCH_SRC = (
     "            if not b: break\n"
     "            h.update(b); f.write(b)\n"
     "    got=h.hexdigest()\n"
-    "print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
+    "    print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
+    "    cstore(MODEL)\n"
     "if sha and got!=sha: print('SHA_MISMATCH',got,sha,flush=True); sys.exit(3)\n"
 )
 
@@ -268,6 +314,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         v4_probe: bool = False, probe_image: str = "",
                         gpu_resource: str = "", gpu_count: int = 1,
                         engine_wait_s: int = 0,
+                        model_cache: str = "", model_cache_mount: str = "/cache",
                         kata_vm: bool = False) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
@@ -425,7 +472,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         + " --post " + shlex.quote(testing_url)
                         + " --key " + shlex.quote(api_key)
                         + " --scan-id " + shlex.quote(scan_id or ("bundle-test-" + bundle_id))
-                        + " --nonce '' --trigger-shell"],
+                        + " --nonce '' --dynamic-phase --trigger-shell"],
             "env": ([{"name": "EBPF_DUMP_SLOTS", "value": "1"}, {"name": "EBPF_DUMP_RINGS", "value": "1"}]
                     if os.environ.get("MLSCAN_EBPF_DEBUG") == "1" else []),
             # в этой сборке Kata eBPF доступен только root-в-госте (non-root даёт EPERM даже с CAP_BPF):
@@ -461,15 +508,22 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                               {"name": "FETCH_SHA", "value": model_sha256},
                               {"name": "FETCH_DEST", "value": "/model/model.gguf"},
                               {"name": "S3_KEY", "value": model_key}])
-                            + [{"name": k, "value": v} for k, v in (s3_env or {}).items()]),
+                            + [{"name": k, "value": v} for k, v in (s3_env or {}).items()]
+                            + ([{"name": "CACHE_DIR", "value": model_cache_mount},
+                                {"name": "CACHE_KEY", "value": model_sha256}] if model_cache else [])),
                     "resources": {"limits": {"memory": "2Gi", "cpu": "1"}},
                     "securityContext": dict(hardened, readOnlyRootFilesystem=False),
                     "volumeMounts": ([{"name": "model", "mountPath": "/model"}]
                                      + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
-                                        if ((model_key and s3_env) or (model_files and s3_env)) else [])),
+                                        if ((model_key and s3_env) or (model_files and s3_env)) else [])
+                                     + ([{"name": "model-cache", "mountPath": model_cache_mount}]
+                                        if model_cache else [])),
                 }],
                 "containers": containers,
                 "volumes": ([{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}}]
+                            + ([{"name": "model-cache",
+                                "persistentVolumeClaim": {"claimName": model_cache}}]
+                               if model_cache else [])
                             + ([{"name": "s3client", "configMap": {"name": s3_client_configmap}}]
                                if ((model_key and s3_env) or (model_files and s3_env)) else [])) 
                            + ([{"name": "prompts", "configMap": {"name": prompts_configmap}}]

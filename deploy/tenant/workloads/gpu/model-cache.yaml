@@ -1,0 +1,17 @@
+# G4: read-mostly кэш моделей для LLM-тестов (по sha256). Общий PVC (ceph-rwx),
+# чтобы одна загрузка (в т.ч. десятки ГБ) переиспользовалась разными job'ами
+# без повторного скачивания из S3. hostPath запрещён Kyverno для t-mlscan-gpu,
+# поэтому кэш живёт на общем томе; контейнеры монтируют его через model-fetcher.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlscan-model-cache
+  namespace: t-mlscan-gpu
+  labels:
+    app.kubernetes.io/part-of: mlscan
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: ceph-rwx
+  resources:
+    requests:
+      storage: 300Gi
