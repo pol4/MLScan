@@ -435,3 +435,19 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   (`testpack: llm-basic` в вердикте), движок — по дескриптору.
 - Образ `services:polver@sha256:2bdc9f5c…` выкачен (testing + GC CronJob), Argo Synced.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
+
+### UI под новую функциональность (2026-11-18)
+
+- **`policy_version` в вердикте (DoD Ф3, обязательно)** — сделано: `report.json` (`_v3_artifact_report`)
+  отдаёт в «Связках» `policy_id`/`policy_version` (из `bundle_verdicts.metrics`); UI-таблица «Связки»
+  получила колонку **«Политика»** (`id@version`). Проверено: `b-e595f75a… → policy default@3`.
+- **Фазы observer (I4)** — сделано: UI в строке eBPF показывает разбивку по фазам
+  (`findings_by_phase`, напр. `load:4, probe:1`). Проверено, что HTML содержит колонку «Политика»
+  и `findings_by_phase`.
+- Образ `services:ui1@sha256:fd321f55…` выкачен (testing+analytics+CronJob), Argo Synced.
+- **Отложено — панель кэша (G4/GC):** сервис в `t-mlscan-app` не может смонтировать PVC
+  `mlscan-model-cache` из `t-mlscan-gpu` (namespace-scope), а S3-креды (`Secret mlscan-s3`) в
+  `t-mlscan-gpu` не продублированы. Требуется решение: (а) GC-крон публикует статус в S3 (нужны
+  S3-креды в GPU-ns) + endpoint `/v4/model-cache`; либо (б) отдельный read-only «cache-reader»-сервис
+  в `t-mlscan-gpu`. Объём/риски выше — вынесено на подтверждение.
+- **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
