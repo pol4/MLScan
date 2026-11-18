@@ -25,7 +25,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: testing
-          image: harbor.platform.rtx.local/mlscan/services@sha256:30bfb62d367cec2d9d55d1f682e9f84b83b48b75e6ee18e1f5604440b182a914
+          image: harbor.platform.rtx.local/mlscan/services@sha256:5d11657fb7ce2ce69ab11bbcc0332a9e6d9dd7fcdfeca13b04a69992e11ac359
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_testing.py"]
           env:
@@ -55,7 +55,7 @@ spec:
             - {name: LLM_MODEL_CACHE, value: "1"}
             - {name: LLM_MODEL_CACHE_PVC, value: "mlscan-model-cache"}
             - {name: LLM_MODEL_CACHE_MOUNT, value: "/model"}
-            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:30bfb62d367cec2d9d55d1f682e9f84b83b48b75e6ee18e1f5604440b182a914"}
+            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:5d11657fb7ce2ce69ab11bbcc0332a9e6d9dd7fcdfeca13b04a69992e11ac359"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}
             - {name: PORT, value: "8080"}
