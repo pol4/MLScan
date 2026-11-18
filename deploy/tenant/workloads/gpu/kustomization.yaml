@@ -11,3 +11,4 @@ resources:
   - ebpf-agent.yaml
   - sgl-shim.yaml
   - model-cache.yaml
+  - model-cache-gc.yaml

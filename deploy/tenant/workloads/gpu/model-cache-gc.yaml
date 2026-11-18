@@ -1,0 +1,55 @@
+# G4: периодический GC read-mostly кэша моделей (per-sha, LRU). Платформа отдала
+# очистку тенанту (данные тенанта); порог цели ниже алерта платформы
+# MlscanModelCacheFillingUp (>85%). Тот же PVC, что и у LLM-job (rw).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mlscan-model-cache-gc
+  namespace: t-mlscan-gpu
+  labels:
+    app.kubernetes.io/part-of: mlscan
+spec:
+  schedule: "23 */6 * * *"            # каждые 6 часов
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          runtimeClassName: kata
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: gc
+              image: harbor.platform.rtx.local/mlscan/services@sha256:bc39cd2c05c24b0c2b324963531279f0d889266f0fa05d43d8cbd735c402e31d
+              command: ["python3", "/opt/v3llm/model_cache_gc.py"]
+              env:
+                - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+                - {name: CACHE_DIR, value: "/cache"}
+                - {name: GC_TARGET_GB, value: "200"}
+                - {name: GC_KEEP, value: "1"}
+                - {name: GC_MIN_IDLE_S, value: "21600"}
+                - {name: GC_TMP_TTL_S, value: "3600"}
+                - {name: GC_LOCK_TTL_S, value: "7200"}
+                - {name: GC_DRY_RUN, value: "0"}
+              resources:
+                requests: {memory: "64Mi", cpu: "50m"}
+                limits: {memory: "256Mi", cpu: "500m"}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              volumeMounts:
+                - {name: cache, mountPath: /cache}
+          volumes:
+            - name: cache
+              persistentVolumeClaim: {claimName: mlscan-model-cache}
