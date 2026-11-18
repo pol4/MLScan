@@ -264,7 +264,8 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         testpack_url: str = "", testpack_meta: str = "",
                         engine_descriptor: dict | None = None, deception: bool = True,
                         v4_probe: bool = False, probe_image: str = "",
-                        gpu_resource: str = "", kata_vm: bool = False) -> dict:
+                        gpu_resource: str = "", gpu_count: int = 1,
+                        kata_vm: bool = False) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
     Движок обязан быть по digest (admission-политика); модель проверяется по sha256.
@@ -284,7 +285,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
               "ephemeral-storage": f"{int(res.get('disk_gb', 40))}Gi"}
     if gpu and gpu_mode == "device-plugin":
         # v4: ключ GPU-ресурса настраиваемый (nvidia.com/gpu | nvidia.com/<MODEL> для Kata-passthrough)
-        limits[gpu_resource or os.environ.get("LLM_TEST_GPU_RESOURCE", "nvidia.com/gpu")] = 1
+        limits[gpu_resource or os.environ.get("LLM_TEST_GPU_RESOURCE", "nvidia.com/gpu")] = int(gpu_count or 1)
     engine_env = [{"name": "LLAMA_ARG_HOST", "value": "0.0.0.0"},
                   # числовой UID без записи в /etc/passwd -> torch.getpass.getuser() падает
                   {"name": "USER", "value": "mlscan"}, {"name": "LOGNAME", "value": "mlscan"},
@@ -321,11 +322,15 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
         if "sm75" in eng_l or sgl_shim:
             engine_command += ["--attention-backend", "torch_native",
                                "--sampling-backend", "pytorch", "--dtype", "float16"]
+        if gpu and int(gpu_count or 1) > 1:
+            engine_command += ["--tp", str(int(gpu_count))]
         engine_args = []
     elif "vllm" in eng_l:
         engine_command = ["vllm", "serve", model_path, "--host", "0.0.0.0", "--port", "8000",
                           "--max-model-len", "4096", "--gpu-memory-utilization", "0.90",
                           "--swap-space", "0", "--served-model-name", "m"]
+        if gpu and int(gpu_count or 1) > 1:
+            engine_command += ["--tensor-parallel-size", str(int(gpu_count))]
         engine_args = []
     else:
         engine_command = None
