@@ -350,5 +350,9 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   env `LLM_TEST_ENGINE_WAIT` (2400). Архитектура: `Arch_v4/02-engine-framework.md` §3.1.
 - **Проверено**: unit зелёные (tests/v4 = 51, tests/v3 = 204); сгенерированный Job — `ENGINE_WAIT=2400`,
   `startupProbe` `periodSeconds=15, failureThreshold=160`; `ttlSecondsAfterFinished=4800`.
-- **Осталось**: применить — пересобрать/перевыпустить образ `mlscan/services` (pin по digest) и
-  синхронизировать с ArgoCD.
+- **Применено (2026-11-18)**: образ `mlscan/services` пересобран и запушен —
+  `6623f0f2@sha256:30dd155a621f7a5bff489ba44877233092572facdd40aba25454a4874cbad2f1`; digest прописан
+  в app-workloads (`testing/analytics/integrations/ops`), ArgoCD `tenant-mlscan` синхронизирован
+  (rev `59903da3`), `mlscan-testing` выкатился. E2E-подтверждение через продуктовый поток:
+  Qwen3-4B, TP=2, `kata-gpu`, 5 вопросов → **status `done`, verdict `Safe`, 5/5**, `secs=24.4`,
+  observer: LLM-B-01/03/04. Ранее (до фикса) тот же прогон давал `ENGINE_NOT_READY`.
