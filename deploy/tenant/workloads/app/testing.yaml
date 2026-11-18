@@ -54,7 +54,7 @@ spec:
             # G4: read-mostly кэш моделей по digest (PVC ceph-rwx, см. workloads/gpu/model-cache.yaml).
             - {name: LLM_MODEL_CACHE, value: "1"}
             - {name: LLM_MODEL_CACHE_PVC, value: "mlscan-model-cache"}
-            - {name: LLM_MODEL_CACHE_MOUNT, value: "/model"}
+            - {name: LLM_MODEL_CACHE_MOUNT, value: "/cache"}
             - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:fd321f5542e9965c388140e6bc2e1a2b9ce2fca4035d2573ec8d0399a95b9ebd"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}

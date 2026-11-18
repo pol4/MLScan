@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""v3/llm: unit-тесты G4 — кэш модели в model-fetcher (per-sha, staging+publish, lock).
+"""v3/llm: unit-тесты G4 (гибрид) — общий кэш на PVC + восстановление на локальный диск.
 
-Проверяет: загрузка идёт прямо в кэш (`<CACHE_DIR>/<key>.tmp/files`) и публикуется атомарно
-(`.ready`, rename); повторный прогон берёт готовое (`CACHE_HIT`) без скачивания; staging в /model
-не нужен (engine читает кэш через subPath). Скрипт fetcher'а исполняется как процесс.
+Проверяет: загрузка идёт в кэш (`<CACHE_DIR>/<key>.tmp/files`, атомарная публикация `.ready`+rename
+под lock), затем файлы **восстанавливаются в MODEL_DIR** (node-local, откуда читает engine); повторный
+прогон — `CACHE_HIT` + восстановление, без скачивания. Скрипт fetcher'а исполняется как процесс.
 """
 from __future__ import annotations
 
@@ -58,46 +58,54 @@ class FetchCacheTest(unittest.TestCase):
     def _cachedir(self, key):
         return os.path.join(self.cache, key, "files")
 
-    def test_dir_manifest_stage_and_publish(self):
+    def test_dir_manifest_stage_publish_restore(self):
         a = self._src("a.txt", b"alpha")
         b = self._src("sub/b.txt", b"beta-content")
         manifest = json.dumps([{"dest": "a.txt", "url": _file_url(a)},
                                {"dest": "sub/b.txt", "url": _file_url(b)}])
         key = "s" * 40
-        r1 = self._run({"CACHE_DIR": self.cache, "CACHE_KEY": key, "FETCH_MANIFEST": manifest})
+        m1 = os.path.join(self.root, "m1")
+        r1 = self._run({"MODEL_DIR": m1, "CACHE_DIR": self.cache, "CACHE_KEY": key, "FETCH_MANIFEST": manifest})
         self.assertEqual(r1.returncode, 0, r1.stderr)
         self.assertIn("FETCHED", r1.stdout)
         self.assertIn("CACHE_STORE", r1.stdout)
         self.assertTrue(os.path.exists(os.path.join(self.cache, key, ".ready")))
         self.assertFalse(os.path.exists(os.path.join(self.cache, key + ".tmp")))
         self.assertEqual(_read(os.path.join(self._cachedir(key), "a.txt")), b"alpha")
-        self.assertEqual(_read(os.path.join(self._cachedir(key), "sub", "b.txt")), b"beta-content")
-        # второй прогон — готовое, без скачивания
-        r2 = self._run({"CACHE_DIR": self.cache, "CACHE_KEY": key, "FETCH_MANIFEST": manifest})
+        # восстановлено на локальный диск для engine
+        self.assertEqual(_read(os.path.join(m1, "a.txt")), b"alpha")
+        self.assertEqual(_read(os.path.join(m1, "sub", "b.txt")), b"beta-content")
+        # второй прогон: CACHE_HIT + восстановление в другой локальный каталог
+        m2 = os.path.join(self.root, "m2")
+        r2 = self._run({"MODEL_DIR": m2, "CACHE_DIR": self.cache, "CACHE_KEY": key, "FETCH_MANIFEST": manifest})
         self.assertEqual(r2.returncode, 0, r2.stderr)
         self.assertIn("CACHE_HIT", r2.stdout)
         self.assertNotIn("FETCHED", r2.stdout)
+        self.assertEqual(_read(os.path.join(m2, "sub", "b.txt")), b"beta-content")
 
-    def test_single_file_cache_and_sha(self):
+    def test_single_file_cache_restore_and_sha(self):
         data = b"weights-only"
         sha = hashlib.sha256(data).hexdigest()
         src = self._src("m.gguf", data)
         key = "t" * 40
-        r1 = self._run({"CACHE_DIR": self.cache, "CACHE_KEY": key,
+        m1 = os.path.join(self.root, "s1")
+        r1 = self._run({"MODEL_DIR": m1, "CACHE_DIR": self.cache, "CACHE_KEY": key,
                         "FETCH_URL": _file_url(src), "FETCH_SHA": sha})
         self.assertEqual(r1.returncode, 0, r1.stderr)
         self.assertIn("FETCHED", r1.stdout)
         self.assertEqual(_read(os.path.join(self._cachedir(key), "model.gguf")), data)
-        r2 = self._run({"CACHE_DIR": self.cache, "CACHE_KEY": key,
+        self.assertEqual(_read(os.path.join(m1, "model.gguf")), data)
+        m2 = os.path.join(self.root, "s2")
+        r2 = self._run({"MODEL_DIR": m2, "CACHE_DIR": self.cache, "CACHE_KEY": key,
                         "FETCH_URL": _file_url(src), "FETCH_SHA": sha})
         self.assertEqual(r2.returncode, 0, r2.stderr)
         self.assertIn("CACHE_HIT", r2.stdout)
-        self.assertNotIn("FETCHED", r2.stdout)
+        self.assertEqual(_read(os.path.join(m2, "model.gguf")), data)
 
     def test_sha_mismatch_fails(self):
         src = self._src("bad.gguf", b"x")
-        r = self._run({"CACHE_DIR": self.cache, "CACHE_KEY": "u" * 40,
-                       "FETCH_URL": _file_url(src), "FETCH_SHA": "0" * 64})
+        r = self._run({"MODEL_DIR": os.path.join(self.root, "b1"), "CACHE_DIR": self.cache,
+                       "CACHE_KEY": "u" * 40, "FETCH_URL": _file_url(src), "FETCH_SHA": "0" * 64})
         self.assertEqual(r.returncode, 3)
         self.assertIn("SHA_MISMATCH", r.stdout)
 
@@ -114,19 +122,19 @@ class FetchCacheTest(unittest.TestCase):
     def test_stale_lock_is_stolen(self):
         src = self._src("q.txt", b"qq")
         key = "v" * 40
-        # протухший lock без .ready -> fetcher должен забрать lock и загрузить
         with open(os.path.join(self.cache, key + ".lock"), "w"):
             pass
-        r = self._run({"CACHE_DIR": self.cache, "CACHE_KEY": key, "CACHE_LOCK_WAIT": "0",
+        m = os.path.join(self.root, "q1")
+        r = self._run({"MODEL_DIR": m, "CACHE_DIR": self.cache, "CACHE_KEY": key, "CACHE_LOCK_WAIT": "0",
                        "FETCH_MANIFEST": json.dumps([{"dest": "q.txt", "url": _file_url(src)}])})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("CACHE_STORE", r.stdout)
         self.assertTrue(os.path.exists(os.path.join(self.cache, key, ".ready")))
+        self.assertEqual(_read(os.path.join(m, "q.txt")), b"qq")
 
     def test_concurrent_waits_for_ready(self):
         src = self._src("r.txt", b"rr")
         key = "w" * 40
-        # другой writer «держит» lock, но кэш уже готов -> ждать и взять без скачивания
         with open(os.path.join(self.cache, key + ".lock"), "w"):
             pass
         ready_dir = os.path.join(self.cache, key, "files")
@@ -135,11 +143,13 @@ class FetchCacheTest(unittest.TestCase):
             fh.write(b"rr")
         with open(os.path.join(self.cache, key, ".ready"), "w"):
             pass
-        r = self._run({"CACHE_DIR": self.cache, "CACHE_KEY": key, "CACHE_LOCK_WAIT": "5",
+        m = os.path.join(self.root, "r1")
+        r = self._run({"MODEL_DIR": m, "CACHE_DIR": self.cache, "CACHE_KEY": key, "CACHE_LOCK_WAIT": "5",
                        "FETCH_MANIFEST": json.dumps([{"dest": "r.txt", "url": _file_url(src)}])})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("CACHE_HIT", r.stdout)
         self.assertNotIn("FETCHED", r.stdout)
+        self.assertEqual(_read(os.path.join(m, "r.txt")), b"rr")
 
 
 if __name__ == "__main__":

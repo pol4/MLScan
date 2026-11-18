@@ -144,9 +144,9 @@ _FETCH_SRC = (
     "import hashlib,json,os,shutil,sys,time,urllib.request\n"
     "MODEL=os.environ.get('MODEL_DIR','/model')\n"
     "manifest=os.environ.get('FETCH_MANIFEST','')\n"
-    # G4: read-mostly кэш модели по digest (per-sha раскладка). CACHE_DIR — mount PVC, CACHE_KEY — sha256.
-    # Загрузка идёт прямо в CACHE_DIR/<key>.tmp/files и публикуется атомарно (rename -> .ready);
-    # engine читает CACHE_DIR/<key>/files (ro, subPath) — копия в /model не нужна. Публикация под lock.
+    # G4 (гибрид): общий кэш на CACHE_DIR (PVC, per-sha). Загрузка -> CACHE_DIR/<key>.tmp/files,
+    # атомарная публикация (rename -> .ready) под lock; далее файлы восстанавливаются на локальный
+    # диск узла (MODEL, emptyDir) — engine читает локально (быстро для очень больших моделей).
     "CACHE=os.environ.get('CACHE_DIR',''); CKEY=os.environ.get('CACHE_KEY','')\n"
     "CBASE=os.path.join(CACHE,CKEY) if (CACHE and CKEY) else ''\n"
     "STAGE=(CBASE+'.tmp') if CBASE else ''\n"
@@ -154,6 +154,7 @@ _FETCH_SRC = (
     "RDY=os.path.join(CBASE,'.ready') if CBASE else ''\n"
     "ROOT=os.path.join(STAGE,'files') if CBASE else MODEL\n"
     "WAIT=int(os.environ.get('CACHE_LOCK_WAIT','600'))\n"
+    "os.makedirs(MODEL,exist_ok=True)\n"
     "os.makedirs(ROOT,exist_ok=True)\n"
     "def ready():\n"
     "    return bool(RDY) and os.path.exists(RDY)\n"
@@ -192,6 +193,16 @@ _FETCH_SRC = (
     "    except Exception as exc:\n"
     "        print('CACHE_STORE_ERR',type(exc).__name__,exc,flush=True)\n"
     "        shutil.rmtree(STAGE,ignore_errors=True)\n"
+    "def restore():\n"
+    "    if not CBASE: return\n"
+    "    src=os.path.join(CBASE,'files')\n"
+    "    if not os.path.isdir(src): return\n"
+    "    for dp,_,fs in os.walk(src):\n"
+    "        for fn in fs:\n"
+    "            s=os.path.join(dp,fn); rel=os.path.relpath(s,src); d=os.path.join(MODEL,rel)\n"
+    "            os.makedirs(os.path.dirname(d),exist_ok=True)\n"
+    "            try: os.link(s,d)\n"
+    "            except Exception: shutil.copy2(s,d)\n"
     "def sha_file(p):\n"
     "    h=hashlib.sha256()\n"
     "    with open(p,'rb') as f:\n"
@@ -227,7 +238,7 @@ _FETCH_SRC = (
     "if manifest:\n"
     "    files=json.loads(manifest)\n"
     "    if ready() or not acquire():\n"
-    "        touch_used(); print('CACHE_HIT',CKEY,len(files),flush=True); sys.exit(0)\n"
+    "        restore(); touch_used(); print('CACHE_HIT',CKEY,len(files),flush=True); sys.exit(0)\n"
     "    os.makedirs(ROOT,exist_ok=True)\n"
     "    s3=None\n"
     "    if any('key' in it for it in files):\n"
@@ -239,7 +250,7 @@ _FETCH_SRC = (
     "        out=os.path.join(ROOT,it['dest'])\n"
     "        got=s3get(s3,it['key'],out) if it.get('key') else http_get(it['url'],out)\n"
     "        print('FETCHED',out,os.path.getsize(out),got,flush=True)\n"
-    "    publish(); touch_used(); unlock(); sys.exit(0)\n"
+    "    publish(); restore(); touch_used(); unlock(); sys.exit(0)\n"
     "dest=os.environ.get('FETCH_DEST') or os.path.join(ROOT,'model.gguf')\n"
     "sha=os.environ.get('FETCH_SHA','')\n"
     "key=os.environ.get('S3_KEY','')\n"
@@ -248,9 +259,9 @@ _FETCH_SRC = (
     "    if os.path.exists(f):\n"
     "        touch_used(); got=sha_file(f); print('CACHE_HIT',CKEY,flush=True)\n"
     "        if sha and got!=sha: print('SHA_MISMATCH',got,sha,flush=True); sys.exit(3)\n"
-    "        sys.exit(0)\n"
+    "        restore(); sys.exit(0)\n"
     "if not acquire():\n"
-    "    touch_used(); print('CACHE_HIT',CKEY,flush=True); sys.exit(0)\n"
+    "    restore(); touch_used(); print('CACHE_HIT',CKEY,flush=True); sys.exit(0)\n"
     "os.makedirs(os.path.dirname(dest),exist_ok=True)\n"
     "if key and os.path.exists('/opt/s3/s3client.py'):\n"
     "    sys.path.insert(0,'/opt/s3')\n"
@@ -261,7 +272,7 @@ _FETCH_SRC = (
     "else:\n"
     "    got=http_get(os.environ['FETCH_URL'],dest)\n"
     "print('FETCHED',dest,os.path.getsize(dest),got,flush=True)\n"
-    "publish(); touch_used(); unlock()\n"
+    "publish(); restore(); touch_used(); unlock()\n"
     "if sha and got!=sha: print('SHA_MISMATCH',got,sha,flush=True); sys.exit(3)\n"
 )
 
@@ -330,7 +341,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         v4_probe: bool = False, probe_image: str = "",
                         gpu_resource: str = "", gpu_count: int = 1,
                         engine_wait_s: int = 0,
-                        model_cache: str = "", model_cache_mount: str = "/model",
+                        model_cache: str = "", model_cache_mount: str = "/cache",
                         kata_vm: bool = False) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
@@ -415,9 +426,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                  "ports": [{"name": "openai", "containerPort": 8000}],
                  "resources": {"limits": limits},
                  "securityContext": dict(hardened, readOnlyRootFilesystem=False),
-                 "volumeMounts": [dict({"name": ("model-cache" if model_cache else "model"),
-                                        "mountPath": "/model", "readOnly": True},
-                                       **({"subPath": model_sha256 + "/files"} if model_cache else {}))]
+                 "volumeMounts": [{"name": "model", "mountPath": "/model", "readOnly": True}]
                                  + ([{"name": "sgl-shim", "mountPath": "/opt/sgl-sm75", "readOnly": True}]
                                     if sgl_shim else [])
                                  + ([{"name": "deception", "mountPath": "/deception", "readOnly": True},
@@ -531,14 +540,17 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                                 {"name": "CACHE_KEY", "value": model_sha256}] if model_cache else [])),
                     "resources": {"limits": {"memory": "2Gi", "cpu": "1"}},
                     "securityContext": dict(hardened, readOnlyRootFilesystem=False),
-                     "volumeMounts": ([{"name": ("model-cache" if model_cache else "model"), "mountPath": "/model"}]
+                     "volumeMounts": ([{"name": "model", "mountPath": "/model"}]
+                                      + ([{"name": "model-cache", "mountPath": model_cache_mount}]
+                                         if model_cache else [])
                                       + ([{"name": "s3client", "mountPath": "/opt/s3", "readOnly": True}]
                                          if ((model_key and s3_env) or (model_files and s3_env)) else [])),
                 }],
                 "containers": containers,
-                "volumes": ([({"name": "model-cache", "persistentVolumeClaim": {"claimName": model_cache}}
-                              if model_cache else
-                              {"name": "model", "emptyDir": {"sizeLimit": model_volume_size}})]
+                "volumes": ([{"name": "model", "emptyDir": {"sizeLimit": model_volume_size}}]
+                            + ([{"name": "model-cache",
+                                 "persistentVolumeClaim": {"claimName": model_cache}}]
+                               if model_cache else [])
                             + ([{"name": "s3client", "configMap": {"name": s3_client_configmap}}]
                                if ((model_key and s3_env) or (model_files and s3_env)) else [])) 
                            + ([{"name": "prompts", "configMap": {"name": prompts_configmap}}]

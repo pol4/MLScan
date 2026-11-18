@@ -451,3 +451,16 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   S3-креды в GPU-ns) + endpoint `/v4/model-cache`; либо (б) отдельный read-only «cache-reader»-сервис
   в `t-mlscan-gpu`. Объём/риски выше — вынесено на подтверждение.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
+
+### G4: гибридный кэш (общий PVC + локальное чтение движком, 2026-11-18)
+
+- По требованию «скорость важнее всего для очень больших моделей» путь чтения изменён на **гибрид**:
+  общий read-mostly кэш на CephFS (`mlscan-model-cache`, per-sha, lock, `.used`) остаётся источником
+  дедупа/алерта, а `model-fetcher` **восстанавливает модель на локальный диск узла** (`emptyDir`
+  `model`, node-local), откуда её читает `engine` (ro, `/model`) — быстрые/предсказуемые чтения при
+  старте. Раньше (G4-full) engine читал напрямую из CephFS через virtiofs (сетевые чтения).
+- `make_llama_test_job` (cache ON): тома `model`(emptyDir) + `model-cache`(PVC); `model-fetcher`
+  монтирует `/model` (rw) и `/cache` (rw, PVC), env `CACHE_DIR=/cache`,`CACHE_KEY=<sha>`;
+  `engine` — `model`→`/model` ro (без subPath). Цена — копирование кэш→узел (секунды) против
+  выигрыша в скорости чтения. Тесты: `tests/v3/test_llm_fetch_cache.py`.
+- **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
