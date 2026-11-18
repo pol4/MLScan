@@ -25,7 +25,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: testing
-          image: harbor.platform.rtx.local/mlscan/services@sha256:759b81f281683a547c64683ac34daa3973e92210c81add755f0ecbb3c8a44f87
+          image: harbor.platform.rtx.local/mlscan/services@sha256:30dd155a621f7a5bff489ba44877233092572facdd40aba25454a4874cbad2f1
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_testing.py"]
           env:
@@ -51,7 +51,7 @@ spec:
             # Бюджет старта/загрузки модели (сек). Большие модели грузятся десятки минут;
             # переопределяется дескриптором движка (runtime.readiness.timeout_s) или телом запроса.
             - {name: LLM_TEST_ENGINE_WAIT, value: "2400"}
-            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:759b81f281683a547c64683ac34daa3973e92210c81add755f0ecbb3c8a44f87"}
+            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:30dd155a621f7a5bff489ba44877233092572facdd40aba25454a4874cbad2f1"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}
             - {name: PORT, value: "8080"}
