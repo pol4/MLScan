@@ -414,4 +414,10 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   Qwen3-4B TP=2 `kata-gpu` 5q → fetcher `CACHE_HIT` (без повторной загрузки, per-sha раскладка),
   engine читает модель прямо из PVC (`subPath=<sha>/files`, без emptyDir-копии); `status=done`,
   verdict `Safe`, 5/5, `secs=25.2`, `by_phase=[load:4, probe:1]`.
-- **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 213 OK.
+- **GC кэша (tenant-side, 2026-11-18)**: `deploy/v3/llm/model_cache_gc.py` — per-sha LRU:
+  удаляет готовые `<sha>` (есть `.ready`) по `last_used` (`.used` обновляется fetcher'ом при
+  использовании) до `GC_TARGET_GB` (по умолчанию 200G < порога алерта 85%); не трогает активные
+  (`<sha>.lock`), свежие (`GC_MIN_IDLE_S`, 6ч) и `GC_KEEP` новейших; подчищает брошенные `<sha>.tmp`
+  и протухшие `.lock`. Запуск — CronJob `mlscan-model-cache-gc` (mount PVC rw, образ services).
+  Тесты: `tests/v3/test_model_cache_gc.py`.
+- **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.

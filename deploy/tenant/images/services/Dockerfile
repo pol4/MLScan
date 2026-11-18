@@ -9,7 +9,7 @@ COPY deploy/v2/db/pgclient.py /opt/pg/
 COPY deploy/v2/data/s3/s3client.py /opt/s3/
 COPY deploy/v3/ingest/quota.py deploy/v3/data/pool.py deploy/v3/data/objectrefs.py deploy/v3/ingest/hf.py /opt/v3ingest/
 COPY deploy/v3/control/pq.py deploy/v3/control/tasks_sql.py deploy/v3/control/orchestrator.py deploy/v3/control/tenants.py deploy/v3/control/attest.py deploy/v3/control/leader.py /opt/v3control/
-COPY deploy/v3/llm/classifier.py deploy/v3/llm/binding.py deploy/v3/llm/llm_env.py deploy/v3/llm/tetragon.py deploy/v3/llm/gguf.py deploy/v3/llm/xlsx.py deploy/v3/llm/promptset.py deploy/v3/llm/evaluators.py /opt/v3llm/
+COPY deploy/v3/llm/classifier.py deploy/v3/llm/binding.py deploy/v3/llm/llm_env.py deploy/v3/llm/tetragon.py deploy/v3/llm/gguf.py deploy/v3/llm/xlsx.py deploy/v3/llm/promptset.py deploy/v3/llm/evaluators.py deploy/v3/llm/model_cache_gc.py /opt/v3llm/
 COPY deploy/v3/registry/images.py deploy/v3/registry/sbom.py /opt/v3registry/
 COPY deploy/v3/analysis/static_stream.py deploy/v3/analysis/archive_walk.py deploy/v3/analysis/slice_selector.py deploy/v3/llm/gguf.py /opt/v3analysis/
 COPY deploy/v3/security/evidence.py deploy/v3/security/kms.py /opt/v3security/
