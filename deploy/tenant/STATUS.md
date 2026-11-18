@@ -410,4 +410,8 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   stale-lock, wait-for-ready). Замечания платформы учтены: per-sha обязателен; `ebpf-agent /model`
   неприменим (агент модель не монтирует) — платформа подтвердила; GC кэша — tenant-side (платформа
   даёт ёмкость + алерт `MlscanModelCacheFillingUp` >85%).
+- **E2E-валидация (2026-11-18)**: образ `services:g4full@sha256:5d11657f…` выкачен; прогон
+  Qwen3-4B TP=2 `kata-gpu` 5q → fetcher `CACHE_HIT` (без повторной загрузки, per-sha раскладка),
+  engine читает модель прямо из PVC (`subPath=<sha>/files`, без emptyDir-копии); `status=done`,
+  verdict `Safe`, 5/5, `secs=25.2`, `by_phase=[load:4, probe:1]`.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 213 OK.
