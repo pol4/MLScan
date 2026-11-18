@@ -947,8 +947,9 @@ V3UI_SCRIPT = """
           const sb=rep.sandbox||{}, llm=rep.llm_events||{};
           const modRow=(name,m)=>`<tr><td>${name}</td><td>${m&&m.ok?'<span style="color:#8fd18f">ok</span>':'<span style="color:#e0b060">failed</span>'}</td><td>${esc((m&&m.reason)||'')}</td></tr>`;
           const fndRows=(sc.findings||[]).map(f=>`<tr><td>${esc(f.level)}</td><td>${esc(f.check_id)}</td><td>${esc(f.severity)}</td><td>${esc(f.title)}</td><td>${esc(f.evidence||'')}</td></tr>`).join('');
-          const bundleRows=(rep.bundles||[]).map(b=>`<tr><td>${esc((b.engine_image||'').split('@')[0].split('/').pop())}</td><td>${esc(b.prompt_set||'—')}</td><td>${esc(b.detectors||'—')}</td><td>${esc(b.verdict||'—')}</td><td>${esc((b.attestation_digest||'').slice(0,18)||'—')}</td></tr>`).join('');
+          const bundleRows=(rep.bundles||[]).map(b=>`<tr><td>${esc((b.engine_image||'').split('@')[0].split('/').pop())}</td><td>${esc(b.testpack||b.prompt_set||'—')}</td><td>${esc(b.detectors||'—')}</td><td>${esc(b.verdict||'—')}</td><td>${esc((b.policy_id||'default')+'@'+((b.policy_version!=null&&b.policy_version!=='')?b.policy_version:'—'))}</td><td>${esc((b.attestation_digest||'').slice(0,18)||'—')}</td></tr>`).join('');
           const rules=(llm.rules||[]).map(r=>esc(r.check_id)+" ("+esc(r.severity)+"×"+esc(r.count)+")").join(', ');
+          const phases=Object.entries(rep.findings_by_phase||{}).map(([p,arr])=>esc(p)+':'+((arr||[]).length)).join(', ');
           rp.innerHTML="<div style='border:1px solid #2a3442;border-radius:8px;padding:12px;background:#141a22'>"
             +"<div style='font-size:15px;font-weight:bold;margin-bottom:8px'>Отчёт о сканировании</div>"
             +"<div style='display:grid;grid-template-columns:1fr 1fr;gap:4px 18px'>"
@@ -964,8 +965,8 @@ V3UI_SCRIPT = """
             +"<table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:4px'><tr><th>Модуль</th><th>Статус</th><th>Причина</th></tr>"
             +modRow('static',mods.static)+modRow('dynamic',mods.dynamic)+modRow('behavior',mods.behavior)+"</table></div>"
             +"<div style='margin-top:10px'><b>Находки</b><table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:4px'><tr><th>Уровень</th><th>ID</th><th>Severity</th><th>Заголовок</th><th>Evidence</th></tr>"+(fndRows||'<tr><td colspan=5>нет</td></tr>')+"</table></div>"
-            +"<div style='margin-top:10px'><b>Песочница:</b> "+esc(sb.status||'—')+(sb.timed_out?' (timeout)':'')+" · <b>eBPF:</b> "+esc(llm.count||0)+" событий"+(rules?(" ("+rules+")"):"")+"</div>"
-            +"<div style='margin-top:10px'><b>Связки</b><table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:4px'><tr><th>Движок</th><th>Набор</th><th>Детекторы</th><th>Вердикт</th><th>Аттестация</th></tr>"+(bundleRows||'<tr><td colspan=5>нет</td></tr>')+"</table></div>"
+            +"<div style='margin-top:10px'><b>Песочница:</b> "+esc(sb.status||'—')+(sb.timed_out?' (timeout)':'')+" · <b>eBPF:</b> "+esc(llm.count||0)+" событий"+(rules?(" ("+rules+")"):"")+(phases?(" · фазы: "+phases):"")+"</div>"
+            +"<div style='margin-top:10px'><b>Связки</b><table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:4px'><tr><th>Движок</th><th>Набор</th><th>Детекторы</th><th>Вердикт</th><th>Политика</th><th>Аттестация</th></tr>"+(bundleRows||'<tr><td colspan=6>нет</td></tr>')+"</table></div>"
             +"</div>";
         }).catch(()=>{});
       });

@@ -4496,7 +4496,7 @@ class Handler(BaseHTTPRequestHandler):
         rec = load_scan(art["scan_id"]) if art.get("scan_id") else {}
         bundles = db_query("SELECT b.bundle_id,b.engine_image,b.prompt_set,b.detectors,"
                            "COALESCE(v.verdict,''),COALESCE(v.action,''),COALESCE(v.attestation_digest,''),"
-                           "COALESCE(v.signature,'') FROM bundles b "
+                           "COALESCE(v.signature,''),COALESCE(v.metrics,'') FROM bundles b "
                            "LEFT JOIN bundle_verdicts v ON v.bundle_id=b.bundle_id "
                            "WHERE b.model_sha256=" + _lit(sha) + " ORDER BY b.created DESC") or []
         scan_id = (rec or {}).get("scan_id")
@@ -4516,6 +4516,17 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 llm_rules = []
         sb = (rec or {}).get("sandbox") or {}
+        bundle_rows: list = []
+        for r in bundles:
+            b = dict(zip(("bundle_id", "engine_image", "prompt_set", "detectors", "verdict",
+                          "action", "attestation_digest", "signature"), r))
+            try:
+                mt = json.loads(r[8] or "{}")
+            except Exception:  # noqa: BLE001
+                mt = {}
+            b["policy_id"] = mt.get("policy_id")        # Ф3: политика, вынесшая вердикт
+            b["policy_version"] = mt.get("policy_version")
+            bundle_rows.append(b)
         data = {"artifact": art, "scan": {"scan_id": scan_id,
                                           "state": (rec or {}).get("state"),
                                           "verdict": (rec or {}).get("verdict"),
@@ -4528,8 +4539,7 @@ class Handler(BaseHTTPRequestHandler):
                             "behavior_findings": [f.get("check_id")
                                                   for f in ((sb.get("behavior") or {}).get("findings") or [])]},
                 "llm_events": {"count": sum(r["count"] for r in llm_rules), "rules": llm_rules},
-                "bundles": [dict(zip(("bundle_id", "engine_image", "prompt_set", "detectors", "verdict",
-                                      "action", "attestation_digest", "signature"), r)) for r in bundles]}
+                "bundles": bundle_rows}
         if kind == "json":
             return self._json(200, data)
         esc = lambda x: (str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))  # noqa: E731
