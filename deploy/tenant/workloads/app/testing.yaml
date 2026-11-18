@@ -25,7 +25,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: testing
-          image: harbor.platform.rtx.local/mlscan/services@sha256:19b7cee3aa87fb31e7e817242bddcf35c7f5c0606bfeab8472d1e0974b875e1e
+          image: harbor.platform.rtx.local/mlscan/services@sha256:759b81f281683a547c64683ac34daa3973e92210c81add755f0ecbb3c8a44f87
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_testing.py"]
           env:
@@ -48,7 +48,7 @@ spec:
             - {name: LLM_TEST_EBPF, value: "1"}
             # probe как v4-раннер (образ сервисов); 1 — включить v4-probe
             - {name: LLM_V4_PROBE, value: "1"}
-            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:19b7cee3aa87fb31e7e817242bddcf35c7f5c0606bfeab8472d1e0974b875e1e"}
+            - {name: SERVICES_IMAGE, value: "harbor.platform.rtx.local/mlscan/services@sha256:759b81f281683a547c64683ac34daa3973e92210c81add755f0ecbb3c8a44f87"}
             - {name: DATA_DIR, value: /data}
             - {name: ARTIFACTS_DIR, value: /artifacts}
             - {name: PORT, value: "8080"}
