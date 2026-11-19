@@ -1256,8 +1256,9 @@ document.getElementById('f').addEventListener('submit',e=>{
       const fndRows=(d.findings||[]).map(f=>"<tr><td>"+esc(f.check_id)+"</td><td>"+esc(f.severity)+"</td><td>"+esc(f.phase)+"</td><td>"+esc(f.count)+"</td><td>"+esc((f.samples||[]).join(' | ').slice(0,160))+"</td></tr>").join('');
       const cases=(d.cases||[]);
       const caseRows=cases.map(c=>{const det=((c.detail||[])[0]||{}); const fl=(det.details||[]).join(', ');
-        const ans=((c.answers||[])[0]||'');
-        return "<tr data-pass='"+(c.passed?'1':'0')+"'"+(c.passed?'':' style=\"background:#3a1f22\"')+"><td>"+esc(c.id)+"</td><td>"+esc(c.criticality)+"</td><td>"+(c.passed?'да':'нет')+"</td><td>"+esc(fl)+"</td><td style='max-width:520px;white-space:pre-wrap'>"+esc(String(ans).slice(0,400))+"</td></tr>";}).join('');
+        const q=String(c.prompt||''); const ans=String(((c.answers||[])[0])||'');
+        const pc=c.passed?"<td style='color:#5dd39e'>да</td>":"<td style='color:#ff6b6b;font-weight:600'>нет</td>";
+        return "<tr data-pass='"+(c.passed?'1':'0')+"'><td>"+esc(c.id)+"</td><td>"+esc(c.criticality)+"</td>"+pc+"<td>"+esc(fl)+"</td><td style='max-width:340px;white-space:pre-wrap'>"+esc(q.slice(0,300))+"</td><td style='max-width:460px;white-space:pre-wrap'>"+esc(ans?ans.slice(0,600):'—')+"</td></tr>";}).join('');
       const failed=cases.filter(c=>!c.passed).length;
       box.innerHTML=
         "<div class='upload' style='margin-top:0'><b>Проверка "+esc(bid)+"</b>"
@@ -1268,7 +1269,7 @@ document.getElementById('f').addEventListener('submit',e=>{
         +"<table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:6px'><tr><th>criticality</th><th>total</th><th>passed</th><th>pass_rate</th></tr>"+(critRows||'<tr><td colspan=4>—</td></tr>')+"</table></div>"
         +"<div class='upload' style='margin-top:6px'><b>Наблюдение (eBPF)</b><table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th>rule</th><th>sev</th><th>фаза</th><th>кол-во</th><th>пример</th></tr>"+(fndRows||'<tr><td colspan=5>нет</td></tr>')+"</table></div>"
         +"<div class='upload' style='margin-top:6px'><b>Кейсы</b> (не пройдено: "+failed+" из "+cases.length+") <label><input type='checkbox' id='v3bd-onlyfail' checked> только не пройденные</label>"
-        +"<div style='max-height:380px;overflow:auto;margin-top:4px'><table style='width:100%;border-collapse:collapse;font-size:12px;color:#e6e6e6'><tr><th>id</th><th>crit</th><th>passed</th><th>flags</th><th>ответ (фрагмент)</th></tr><tbody id='v3bd-cases'>"+caseRows+"</tbody></table></div></div>"
+        +"<div style='max-height:420px;overflow:auto;margin-top:4px'><table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th>id</th><th>crit</th><th>passed</th><th>flags</th><th>вопрос</th><th>ответ</th></tr><tbody id='v3bd-cases'>"+caseRows+"</tbody></table></div></div>"
         +"<div class='upload' style='margin-top:6px'><b>Ручной вердикт (ревью)</b> "
         +"<select id='v3bd-verdict'><option>Safe</option><option>Needs review</option><option>Malicious</option><option>Inconclusive</option></select> "
         +"<input id='v3bd-reason' placeholder='обоснование' style='width:38%'> "

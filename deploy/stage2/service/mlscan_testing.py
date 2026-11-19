@@ -3366,6 +3366,21 @@ class Handler(BaseHTTPRequestHandler):
                     cases = json.loads(srows[0][5] or "[]")
                 except Exception:  # noqa: BLE001
                     cases = []
+            # Вопросы/эталоны подтягиваем из набора (для прогонов, где они не сохранены в details).
+            if cases and summary.get("prompt_set"):
+                try:
+                    prows = db_query("SELECT id,prompt,reference FROM llm_prompts WHERE prompt_set="
+                                     + _lit(summary["prompt_set"]))
+                    pmap = {str(r[0]): (r[1] or "", r[2] or "") for r in (prows or [])}
+                    for c in cases:
+                        k = str(c.get("id"))
+                        if k in pmap:
+                            if not c.get("prompt"):
+                                c["prompt"] = pmap[k][0]
+                            if not c.get("reference"):
+                                c["reference"] = pmap[k][1]
+                except Exception:  # noqa: BLE001
+                    pass
         findings: list = []
         if sid:
             try:
