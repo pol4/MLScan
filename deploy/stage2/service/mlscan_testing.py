@@ -649,8 +649,9 @@ def _llm_job_progress(namespace: str, job: str) -> dict:
         k, code, reason = _st(eng)
         if k == "terminated" and code not in (0, None):
             detail = _pod_log_tail(ns, name, "engine")
+            msg = detail or reason or ("exit " + str(code))
             return {"phase": "failed", "stage": "loading model / engine",
-                    "error": f"engine exited ({code}): {reason or detail}"[:400]}
+                    "error": f"engine exited ({code}): {msg}"[:400]}
         if k == "waiting":
             return {"phase": "running", "stage": "starting engine"}
     if not (eng and eng.get("ready")):

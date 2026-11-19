@@ -946,8 +946,16 @@ V3UI_SCRIPT = """
           const ts=document.getElementById('v3test-btn');
           ts&&ts.addEventListener('click',()=>{const e=document.getElementById('v3test-engine').value;
             api('/v3/artifacts/'+encodeURIComponent(sha)+'/test',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify(e?{engine_image:e}:{})}).then(r=>{document.getElementById('v3bind-status').textContent=
-                r.status==='rescan-required'?('тест не запущен: '+(r.hint||'нужен повторный скан')):('тест запущен: job '+(r.job||''));
+              body:JSON.stringify(e?{engine_image:e}:{})}).then(r=>{const stt=document.getElementById('v3bind-status');
+                if(r.status==='rescan-required'){stt.textContent='тест не запущен: '+(r.hint||'нужен повторный скан');}
+                else{stt.textContent='тест запущен: job '+(r.job||'');
+                  let n=0;const bt=setInterval(()=>{n++;api('/bundles/'+(r.bundle_id||'')+'/test').then(d=>{
+                    if(!d||d.error&&d.status!=='failed')return;
+                    if(d.status==='done'){clearInterval(bt);stt.textContent='тест завершён: вердикт '+(d.verdict||'—');}
+                    else if(d.status==='failed'){clearInterval(bt);stt.textContent='ОШИБКА проверки: '+(d.error||d.status);}
+                    else{stt.textContent='идёт проверка'+(d.stage?(' · '+d.stage):'')+' · '+n*5+'с';}
+                    if(n>240){clearInterval(bt);}
+                  }).catch(()=>{});},5000);}
                 startPoll();})
               .catch(e2=>{document.getElementById('v3bind-status').textContent='ERR '+e2.message;});});
         } else {
