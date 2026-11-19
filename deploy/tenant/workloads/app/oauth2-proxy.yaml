@@ -50,6 +50,9 @@ spec:
             # Сессию храним в подписанной cookie (без redis): устраняет SPOF, из-за которого
             # oauth2-proxy падал при недоступности redis (→ 502 у ingress).
             - --session-store-type=cookie
+            # v7.7.1: не кладём токены в cookie (иначе ID-token Keycloak >4KB → переполнение cookie →
+            # цикл/502; именно поэтому раньше использовали server-side redis).
+            - --session-cookie-minimal
           env:
             - name: OIDC_CLIENT_ID
               valueFrom: {secretKeyRef: {name: mlscan-oidc, key: OIDC_CLIENT_ID}}
