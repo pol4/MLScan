@@ -421,6 +421,19 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   и протухшие `.lock`. Запуск — CronJob `mlscan-model-cache-gc` (mount PVC rw, образ services);
   проверено в кластере (dry-run Job на PVC): `[gc] entries=1 before=7.51G` — модуль в образе, PVC монтируется.
   Тесты: `tests/v3/test_model_cache_gc.py`.
+- **Мониторинг проверок: нет «молчаливых» отказов (2026-11-19).** Инцидент
+  `mlscan-llm-test-b-6ab839753931fa5c1ca89a`: движок упал (CUDA OOM), но `bundle_tests.status`
+  оставался `running` навсегда и UI не менялся. Исправлено:
+  - сервис: `_llm_job_progress()` выводит стадию/фазу/ошибку из Job/Pod/контейнеров
+    (`scheduling → fetching model → starting engine → loading model / starting engine → running checks`
+    | `failed`); при падении контейнера причина берётся из лога с приоритетом memory/OOM
+    (напр. `torch.OutOfMemoryError: CUDA out of memory … 7.62 GiB`).
+  - `GET /bundles/{id}/test` И фоновый `_reconcile_loop` **персистят** `status='failed'`+`error` и
+    удаляют Job+поды (освобождают GPU); строки не «висят» в `running`.
+  - у Job добавлен `activeDeadlineSeconds` (зависшие падают, а не висят).
+  - UI: поллинг идёт до терминала (раньше останавливался на первом `running`), показ стадии и ошибки
+    на всех путях запуска.
+  - Проверено E2E: стадии в UI и `failed` с `CUDA out of memory`; Job/под удалены.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
 
 ### DoD v4: вердикт с `policy_version` + TestPack (2026-11-18)

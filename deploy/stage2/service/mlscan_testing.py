@@ -561,11 +561,15 @@ def _sha256_file(path: str) -> str:
 
 
 def _k8s_delete_job_async(namespace: str, name: str, delay: float = 5.0) -> None:
-    """Удалить Job теста после вердикта: движок не должен держать GPU до TTL."""
+    """Удалить Job теста (и его поды) после вердикта/ошибки: движок не должен держать GPU."""
     def _del():
+        ns = namespace or "mlscan-build"
+        try:  # поды — немедленно (grace 0), иначе probe может «висеть» и держать ресурсы
+            k8s("DELETE", f"/api/v1/namespaces/{ns}/pods?labelSelector=job-name%3D{name}&gracePeriodSeconds=0")
+        except Exception:  # noqa: BLE001
+            pass
         try:
-            k8s("DELETE", f"/apis/batch/v1/namespaces/{namespace or 'mlscan-build'}/jobs/{name}"
-                         "?propagationPolicy=Background")
+            k8s("DELETE", f"/apis/batch/v1/namespaces/{ns}/jobs/{name}?propagationPolicy=Background")
         except Exception:  # noqa: BLE001
             pass
     try:
