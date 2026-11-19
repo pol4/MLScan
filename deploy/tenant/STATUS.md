@@ -535,3 +535,12 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   с обоснованием) применяется и виден в `predicate.manual` (reviewer = ключ-субъект), затем возврат к авто.
 - Образ `services:review@sha256:d4dd7faf…96e2d1`; Argo Synced. UI (`ui_index`, авторизованная страница)
   содержит «Подробнее» и «Ручной вердикт».
+
+### UI: фиксы карточки проверки (2026-11-19)
+
+- **404 «не найдено» при «Подробнее»**: аналитика проксировала только `/bundles/{id}/test`; добавлены
+  прокси `GET /bundles/{id}/report.json` и `POST /bundles/{id}/review` (и `/verdict`). Проверено через
+  аналитику: `report.json` → 200 (726 кейсов), `review` → 200.
+- **`__showBundle` «api is not defined»**: функция вынесена самодостаточной (локальные `esc` и `api` на `fetch`).
+- **Дата/время проверки**: в «Истории проверок артефакта» для bundle-строк заполняется из `test_finished`.
+- Образ `services:uifix@sha256:67bf0612…96c2eb`; Argo Synced.
