@@ -1241,6 +1241,8 @@ document.getElementById('f').addEventListener('submit',e=>{
   }
   window.__renderModelHistory=renderModelHistory;
   window.__showBundle=async function(bid){
+    const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    const api=async(p,o)=>{const r=await fetch(p,o);const t=await r.text();let j={};try{j=JSON.parse(t||'{}')}catch(e){}if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));return j||{};};
     const box=document.getElementById('v3d-bundle'); if(!box||!bid)return;
     box.innerHTML='загрузка карточки проверки…';
     try{
