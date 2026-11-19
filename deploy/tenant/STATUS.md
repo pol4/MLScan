@@ -481,6 +481,14 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - Итог: **никаких новых секретов, netpol, сервисов и прав UI**; PVC namespace-scope (UI не может
   смонтировать `t-mlscan-gpu`) обойдён тем, что данные публикует механизм, а не UI тянет в чужой ns.
 - UI: панель «Кэш моделей» (sha/размер/последнее использование, итог vs цель GC) в разделе HF.
+- **Инцидент UI (2026-11-19): 502 Bad Gateway на `mlscan.platform.rtx.local`.** Причины и фикс:
+  (1) oauth2-proxy (`--session-store-type=redis`) падал при недоступности флаки-redis (23 рестарта,
+  Exit 255; краш-лог: `redis ... lookup ... i/o timeout`) → нет backend у nginx → 502. Переведён на
+  **cookie session-store**; redis удалён (использовался только им).
+  (2) `--skip-oidc-discovery` без `--login-url/--redeem-url` → oauth2-proxy строил **относительный**
+  authorize-redirect `/?...` → цикл логина. Добавлены явные endpoints Keycloak realm `tenants`
+  (authorize/token). Проверено: 302 → `https://kc.platform.rtx.local/realms/tenants/protocol/openid-connect/auth?...`;
+  под oauth2-proxy стабилен (0 рестартов), Argo Synced/Healthy.
 - Проверено E2E: прогон Qwen3-4B → fetcher `STATUS_POSTED`; `GET /v4/model-cache` →
   `count=1, total=8.06GB, target=200G, pvc=mlscan-model-cache`; HTML UI содержит панель.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
