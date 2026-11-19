@@ -30,6 +30,10 @@ spec:
             # не падать на старте, если Keycloak временно отдаёт 503 (discovery недоступен)
             - --skip-oidc-discovery
             - --oidc-jwks-url=https://kc.platform.rtx.local/realms/tenants/protocol/openid-connect/certs
+            # при --skip-oidc-discovery authorize/token-endpoints нужно задать явно, иначе
+            # oauth2-proxy строит относительный redirect (/?...) -> цикл логина.
+            - --login-url=https://kc.platform.rtx.local/realms/tenants/protocol/openid-connect/auth
+            - --redeem-url=https://kc.platform.rtx.local/realms/tenants/protocol/openid-connect/token
             - --client-id=$(OIDC_CLIENT_ID)
             - --client-secret=$(OIDC_CLIENT_SECRET)
             - --cookie-secret=$(COOKIE_SECRET)
