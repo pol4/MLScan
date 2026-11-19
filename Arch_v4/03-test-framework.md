@@ -117,3 +117,23 @@ sequenceDiagram
 - **Новый шаг** — новый плагин (интерфейс `run(ctx)`) + регистрация; ядро не меняется.
 - **Новый датасет** — регистрация `Dataset` (версия+хеш) без правки раннера.
 - **Новое правило** — в `Policy` (DSL), а не в коде ([`05-verdict-scoring.md`](05-verdict-scoring.md)).
+
+## 11. Статус и стадии прогона (наблюдаемость)
+
+Контракт статуса bundle-теста `GET /bundles/{id}/test`: `{status, stage, error, gpu_count, verdict?, …}`.
+
+- `status ∈ created|preparing|running|done|failed`. Терминальные — `done`/`failed`; в них UI
+  прекращает опрос и показывает результат/причину.
+- `stage` (прогресс, не терминальный): `scheduling → fetching model → starting engine →
+  loading model / starting engine → running checks`. Выводится из состояния Pod/контейнеров job'а;
+  вычисляется на каждый `GET` (не хранится отдельной колонкой).
+- **Нет «молчаливых» отказов:** при падении контейнера/пода/превышении `activeDeadlineSeconds`
+  сервис (на `GET` и фоновым реконсилером каждые 30 с) персистит `failed` + `error` (корневая причина
+  из лога, приоритет memory/OOM) и удаляет Job. Строка не остаётся в `running` без прогресса.
+- `gpu_count` — фактически использованное число GPU (см. [`02`](02-engine-framework.md) §3.2); UI
+  показывает `GPU×N`.
+- Историчность: и успешные, и **неуспешные** прогоны попадают в историю/«Связки» артефакта
+  (`test_status`/`test_error`), а не только вердикты.
+
+Запуск вне UI возможен по API (`POST /bundles/... /test`); статус/стадии — тот же контракт
+([`06-contracts.md`](06-contracts.md)).

@@ -92,6 +92,9 @@ sequenceDiagram
 ## 7. Интеграция с bundle и CI-gate
 
 - Вердикт привязан к `bundle` (артефакт + движок + TestPack + **policy**) и подписан.
+- **Реализовано:** в подписанную аттестацию (`statement.predicate.versions`) и в ответ вкладываются
+  `policy_id`, `policy_version`, `policy_sig` (плюс `prompt_set`, `engine`, `testpack`) — то есть
+  «какая политика вынесла вердикт» видно и в UI, и в проверяемом артефакте.
 - `GET /gate?image&model` (и интеграции) возвращает решение **fail-closed**: нет вердикта —
   `quarantine`.
 - Хранится **цепочка** вердиктов (append-only) и **replay**-данные для пересчёта при смене политики.
