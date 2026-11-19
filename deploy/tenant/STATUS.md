@@ -429,7 +429,8 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
     | `failed`); при падении контейнера причина берётся из лога с приоритетом memory/OOM
     (напр. `torch.OutOfMemoryError: CUDA out of memory … 7.62 GiB`).
   - `GET /bundles/{id}/test` И фоновый `_reconcile_loop` **персистят** `status='failed'`+`error` и
-    удаляют Job+поды (освобождают GPU); строки не «висят» в `running`.
+    удаляют Job (под удаляется propagation/GC; RBAC `pods delete` — за платформой, опционально);
+    строки не «висят» в `running`, GPU освобождается.
   - у Job добавлен `activeDeadlineSeconds` (зависшие падают, а не висят).
   - UI: поллинг идёт до терминала (раньше останавливался на первом `running`), показ стадии и ошибки
     на всех путях запуска.

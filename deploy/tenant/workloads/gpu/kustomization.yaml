@@ -12,4 +12,3 @@ resources:
   - sgl-shim.yaml
   - model-cache.yaml
   - model-cache-gc.yaml
-  - testing-rbac.yaml
