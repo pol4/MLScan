@@ -30,7 +30,7 @@ spec:
             seccompProfile: {type: RuntimeDefault}
           containers:
             - name: gc
-              image: harbor.platform.rtx.local/mlscan/services@sha256:8e2dd279c42a2814646792e684522f79a20331a00a67aeb031e1653c52a6d7b6
+              image: harbor.platform.rtx.local/mlscan/services@sha256:c061c9d4639768cc44850b7307796cce8418c0b40c786b8e0ea6e50b5ab753e2
               command: ["python3", "/opt/v3llm/model_cache_gc.py"]
               env:
                 - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
