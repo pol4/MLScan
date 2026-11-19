@@ -8,7 +8,7 @@
 
 | Образ | Назначение |
 |-------|-----------|
-| `harbor.platform.rtx.local/mlscan/services@sha256:bc2615f9…4aff4f` | testing/analytics/integrations/ops + GC-крон (код запечён в `/opt/...`) |
+| `harbor.platform.rtx.local/mlscan/services@sha256:c38e691a…e9164d` | testing/analytics/integrations/ops + GC-крон (код запечён в `/opt/...`) |
 | `harbor.platform.rtx.local/mlscan/sandbox@sha256:cc0f6ef7…bd31` | песочница (torch CPU + форматы) |
 
 Код сервисов больше не монтируется через ConfigMap: он лежит в образе по путям
