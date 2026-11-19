@@ -8,7 +8,9 @@
 Связанные документы: [`02`](02-engine-framework.md) (движки, GPU, старт), [`03`](03-test-framework.md)
 (TestPack/статусы), [`04`](04-observation.md) (наблюдение/фазы), [`05`](05-verdict-scoring.md)
 (вердикт), [`06`](06-contracts.md) (контракты API), [`09`](09-large-artifact-pipeline.md) (доставка
-моделей/кэш).
+моделей/кэш), [`12`](12-testpacks.md) (пакеты тестов), [`13`](13-verdict-policies.md) (политики вердикта),
+[`14`](14-answer-verification.md) (проверка ответов и модель-судья). Эскизы экранов и места для
+скриншотов — [`screenshots/`](screenshots/README.md).
 
 ---
 
@@ -74,6 +76,78 @@ flowchart LR
 
 ---
 
+### 2.6 Экраны (эскизы) и скриншоты
+
+Ниже — эскизы экранов (wireframes) по разделам. Они показывают структуру и элементы управления;
+**реальные скриншоты** кладутся в каталог [`screenshots/`](screenshots/README.md) под именами
+`ui-scans.png`, `ui-artifact-detail.png`, `ui-upload.png`, `ui-settings.png`, `ui-admin.png`
+(список и инструкция по съёмке — в `screenshots/README.md`). Эскиз заменяется картинкой:
+
+`![Сканы](screenshots/ui-scans.png)` — «Раздел „Сканы“ и карточка артефакта».
+
+#### Сканы
+![Сканы](screenshots/ui-scans.png)
+
+![Карточка артефакта](screenshots/ui-artifact-detail.png)
+
+```mermaid
+flowchart LR
+  L["Список артефактов: файл, формат, размер, вердикт"] --> D["Карточка артефакта"]
+  D --> H["История проверок: сканы и bundle-тесты, в т.ч. failed"]
+  D --> F["Находки и наблюдение eBPF по фазам"]
+  D --> B["Связки: движок, TestPack, вердикт, Политика id@version, аттестация"]
+  D --> R["Запустить тест: выбрать движок, запуск, статусы/стадии"]
+```
+
+#### Загрузка
+![Загрузка](screenshots/ui-upload.png)
+
+```mermaid
+flowchart TB
+  HFO["HF-обзор и скачивание"] --> DLD["Прогресс загрузок"]
+  LUP["Локальная загрузка файла"] --> DLD
+  ENG["Проверка инференса: модель плюс движок"] --> RUN["Запуск проверки"]
+  BPL["План проверки: bundle_id или sha256 модели"] --> RUN
+  DLD --> LIST["Список моделей и история"]
+```
+
+#### Настройки
+![Настройки](screenshots/ui-settings.png)
+
+```mermaid
+flowchart LR
+  T["HF-токен, личный"] --> S["Настройки"]
+  PS["Набор тестов, XLSX"] --> S
+  PSH["История наборов, версии, активация"] --> S
+```
+
+#### Администрирование
+![Администрирование](screenshots/ui-admin.png)
+
+```mermaid
+flowchart TB
+  POL["Политики вердикта: черновик, симуляция, публикация"] --> ADM["Администрирование"]
+  ENG["Движки инференса, дескрипторы"] --> ADM
+  TP["Пакеты тестов и датасеты, план bundle"] --> ADM
+  LIM["Квоты HF и ограничение частоты"] --> ADM
+  AUD["Аудит: цепочка вердиктов, gate, egress"] --> ADM
+```
+
+#### Карточка артефакта
+```mermaid
+flowchart TB
+  V["Вердикт и действие"] --> C["Карточка"]
+  HR["История проверок: статус проверки, в т.ч. ошибки"] --> C
+  FND["Находки: check_id, severity, evidence"] --> C
+  OBS["Наблюдение: события и фазы"] --> C
+  BD["Связки: движок, TestPack, политика, аттестация"] --> C
+  RT["Запустить тест: движок, запуск, стадии, причина ошибки"] --> C
+```
+
+_(Эскизы — для структуры; **заменить на реальные скриншоты** из `screenshots/`.)_
+
+---
+
 ## 3. Загрузка моделей и артефактов
 
 ```mermaid
@@ -135,16 +209,16 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-  participant B as Браузер
+  participant B as Browser
   participant OP as oauth2-proxy
-  participant KC as Keycloak (realm tenants)
+  participant KC as Keycloak
   participant AN as analytics
   B->>OP: GET /
-  OP-->>B: 302 → KC /authorize
-  B->>KC: вход
-  KC-->>OP: code → token (id_token)
-  OP-->>B: cookie-сессия; upstream-запрос с X-Forwarded-User/Groups
-  AN->>AN: группы → role (admin/viewer)
+  OP-->>B: redirect to Keycloak authorize
+  B->>KC: login
+  KC-->>OP: authorization code
+  OP-->>B: session cookie, upstream with forwarded headers
+  AN->>AN: map groups to role admin or viewer
 ```
 
 ---
@@ -195,14 +269,15 @@ ESO/Vault; **ConfigMaps** `mlscan-policy`, `mlscan-s3client`, `platform-ca`, `de
   (`DOMAIN_CLASS`), правится вручную.
 - v4: дополнительно — **TestPack** и **Dataset** (реестры `/v4/testpacks`, `/v4/datasets`);
   `compile_pack`/`select_packs` подбирают пакет под `artifact_kind`×`engine`; план bundle показывает,
-  какие наборы/шаги применятся.
+  какие наборы/шаги применятся. **Подробно про пакеты — [`12`](12-testpacks.md).**
 
 ---
 
 ## 8. Настройка итогового скоринга (политика вердикта)
 
 Вердикт — **функция политики** (данные, версионируются, подписываются), см.
-[`05`](05-verdict-scoring.md). Реализация — `deploy/v4/scoring/policy.py`.
+[`05`](05-verdict-scoring.md). Реализация — `deploy/v4/scoring/policy.py`. **Подробно по политикам
+(схема, DSL, версии/подпись, редактор/симуляция) — [`13`](13-verdict-policies.md).**
 
 - **Политика** = `profiles` (напр. `llm`, `generic`): `weights` (severity→вес), `coverage_min`
   (обязательные домены наблюдения), `rules` — **decision table** `{"if": <условие>, "then": <вердикт>}`
@@ -222,6 +297,9 @@ ESO/Vault; **ConfigMaps** `mlscan-policy`, `mlscan-s3client`, `platform-ca`, `de
 ---
 
 ## 9. Как проверяются ответы на тестовые вопросы (подробно)
+
+**Детальное описание (правила, критичность/допуск, агрегация, модель-судья) — в
+[`14-answer-verification.md`](14-answer-verification.md).** Ниже — сжатое изложение.
 
 Поток: job (probe) задаёт активный набор вопросов движку, собирает **ответы** и отправляет их в
 сервис; сервис оценивает каждый ответ и агрегирует; по агрегату политика выносит вердикт.
