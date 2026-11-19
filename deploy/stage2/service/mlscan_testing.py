@@ -802,6 +802,13 @@ def _reconcile_bundle_tests() -> int:
                 n += 1
             except Exception:  # noqa: BLE001
                 pass
+    # HF-загрузки, потерявшие worker (нет прогресса >3 мин), не должны «висеть» в running/queued.
+    try:
+        db_exec("UPDATE hf_downloads SET status='failed', "
+                "error='загрузка прервана (worker потерян/перезапуск сервиса)', updated=now() "
+                "WHERE status IN ('queued','running') AND updated < now() - interval '180 seconds'")
+    except Exception:  # noqa: BLE001
+        pass
     return n
 
 
