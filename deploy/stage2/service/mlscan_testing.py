@@ -600,6 +600,43 @@ def _pod_log_tail(namespace: str, pod: str, container: str, tail: int = 40) -> s
     return (lines[-1][:300] if lines else "")
 
 
+def _pick_gpu_count(requested, model_sha: str, model_files=None) -> int:
+    """Число GPU для теста: явное из запроса, иначе авто по размеру модели (вплоть до всех доступных).
+
+    Чтобы не было «модель не влезла в 1 GPU»: размер весов сравнивается с бюджетом на GPU
+    (LLM_TEST_GPU_MEM_GB × 0.9 — vLLM резервирует ~10% под KV/активации), число GPU берётся
+    минимально достаточное и ограничивается доступным (LLM_TEST_GPU_MAX).
+    """
+    try:
+        req = int(requested or 0)
+    except (TypeError, ValueError):
+        req = 0
+    total = max(1, int(os.environ.get("LLM_TEST_GPU_MAX", "2")))
+    if req > 0:
+        return max(1, min(req, total))
+    size = 0
+    for it in (model_files or []):
+        try:
+            size += int(it.get("size") or 0)
+        except (TypeError, ValueError):
+            pass
+    if size <= 0 and model_sha:
+        try:
+            rows = db_query("SELECT COALESCE(size,0) FROM artifacts WHERE sha256=" + _lit(model_sha))
+            size = int(rows[0][0]) if rows and rows[0][0] else 0
+        except Exception:  # noqa: BLE001
+            size = 0
+    if size <= 0:
+        return 1
+    per_gpu_gb = float(os.environ.get("LLM_TEST_GPU_MEM_GB", "8")) * 0.90
+    if per_gpu_gb <= 0:
+        return 1
+    need = 1
+    while need < total and (size / 1e9) > need * per_gpu_gb:
+        need += 1
+    return max(1, min(need, total))
+
+
 def _llm_job_progress(namespace: str, job: str) -> dict:
     """Стадия/статус LLM-теста по объектам k8s (job/pod/containers). Молчаливых отказов не допускаем.
 
@@ -3214,6 +3251,7 @@ class Handler(BaseHTTPRequestHandler):
             engine_wait_s = _desc.startup_timeout_s(default=LLM_TEST_ENGINE_WAIT)
         if not engine_wait_s:
             engine_wait_s = LLM_TEST_ENGINE_WAIT
+        gpu_count = _pick_gpu_count(body.get("gpu_count"), model_sha, mfiles)
         job = v3llmenv.make_llama_test_job(
             bundle_id=bundle_id, engine_image=engine, model_url=url, model_sha256=model_sha,
             model_key=("" if mfiles else key), model_files=mfiles,
@@ -3232,7 +3270,7 @@ class Handler(BaseHTTPRequestHandler):
             deception=LLM_TEST_DECEPTION,
             v4_probe=LLM_V4_PROBE, probe_image=SERVICES_IMAGE,
             gpu_resource=LLM_TEST_GPU_RESOURCE,
-            gpu_count=int(body.get("gpu_count") or LLM_TEST_GPU_COUNT),
+            gpu_count=gpu_count,
             engine_wait_s=engine_wait_s,
             model_cache=(LLM_MODEL_CACHE_PVC if LLM_MODEL_CACHE else ""),
             model_cache_mount=LLM_MODEL_CACHE_MOUNT,
@@ -3272,7 +3310,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             plan = {}
         return {"bundle_id": bundle_id, "job": name, "namespace": LLM_TEST_NS,
-                "scan_id": scan_id, "status": "running", "questions": len(cases),
+                "scan_id": scan_id, "status": "running", "questions": len(cases), "gpu_count": gpu_count,
                 "gpu": gpu, "plan": plan,
                 "hint": "по завершении job появится вердикт bundle (/bundles/<id>/verdict)"}
 
@@ -4502,8 +4540,10 @@ class Handler(BaseHTTPRequestHandler):
                          "JOIN artifacts a ON a.id=s.artifact_id WHERE a.sha256=" + _lit(sha)
                          + " ORDER BY s.id DESC LIMIT 20") or []
         bundles = db_query("SELECT b.bundle_id,b.engine_image,b.prompt_set,b.detectors,"
-                           "COALESCE(v.verdict,''),COALESCE(v.action,''),COALESCE(v.attestation_digest,'') "
+                           "COALESCE(v.verdict,''),COALESCE(v.action,''),COALESCE(v.attestation_digest,''),"
+                           "COALESCE(t.status,''),COALESCE(t.error,''),COALESCE(t.updated::text,'') "
                            "FROM bundles b LEFT JOIN bundle_verdicts v ON v.bundle_id=b.bundle_id "
+                           "LEFT JOIN bundle_tests t ON t.bundle_id=b.bundle_id "
                            "WHERE b.model_sha256=" + _lit(sha) + " ORDER BY b.created DESC LIMIT 20") or []
         findings = []
         if art.get("scan_id"):
@@ -4513,7 +4553,8 @@ class Handler(BaseHTTPRequestHandler):
             "artifact": art,
             "scans": [dict(zip(("scan_id", "state", "verdict", "finished"), r)) for r in scans],
             "bundles": [dict(zip(("bundle_id", "engine_image", "prompt_set", "detectors",
-                                  "inference_verdict", "inference_action", "attestation_digest"), r))
+                                  "inference_verdict", "inference_action", "attestation_digest",
+                                  "test_status", "test_error", "test_finished"), r))
                         for r in bundles],
             "findings": findings})
 
@@ -4674,8 +4715,10 @@ class Handler(BaseHTTPRequestHandler):
         rec = load_scan(art["scan_id"]) if art.get("scan_id") else {}
         bundles = db_query("SELECT b.bundle_id,b.engine_image,b.prompt_set,b.detectors,"
                            "COALESCE(v.verdict,''),COALESCE(v.action,''),COALESCE(v.attestation_digest,''),"
-                           "COALESCE(v.signature,''),COALESCE(v.metrics,'') FROM bundles b "
+                           "COALESCE(v.signature,''),COALESCE(v.metrics,''),"
+                           "COALESCE(t.status,''),COALESCE(t.error,'') FROM bundles b "
                            "LEFT JOIN bundle_verdicts v ON v.bundle_id=b.bundle_id "
+                           "LEFT JOIN bundle_tests t ON t.bundle_id=b.bundle_id "
                            "WHERE b.model_sha256=" + _lit(sha) + " ORDER BY b.created DESC") or []
         scan_id = (rec or {}).get("scan_id")
         findings = (rec or {}).get("findings") or []
@@ -4704,6 +4747,8 @@ class Handler(BaseHTTPRequestHandler):
                 mt = {}
             b["policy_id"] = mt.get("policy_id")        # Ф3: политика, вынесшая вердикт
             b["policy_version"] = mt.get("policy_version")
+            b["test_status"] = r[9] if len(r) > 9 else ""     # статус проверки (done/failed/running)
+            b["test_error"] = r[10] if len(r) > 10 else ""    # причина ошибки (чтобы не было «молчаливых»)
             bundle_rows.append(b)
         data = {"artifact": art, "scan": {"scan_id": scan_id,
                                           "state": (rec or {}).get("state"),

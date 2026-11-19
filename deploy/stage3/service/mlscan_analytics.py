@@ -908,12 +908,15 @@ V3UI_SCRIPT = """
         const fnd=(d.findings||[]).map(f=>"<li><b>"+esc(f.check_id)+"</b> ("+esc(f.severity)+", conf "+esc(f.confidence)+"): "
           +esc(f.title)+"<br><span style='color:#9aa4b2'>"+esc(f.evidence||'')+"</span></li>").join('');
         const histScans=(d.scans||[]); const histBundles=(d.bundles||[]);
+        const histTest=b=>{const s=b.test_status||'';if(s==='failed')return 'ОШИБКА: '+(b.test_error||'');if(s==='running')return 'в процессе';if(s==='done')return 'завершён';return s||'';};
         const historyRows = histScans.length
           ? histScans.map((s,i)=>{const b=histBundles[i]||{};
               return "<tr><td>"+esc(s.scan_id)+"</td><td>"+esc(s.state||'')+"</td><td>"+esc(s.verdict||'')+"</td>"
+                +"<td>"+esc(histTest(b))+"</td>"
                 +"<td>"+esc((b.engine_image||'').split('@')[0].split('/').pop()||'—')+"</td><td>"+esc(b.prompt_set||'—')+"</td>"
                 +"<td>"+esc((b.attestation_digest||'').slice(0,18)||'—')+"</td><td>"+esc(s.finished||'')+"</td></tr>";}).join('')
           : histBundles.map(b=>"<tr><td>—</td><td>—</td><td>"+esc(b.inference_verdict||'—')+"</td>"
+              +"<td>"+esc(histTest(b))+"</td>"
               +"<td>"+esc((b.engine_image||'').split('@')[0].split('/').pop())+"</td><td>"+esc(b.prompt_set||'—')+"</td>"
               +"<td>"+esc((b.attestation_digest||'').slice(0,18))+"</td><td>—</td></tr>").join('');
         if(!rendered){
@@ -930,7 +933,7 @@ V3UI_SCRIPT = """
             +"<a href='/v3/artifacts/"+encodeURIComponent(sha)+"/report.html' target='_blank'>Печать/PDF</a></div>"
             +"<div id='v3bind-status' style='font-size:12px;color:#9aa4b2'></div>"
             +"<div style='margin-top:10px'><b>История проверок артефакта</b>"
-            +"<table style='width:100%;border-collapse:collapse;font-size:12px'><thead><tr><th>Скан</th><th>Статус</th><th>Вердикт</th><th>Движок</th><th>Набор</th><th>Аттестация</th><th>Завершён</th></tr></thead><tbody id='v3d-history'>"+(historyRows||'<tr><td colspan=7>нет</td></tr>')+"</tbody></table></div>";
+            +"<table style='width:100%;border-collapse:collapse;font-size:12px'><thead><tr><th>Скан</th><th>Статус</th><th>Вердикт</th><th>Проверка</th><th>Движок</th><th>Набор</th><th>Аттестация</th><th>Завершён</th></tr></thead><tbody id='v3d-history'>"+(historyRows||'<tr><td colspan=8>нет</td></tr>')+"</tbody></table></div>";
           document.getElementById('v3d-back')&&document.getElementById('v3d-back').addEventListener('click',()=>{
             stopDetailTimer();
             detail.style.display='none'; const nav=document.getElementById('v3nav'); if(nav)nav.style.display='block';
@@ -948,7 +951,7 @@ V3UI_SCRIPT = """
             api('/v3/artifacts/'+encodeURIComponent(sha)+'/test',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify(e?{engine_image:e}:{})}).then(r=>{const stt=document.getElementById('v3bind-status');
                 if(r.status==='rescan-required'){stt.textContent='тест не запущен: '+(r.hint||'нужен повторный скан');}
-                else{stt.textContent='тест запущен: job '+(r.job||'');
+                else{stt.textContent='тест запущен: job '+(r.job||'')+(r.gpu_count?(' · GPU×'+r.gpu_count):'');
                   let n=0;const bt=setInterval(()=>{n++;api('/bundles/'+(r.bundle_id||'')+'/test').then(d=>{
                     if(!d||d.error&&d.status!=='failed')return;
                     if(d.status==='done'){clearInterval(bt);stt.textContent='тест завершён: вердикт '+(d.verdict||'—');}
@@ -959,7 +962,7 @@ V3UI_SCRIPT = """
                 startPoll();})
               .catch(e2=>{document.getElementById('v3bind-status').textContent='ERR '+e2.message;});});
         } else {
-          const h=document.getElementById('v3d-history'); if(h)h.innerHTML=historyRows||'<tr><td colspan=7>нет</td></tr>';
+          const h=document.getElementById('v3d-history'); if(h)h.innerHTML=historyRows||'<tr><td colspan=8>нет</td></tr>';
           const f=document.getElementById('v3d-findings'); if(f)f.innerHTML=fnd||'<li>нет</li>';
           const v=document.getElementById('v3d-verdict'); if(v)v.textContent=art.verdict||'—';
         }
@@ -971,7 +974,7 @@ V3UI_SCRIPT = """
           const sb=rep.sandbox||{}, llm=rep.llm_events||{};
           const modRow=(name,m)=>`<tr><td>${name}</td><td>${m&&m.ok?'<span style="color:#8fd18f">ok</span>':'<span style="color:#e0b060">failed</span>'}</td><td>${esc((m&&m.reason)||'')}</td></tr>`;
           const fndRows=(sc.findings||[]).map(f=>`<tr><td>${esc(f.level)}</td><td>${esc(f.check_id)}</td><td>${esc(f.severity)}</td><td>${esc(f.title)}</td><td>${esc(f.evidence||'')}</td></tr>`).join('');
-          const bundleRows=(rep.bundles||[]).map(b=>`<tr><td>${esc((b.engine_image||'').split('@')[0].split('/').pop())}</td><td>${esc(b.testpack||b.prompt_set||'—')}</td><td>${esc(b.detectors||'—')}</td><td>${esc(b.verdict||'—')}</td><td>${esc((b.policy_id||'default')+'@'+((b.policy_version!=null&&b.policy_version!=='')?b.policy_version:'—'))}</td><td>${esc((b.attestation_digest||'').slice(0,18)||'—')}</td></tr>`).join('');
+          const bundleRows=(rep.bundles||[]).map(b=>`<tr><td>${esc((b.engine_image||'').split('@')[0].split('/').pop())}</td><td>${esc(b.testpack||b.prompt_set||'—')}</td><td>${esc(b.detectors||'—')}</td><td>${esc(b.test_status==='failed'?('ОШИБКА: '+(b.test_error||'')):(b.test_status==='running'?'в процессе':(b.verdict||'—')))}</td><td>${esc((b.policy_id||'default')+'@'+((b.policy_version!=null&&b.policy_version!=='')?b.policy_version:'—'))}</td><td>${esc((b.attestation_digest||'').slice(0,18)||'—')}</td></tr>`).join('');
           const rules=(llm.rules||[]).map(r=>esc(r.check_id)+" ("+esc(r.severity)+"×"+esc(r.count)+")").join(', ');
           const phases=Object.entries(rep.findings_by_phase||{}).map(([p,arr])=>esc(p)+':'+((arr||[]).length)).join(', ');
           rp.innerHTML="<div style='border:1px solid #2a3442;border-radius:8px;padding:12px;background:#141a22'>"
@@ -1212,7 +1215,7 @@ document.getElementById('f').addEventListener('submit',e=>{
       body:JSON.stringify(eng?{engine_image:eng}:{})})
       .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
         if(!ok){st.textContent='ERR '+(j.error||'');return;}
-        st.textContent=(j.status==='preparing'?('модель догружается: '+(j.hint||'')):('тест запущен: job '+(j.job||'')));
+        st.textContent=(j.status==='preparing'?('модель догружается: '+(j.hint||'')):('тест запущен: job '+(j.job||'')))+(j.gpu_count?(' · GPU×'+j.gpu_count):'');
         {let n=0;const t=setInterval(()=>{n++;fetch('/bundles/'+j.bundle_id+'/test').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
             if(d.status==='done'){clearInterval(t);st.textContent='тест завершён: вердикт '+(d.verdict||'—')+' · решение '+(d.action||'—');}
             else if(d.status==='failed'){clearInterval(t);st.textContent='ОШИБКА проверки: '+(d.error||d.status);}
@@ -1248,7 +1251,7 @@ document.getElementById('f').addEventListener('submit',e=>{
       body:JSON.stringify({engine_image:eng})})
       .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
         if(!ok){st.textContent='ERR '+(j.error||'');return;}
-        st.textContent=(j.status==='preparing'?('модель догружается: '+(j.hint||'')):('тест запущен: job '+(j.job||'')));
+        st.textContent=(j.status==='preparing'?('модель догружается: '+(j.hint||'')):('тест запущен: job '+(j.job||'')))+(j.gpu_count?(' · GPU×'+j.gpu_count):'');
         {let n=0;const t=setInterval(()=>{n++;fetch('/bundles/'+j.bundle_id+'/test').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
             if(d.status==='done'){clearInterval(t);st.textContent='тест завершён: вердикт '+(d.verdict||'—')+' · решение '+(d.action||'—');}
             else if(d.status==='failed'){clearInterval(t);st.textContent='ОШИБКА проверки: '+(d.error||d.status);}
@@ -1280,7 +1283,7 @@ document.getElementById('f').addEventListener('submit',e=>{
       .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
         if(!ok){st.textContent='ERR '+(j.error||'');return;}
         if(j.status==='preparing'){st.textContent='модель догружается: '+(j.hint||'');}
-        else{st.textContent='тест запущен: job '+j.job+', вопросов '+j.questions+(j.gpu?', GPU':', CPU');}
+        else{st.textContent='тест запущен: job '+j.job+', вопросов '+j.questions+(j.gpu_count?', GPU×'+j.gpu_count:(j.gpu?', GPU':', CPU'));}
         let n=0;const t=setInterval(()=>{n++;fetch('/bundles/'+id+'/test').then(r=>r.ok?r.json():null).then(d=>{
           if(!d)return;
           if(d.status==='done'){clearInterval(t);
