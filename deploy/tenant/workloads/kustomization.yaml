@@ -11,7 +11,6 @@ resources:
   - app/ops.yaml
   - app/oauth2-proxy.yaml
   - app/platform-ca.yaml
-  - app/redis.yaml
   - sandbox/deception.yaml
   - sandbox/sinkhole.yaml
   - sandbox/artifacts-proxy.yaml

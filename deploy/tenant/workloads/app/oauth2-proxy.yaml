@@ -43,8 +43,9 @@ spec:
             - --skip-provider-button=true
             - --http-address=0.0.0.0:4180
             - --provider-ca-file=/etc/ssl/certs/platform-ca.crt
-            - --session-store-type=redis
-            - --redis-connection-url=redis://mlscan-redis.t-mlscan-app.svc.cluster.local:6379
+            # Сессию храним в подписанной cookie (без redis): устраняет SPOF, из-за которого
+            # oauth2-proxy падал при недоступности redis (→ 502 у ingress).
+            - --session-store-type=cookie
           env:
             - name: OIDC_CLIENT_ID
               valueFrom: {secretKeyRef: {name: mlscan-oidc, key: OIDC_CLIENT_ID}}
