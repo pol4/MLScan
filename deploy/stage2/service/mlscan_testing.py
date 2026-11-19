@@ -704,6 +704,35 @@ def _llm_job_progress(namespace: str, job: str) -> dict:
     return {"phase": "running", "stage": "running checks"}
 
 
+def _hf_active_for(model_sha: str) -> dict | None:
+    """Активная HF-догрузка (каталог модели) для артефакта — чтобы отличать живую подготовку
+    (`preparing`, job ещё не создан) от потерянной."""
+    if not DB_ENABLED or not model_sha:
+        return None
+    try:
+        a = db_query("SELECT s3_key FROM artifacts WHERE sha256=" + _lit(model_sha))
+        repo = ""
+        if a and a[0][0]:
+            p = str(a[0][0]).split("/")
+            if len(p) >= 3 and p[0] == "hf":
+                repo = p[1] + "/" + p[2]
+        rows = []
+        if repo:
+            rows = db_query("SELECT id,status,bytes_done,bytes_total FROM hf_downloads WHERE repo_id="
+                            + _lit(repo) + " AND status IN ('queued','running') "
+                            "AND updated > now() - interval '180 seconds' ORDER BY updated DESC LIMIT 1")
+        if not rows:
+            rows = db_query("SELECT id,status,bytes_done,bytes_total FROM hf_downloads WHERE model_sha256="
+                            + _lit(model_sha) + " AND status IN ('queued','running') "
+                            "AND updated > now() - interval '180 seconds' ORDER BY updated DESC LIMIT 1")
+        if rows:
+            r = rows[0]
+            return {"id": r[0], "status": r[1], "bytes_done": int(r[2] or 0), "bytes_total": int(r[3] or 0)}
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def _reconcile_bundle_tests() -> int:
     """Сверить активные тесты bundle с k8s и зафиксировать терминальные состояния (fail-closed).
 
@@ -715,29 +744,34 @@ def _reconcile_bundle_tests() -> int:
         return 0
     try:
         rows = db_query("SELECT t.bundle_id, t.job, t.namespace, t.status, "
-                        "COALESCE(EXTRACT(EPOCH FROM (now() - t.updated)), 0) "
-                        "FROM bundle_tests t WHERE t.status IN ('created','preparing','running')") or []
+                        "COALESCE(EXTRACT(EPOCH FROM (now() - t.updated)), 0), "
+                        "COALESCE(b.model_sha256, '') "
+                        "FROM bundle_tests t LEFT JOIN bundles b ON b.bundle_id = t.bundle_id "
+                        "WHERE t.status IN ('created','preparing','running')") or []
     except Exception:  # noqa: BLE001
         return 0
     n = 0
-    for bid, job, ns, status, age in rows:
+    for bid, job, ns, status, age, sha in rows:
         ns = ns or LLM_TEST_NS
         try:
             age = float(age or 0)
         except (TypeError, ValueError):
             age = 0.0
         if not job:
-            # `preparing` без job: поток подготовки потерян (напр., перезапуск сервиса во время
-            # догрузки модели) — если давно, помечаем как failed (иначе ждём завершения догрузки).
-            if status == "preparing" and age >= 180:
-                err = ("подготовка прервана: job не создан (возможен перезапуск сервиса) — "
-                       "запустите проверку заново")[:300]
-                try:
-                    db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(err)
-                            + ", updated=now() WHERE bundle_id=" + _lit(bid))
-                    n += 1
-                except Exception:  # noqa: BLE001
-                    pass
+            # `preparing` без job: сервис догружает полный каталог модели (job ещё не создан).
+            # Если догрузка активна — это нормально (ждём); если потеряна и давно — `failed`.
+            if status == "preparing":
+                if _hf_active_for(sha):
+                    continue
+                if age >= 180:
+                    err = ("подготовка прервана: job не создан и догрузка не идёт "
+                           "(возможен перезапуск сервиса) — запустите проверку заново")[:300]
+                    try:
+                        db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(err)
+                                + ", updated=now() WHERE bundle_id=" + _lit(bid))
+                        n += 1
+                    except Exception:  # noqa: BLE001
+                        pass
             continue
         pr = _llm_job_progress(ns, job)
         if not pr:
@@ -3507,6 +3541,20 @@ class Handler(BaseHTTPRequestHandler):
             out.update({"scan_id": rows[0][0], "job": rows[0][1], "namespace": rows[0][2],
                         "status": rows[0][3], "gpu": rows[0][4], "error": rows[0][5]})
             job = rows[0][1]
+            if not job and rows[0][3] == "preparing":
+                # job ещё не создан: сервис догружает каталог модели — показываем стадию/прогресс.
+                try:
+                    b = db_query("SELECT model_sha256 FROM bundles WHERE bundle_id=" + _lit(bundle_id))
+                    act = _hf_active_for(b[0][0] if b else "")
+                    if act:
+                        tot = int(act.get("bytes_total") or 0)
+                        done = int(act.get("bytes_done") or 0)
+                        pct = (100 * done // tot) if tot else 0
+                        out["stage"] = f"preparing: догрузка каталога модели ({pct}%)"
+                    else:
+                        out["stage"] = "preparing: ожидание догрузки модели"
+                except Exception:  # noqa: BLE001
+                    out["stage"] = "preparing"
             if job:
                 pr = _llm_job_progress(rows[0][2] or LLM_TEST_NS, job)
                 if pr:
