@@ -435,6 +435,15 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   - UI: поллинг идёт до терминала (раньше останавливался на первом `running`), показ стадии и ошибки
     на всех путях запуска.
   - Проверено E2E: стадии в UI и `failed` с `CUDA out of memory`; Job/под удалены.
+- **Авто-GPU и видимость failed в истории (2026-11-19).** По замечаниям к UI:
+  - `_pick_gpu_count()`: явный `gpu_count` из запроса, иначе **авто по размеру модели** —
+    минимально достаточное число GPU (бюджет на GPU = `LLM_TEST_GPU_MEM_GB`×0.9), вплоть до
+    `LLM_TEST_GPU_MAX`(=2). Проверено: Qwen3-4B (8.06ГБ) → `GPU×2` (TP=2) → `done/Safe`; 1.7B → 1.
+    Ответ `/bundles/{id}/test` содержит `gpu_count`; UI показывает `GPU×N`.
+  - История проверок/«Связки»: `report.json` и `/v3/artifacts/{sha}` теперь отдают статус и причину
+    теста (`test_status`/`test_error` из `bundle_tests`), UI показывает столбец «Проверка»
+    (`failed: <причина>` / `в процессе` / `завершён`). Проверено: failed-тест виден с
+    `torch.OutOfMemoryError: CUDA out of memory`.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
 
 ### DoD v4: вердикт с `policy_version` + TestPack (2026-11-18)
