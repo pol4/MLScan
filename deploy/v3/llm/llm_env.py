@@ -193,6 +193,34 @@ _FETCH_SRC = (
     "    except Exception as exc:\n"
     "        print('CACHE_STORE_ERR',type(exc).__name__,exc,flush=True)\n"
     "        shutil.rmtree(STAGE,ignore_errors=True)\n"
+    "def publish_status():\n"
+    "    url=os.environ.get('TESTING_URL',''); key=os.environ.get('MLSCAN_KEY','')\n"
+    "    if not (url and key and CACHE): return\n"
+    "    ents=[]\n"
+    "    try:\n"
+    "        for name in os.listdir(CACHE):\n"
+    "            d=os.path.join(CACHE,name)\n"
+    "            if name.endswith(('.lock','.tmp')) or not os.path.isdir(d): continue\n"
+    "            rd=os.path.join(d,'.ready')\n"
+    "            if not os.path.exists(rd): continue\n"
+    "            sz=0\n"
+    "            for dp,_,fs in os.walk(os.path.join(d,'files')):\n"
+    "                for fn in fs:\n"
+    "                    try: sz+=os.path.getsize(os.path.join(dp,fn))\n"
+    "                    except OSError: pass\n"
+    "            u=os.path.join(d,'.used')\n"
+    "            lu=int(os.path.getmtime(u)) if os.path.exists(u) else int(os.path.getmtime(rd))\n"
+    "            ents.append({'sha':name,'size':sz,'last_used':lu})\n"
+    "    except Exception: pass\n"
+    "    body=json.dumps({'entries':ents,'count':len(ents),'total_bytes':sum(e['size'] for e in ents),\n"
+    "                     'target_gb':float(os.environ.get('GC_TARGET_GB','0') or 0),'ts':int(time.time())}).encode()\n"
+    "    try:\n"
+    "        rq=urllib.request.Request(url.rstrip('/')+'/v4/model-cache/status',data=body,method='POST',\n"
+    "            headers={'Content-Type':'application/json','Authorization':'Bearer '+key})\n"
+    "        urllib.request.build_opener(urllib.request.ProxyHandler({})).open(rq,timeout=30)\n"
+    "        print('STATUS_POSTED',len(ents),flush=True)\n"
+    "    except Exception as exc:\n"
+    "        print('STATUS_POST_ERR',type(exc).__name__,exc,flush=True)\n"
     "def restore():\n"
     "    if not CBASE: return\n"
     "    src=os.path.join(CBASE,'files')\n"
@@ -203,6 +231,7 @@ _FETCH_SRC = (
     "            os.makedirs(os.path.dirname(d),exist_ok=True)\n"
     "            try: os.link(s,d)\n"
     "            except Exception: shutil.copy2(s,d)\n"
+    "    publish_status()\n"
     "def sha_file(p):\n"
     "    h=hashlib.sha256()\n"
     "    with open(p,'rb') as f:\n"
@@ -537,7 +566,11 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                               {"name": "S3_KEY", "value": model_key}])
                             + [{"name": k, "value": v} for k, v in (s3_env or {}).items()]
                             + ([{"name": "CACHE_DIR", "value": model_cache_mount},
-                                {"name": "CACHE_KEY", "value": model_sha256}] if model_cache else [])),
+                                {"name": "CACHE_KEY", "value": model_sha256}] if model_cache else [])
+                            + ([{"name": "TESTING_URL", "value": testing_url},
+                                {"name": "MLSCAN_KEY", "value": api_key},
+                                {"name": "GC_TARGET_GB", "value": os.environ.get("MLSCAN_GC_TARGET_GB", "200")}]
+                               if model_cache else [])),
                     "resources": {"limits": {"memory": "2Gi", "cpu": "1"}},
                     "securityContext": dict(hardened, readOnlyRootFilesystem=False),
                      "volumeMounts": ([{"name": "model", "mountPath": "/model"}]

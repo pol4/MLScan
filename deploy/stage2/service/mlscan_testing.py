@@ -2180,6 +2180,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._v4_datasets_list()
         if u.path == "/v4/plan":
             return self._v4_plan_get((q.get("engine") or [""])[0], (q.get("artifact_kind") or [""])[0])
+        if u.path == "/v4/model-cache":
+            return self._model_cache_get()
         if u.path.startswith("/v4/bundles/") and u.path.endswith("/plan"):
             return self._json(200, self._v4_bundle_plan(u.path[len("/v4/bundles/"):-len("/plan")].strip("/")))
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
@@ -2771,6 +2773,35 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {"findings": findings, "rejected": rejected,
                                 "max_severity": v3tetragon.max_severity(findings),
                                 "count": len(findings)})
+
+    def _model_cache_status_post(self) -> None:
+        """Принять статус кэша моделей ОТ механизма кэша (job в GPU-ns пушит, как probe в /llm/score).
+
+        UI ничего не пишет: он читает результат через `GET /v4/model-cache`.
+        """
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"error": f"bad json: {exc}"})
+        if DB_ENABLED:
+            db_exec("INSERT INTO settings(key,value,updated_at) VALUES ('model_cache_status',"
+                    + _lit(json.dumps(body, ensure_ascii=False)) + ",now()) "
+                    "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()")
+        return self._json(200, {"ok": True})
+
+    def _model_cache_get(self) -> None:
+        """Отдать последний статус кэша моделей (UI читает обычным способом)."""
+        data: dict = {"cache_pvc": LLM_MODEL_CACHE_PVC, "enabled": bool(LLM_MODEL_CACHE)}
+        if DB_ENABLED:
+            rows = db_query("SELECT value,updated_at FROM settings WHERE key='model_cache_status'")
+            if rows:
+                try:
+                    data.update(json.loads(rows[0][0] or "{}"))
+                except Exception:  # noqa: BLE001
+                    pass
+                data["updated"] = str(rows[0][1])
+        return self._json(200, data)
 
     def _llm_events_get(self, scan_id: str) -> None:
         if not DB_ENABLED:
@@ -4735,6 +4766,8 @@ class Handler(BaseHTTPRequestHandler):
         # v4: политики вердикта и дескрипторы движков
         if u.path == "/v4/policies":
             return self._v4_policy_save()
+        if u.path == "/v4/model-cache/status":
+            return self._model_cache_status_post()
         if u.path.startswith("/v4/policies/") and u.path.endswith("/simulate"):
             return self._v4_policy_simulate(u.path[len("/v4/policies/"):-len("/simulate")].strip("/"))
         if u.path.startswith("/v4/policies/") and u.path.endswith("/publish"):

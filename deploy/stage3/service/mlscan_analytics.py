@@ -793,6 +793,22 @@ V3UI_SCRIPT = """
       +"<div id='v3br-list' style='margin-top:6px;font-size:12px'></div>"
       +"<div style='margin-top:12px'><b>Загрузки</b><div id='v3dl-list' style='margin-top:4px;font-size:12px'></div></div>";
     hf.insertBefore(box,hf.firstChild);}
+  // --- G4: статус кэша моделей (UI только читает /v4/model-cache; статус пишет механизм кэша) ---
+  if(hf){const mc=document.createElement('div'); mc.className='upload'; mc.style.marginTop='0';
+    mc.innerHTML="<b>Кэш моделей</b> <button type='button' id='v4mc-refresh'>Обновить</button> <span id='v4mc-status' style='font-size:12px;color:#9aa4b2'></span>"
+      +"<div id='v4mc-list' style='margin-top:6px;font-size:12px'></div>";
+    hf.insertBefore(mc,hf.firstChild);
+    const fmtB=b=>{let n=Number(b)||0;if(!n)return '—';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(1)+' '+u[i];};
+    const renderMC=async()=>{const s=document.getElementById('v4mc-status');try{const d=await api('/v4/model-cache');
+      const es=(d&&d.entries)||[];const tot=(d&&d.total_bytes)||0;const tgt=d&&d.target_gb;
+      if(s)s.textContent=(d&&d.updated?('обновлено '+d.updated):'—')+(tgt?(' · цель '+tgt+'G'):'')+' · PVC '+((d&&d.cache_pvc)||'—');
+      const box=document.getElementById('v4mc-list');if(!box)return;
+      box.innerHTML="<table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th align='left'>Модель (sha)</th><th>Размер</th><th>Последнее использование</th></tr>"
+        +(es.length?es.map(e=>"<tr><td><code>"+esc((e.sha||'').slice(0,16))+"…</code></td><td>"+esc(fmtB(e.size))+"</td><td>"+esc(new Date((e.last_used||0)*1000).toLocaleString())+"</td></tr>").join(''):"<tr><td colspan=3><i>нет данных (появятся после прогона теста)</i></td></tr>")
+        +"</table><div style='margin-top:4px'>Итого: <b>"+esc(fmtB(tot))+"</b> · записей: "+es.length+"</div>";
+    }catch(e){if(s)s.textContent='ERR '+(e&&e.message||e);}};
+    const b=document.getElementById('v4mc-refresh'); if(b)b.addEventListener('click',renderMC); renderMC();
+  }
   let dlTimer=null;
   function renderDownloads(){
     const box=document.getElementById('v3dl-list'); if(!box)return;
