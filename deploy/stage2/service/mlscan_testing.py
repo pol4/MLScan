@@ -704,6 +704,25 @@ def _llm_job_progress(namespace: str, job: str) -> dict:
     return {"phase": "running", "stage": "running checks"}
 
 
+def _hf_done_dir(repo: str) -> list:
+    """Если полный каталог модели уже скачивался (загрузка done, >1 файла) — вернуть basenames."""
+    if not DB_ENABLED or not repo:
+        return []
+    try:
+        rows = db_query("SELECT files FROM hf_downloads WHERE repo_id=" + _lit(repo)
+                        + " AND status='done' ORDER BY updated DESC LIMIT 1")
+    except Exception:  # noqa: BLE001
+        return []
+    if not rows:
+        return []
+    try:
+        fl = json.loads(rows[0][0] or "[]")
+    except Exception:  # noqa: BLE001
+        fl = []
+    fl = [os.path.basename(str(x)) for x in fl if str(x).strip()]
+    return fl if len(fl) > 1 else []
+
+
 def _hf_active_for(model_sha: str) -> dict | None:
     """Активная HF-догрузка (каталог модели) для артефакта — чтобы отличать живую подготовку
     (`preparing`, job ещё не создан) от потерянной."""
@@ -1123,7 +1142,8 @@ def _hf_download_worker(dl_id: str) -> None:
                         try:
                             er = db_query("SELECT ref FROM registry_images WHERE digest=" + _lit(eng)) if eng else []
                             eng_ref = ((er[0][0] if er else "") or eng).lower()
-                            want_dir = ("vllm" in eng_ref) or ("sglang" in eng_ref)
+                            want_dir = (("vllm" in eng_ref) or ("sglang" in eng_ref)
+                                        or any(str(x).lower().endswith(".safetensors") for x in fl))
                             key0 = _hf_key(repo, os.path.basename(main))
                             ext0 = (os.path.splitext(str(main))[1].lstrip(".").lower() or "bin")
                             repo_base = os.path.basename(str(repo).rstrip("/")) or os.path.basename(main)
@@ -3231,7 +3251,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(409, {"error": "для vLLM/SGLang нужен каталог модели "
                                                  "(config/tokenizer/веса); загрузите модель из HF"})
             if repo:
-                dl_id = self._hf_prepare_dir(repo, engine)
+                _done = _hf_done_dir(repo)     # полный каталог уже скачан при HF-загрузке?
+                if _done:
+                    # Апгрейд артефакта до dir-манифеста и старт job сразу (без повторной догрузки).
+                    try:
+                        _prefix = "hf/" + "/".join([p for p in repo.split("/") if p]) + "/"
+                        db_exec("UPDATE artifacts SET metadata="
+                                + _lit(json.dumps({"dir": True, "prefix": _prefix, "files": _done}, ensure_ascii=False))
+                                + ", s3_key=" + _lit(_prefix) + " WHERE sha256=" + _lit(model_sha))
+                    except Exception:  # noqa: BLE001
+                        pass
+                    dl_id = ""
+                else:
+                    dl_id = self._hf_prepare_dir(repo, engine)
                 if dl_id:
                     run_token = secrets.token_hex(16)
                     scan_id = "bundle-test-" + bundle_id[:16] + "-" + secrets.token_hex(4)
@@ -4428,7 +4460,8 @@ class Handler(BaseHTTPRequestHandler):
                 eng_ref = ((er[0][0] if er else "") or engine_image).lower()
             except Exception:  # noqa: BLE001
                 eng_ref = str(engine_image).lower()
-        want_dir = ("vllm" in eng_ref) or ("sglang" in eng_ref)
+        _dirsfx = any(str(f).lower().endswith((".safetensors", ".bin", ".index.json")) for f in files)
+        want_dir = ("vllm" in eng_ref) or ("sglang" in eng_ref) or (kind != "nonllm" and _dirsfx)
         if want_dir and files:
             files = [f for f in files if not (
                 f.lower().startswith((".github/", "license", "readme", "docs/"))
