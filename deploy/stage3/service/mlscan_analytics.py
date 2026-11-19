@@ -1204,13 +1204,13 @@ document.getElementById('f').addEventListener('submit',e=>{
       body:JSON.stringify(eng?{engine_image:eng}:{})})
       .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
         if(!ok){st.textContent='ERR '+(j.error||'');return;}
-        if(j.status==='preparing'){st.textContent='модель догружается: '+(j.hint||'');
-          const t=setInterval(()=>{fetch('/bundles/'+j.bundle_id+'/test').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
-            if(d.status==='running'){clearInterval(t);st.textContent='тест запущен: job '+(d.job||'');}
-            else if(d.status==='done'){clearInterval(t);st.textContent='тест завершён: вердикт '+(d.verdict||'—');}
-            else if(d.status==='failed'){clearInterval(t);st.textContent='тест не удался: '+(d.error||'');}
-          }).catch(()=>{});},5000);}
-        else{st.textContent='тест запущен: job '+(j.job||'');}})
+        st.textContent=(j.status==='preparing'?('модель догружается: '+(j.hint||'')):('тест запущен: job '+(j.job||'')));
+        {let n=0;const t=setInterval(()=>{n++;fetch('/bundles/'+j.bundle_id+'/test').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
+            if(d.status==='done'){clearInterval(t);st.textContent='тест завершён: вердикт '+(d.verdict||'—')+' · решение '+(d.action||'—');}
+            else if(d.status==='failed'){clearInterval(t);st.textContent='ОШИБКА проверки: '+(d.error||d.status);}
+            else {st.textContent='идёт проверка (job '+(d.job||'')+')'+(d.stage?(' · '+d.stage):'')+' · '+n*5+'с';}
+            if(n>240){clearInterval(t);st.textContent='таймаут ожидания статуса (job '+(d.job||'')+')';}
+          }).catch(()=>{});},5000);}})
       .catch(e=>{st.textContent='ERR '+e.message;});});
   function renderModelHistory(){
     const box=document.getElementById('modelhistory'); if(!box)return;
@@ -1240,13 +1240,13 @@ document.getElementById('f').addEventListener('submit',e=>{
       body:JSON.stringify({engine_image:eng})})
       .then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
         if(!ok){st.textContent='ERR '+(j.error||'');return;}
-        if(j.status==='preparing'){st.textContent='модель догружается: '+(j.hint||'');
-          const t=setInterval(()=>{fetch('/bundles/'+j.bundle_id+'/test').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
-            if(d.status==='running'){clearInterval(t);st.textContent='тест запущен: job '+(d.job||'');}
-            else if(d.status==='done'){clearInterval(t);st.textContent='тест завершён: вердикт '+(d.verdict||'—');}
-            else if(d.status==='failed'){clearInterval(t);st.textContent='тест не удался: '+(d.error||'');}
-          }).catch(()=>{});},5000);}
-        else{st.textContent='тест запущен: job '+(j.job||'');}})
+        st.textContent=(j.status==='preparing'?('модель догружается: '+(j.hint||'')):('тест запущен: job '+(j.job||'')));
+        {let n=0;const t=setInterval(()=>{n++;fetch('/bundles/'+j.bundle_id+'/test').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;
+            if(d.status==='done'){clearInterval(t);st.textContent='тест завершён: вердикт '+(d.verdict||'—')+' · решение '+(d.action||'—');}
+            else if(d.status==='failed'){clearInterval(t);st.textContent='ОШИБКА проверки: '+(d.error||d.status);}
+            else {st.textContent='идёт проверка (job '+(d.job||'')+')'+(d.stage?(' · '+d.stage):'')+' · '+n*5+'с';}
+            if(n>240){clearInterval(t);st.textContent='таймаут ожидания статуса (job '+(d.job||'')+')';}
+          }).catch(()=>{});},5000);}})
       .catch(e=>{st.textContent='ERR '+e.message;});});
   const rf=document.getElementById('hfresults');
   rf&&rf.addEventListener('click',ev=>{const b=ev.target.closest('button[data-repo]');if(!b)return;
@@ -1273,12 +1273,14 @@ document.getElementById('f').addEventListener('submit',e=>{
         if(!ok){st.textContent='ERR '+(j.error||'');return;}
         if(j.status==='preparing'){st.textContent='модель догружается: '+(j.hint||'');}
         else{st.textContent='тест запущен: job '+j.job+', вопросов '+j.questions+(j.gpu?', GPU':', CPU');}
-        const t=setInterval(()=>{fetch('/bundles/'+id+'/test').then(r=>r.ok?r.json():null).then(d=>{
+        let n=0;const t=setInterval(()=>{n++;fetch('/bundles/'+id+'/test').then(r=>r.ok?r.json():null).then(d=>{
           if(!d)return;
           if(d.status==='done'){clearInterval(t);
             st.textContent='тест завершён: вердикт '+(d.verdict||'—')+', решение '+(d.action||'—')
               +', аттестация '+String(d.attestation_digest||'').slice(0,20)+'…';}
-          else if(d.status==='failed'){clearInterval(t);st.textContent='тест не удался: '+(d.error||d.status);}
+          else if(d.status==='failed'){clearInterval(t);st.textContent='ОШИБКА проверки: '+(d.error||d.status);}
+          else {st.textContent='идёт проверка (job '+(d.job||'')+')'+(d.stage?(' · '+d.stage):'')+' · '+n*5+'с';}
+          if(n>240){clearInterval(t);st.textContent='таймаут ожидания статуса';}
         }).catch(()=>{});},5000);
       }).catch(e=>{st.textContent='ERR '+e;});};
     if(bid){run(bid);return;}

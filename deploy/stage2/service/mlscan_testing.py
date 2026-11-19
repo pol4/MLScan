@@ -574,6 +574,135 @@ def _k8s_delete_job_async(namespace: str, name: str, delay: float = 5.0) -> None
         pass
 
 
+def _pod_log_tail(namespace: str, pod: str, container: str, tail: int = 40) -> str:
+    """Последняя осмысленная строка лога контейнера — для понятного сообщения об ошибке."""
+    if not (pod and container):
+        return ""
+    try:
+        raw = k8s("GET", f"/api/v1/namespaces/{namespace}/pods/{pod}/log"
+                         f"?container={container}&tailLines={tail}", expect_json=False)
+    except Exception:  # noqa: BLE001
+        return ""
+    txt = raw.decode("utf-8", "ignore") if isinstance(raw, (bytes, bytearray)) else (raw or "")
+    lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        if any(w in ln for w in ("CUDA out of memory", "OutOfMemory", "RuntimeError", "ValueError",
+                                 "Error", "error:", "Traceback", "No available memory", "OOM")) and len(ln) <= 400:
+            return ln[:300]
+    return (lines[-1][:300] if lines else "")
+
+
+def _llm_job_progress(namespace: str, job: str) -> dict:
+    """Стадия/статус LLM-теста по объектам k8s (job/pod/containers). Молчаливых отказов не допускаем.
+
+    Возвращает {"phase": "running|done|failed", "stage": "...", "error": "..."}.
+    """
+    ns = namespace or LLM_TEST_NS
+    try:
+        j = k8s("GET", f"/apis/batch/v1/namespaces/{ns}/jobs/{job}")
+    except Exception:  # noqa: BLE001
+        return {}
+    st = j.get("status") or {}
+    conds = {c.get("type"): c.get("status") for c in (st.get("conditions") or [])}
+    if st.get("succeeded"):
+        return {"phase": "done", "stage": "done"}
+    if st.get("failed") or conds.get("Failed") == "True":
+        msg = ""
+        for c in (st.get("conditions") or []):
+            if c.get("type") == "Failed":
+                msg = c.get("message") or c.get("reason") or ""
+        return {"phase": "failed", "stage": "failed", "error": ("job failed: " + (msg or "backoff/deadline"))[:300]}
+    try:
+        items = (k8s("GET", f"/api/v1/namespaces/{ns}/pods?labelSelector=job-name%3D{job}") or {}).get("items") or []
+    except Exception:  # noqa: BLE001
+        items = []
+    if not items:
+        return {"phase": "running", "stage": "scheduling"}
+    p = items[0]
+    ps = p.get("status") or {}
+    name = (p.get("metadata") or {}).get("name", "")
+    if ps.get("phase") == "Failed":
+        return {"phase": "failed", "stage": "failed", "error": ("pod failed: " + (ps.get("reason") or "PodFailed"))[:200]}
+    if ps.get("phase") == "Succeeded":
+        return {"phase": "done", "stage": "done"}
+
+    def _st(cs: dict):
+        s = cs.get("state") or {}
+        if s.get("terminated"):
+            t = s["terminated"]; return "terminated", t.get("exitCode"), (t.get("reason") or "")
+        if s.get("waiting"):
+            return "waiting", None, (s["waiting"].get("reason") or s["waiting"].get("message") or "")
+        if s.get("running"):
+            return "running", None, ""
+        return "unknown", None, ""
+
+    for cs in ps.get("initContainerStatuses") or []:
+        k, code, reason = _st(cs)
+        if k == "terminated" and code not in (0, None):
+            return {"phase": "failed", "stage": "fetching model",
+                    "error": f"init {cs.get('name')} failed ({code}): {reason}"[:300]}
+        if k in ("running", "waiting"):
+            return {"phase": "running", "stage": "fetching model"}
+    conts = {c.get("name"): c for c in (ps.get("containerStatuses") or [])}
+    eng = conts.get("engine")
+    if eng:
+        k, code, reason = _st(eng)
+        if k == "terminated" and code not in (0, None):
+            detail = _pod_log_tail(ns, name, "engine")
+            return {"phase": "failed", "stage": "loading model / engine",
+                    "error": f"engine exited ({code}): {reason or detail}"[:400]}
+        if k == "waiting":
+            return {"phase": "running", "stage": "starting engine"}
+    if not (eng and eng.get("ready")):
+        return {"phase": "running", "stage": "loading model / starting engine"}
+    return {"phase": "running", "stage": "running checks"}
+
+
+def _reconcile_bundle_tests() -> int:
+    """Сверить активные тесты bundle с k8s и зафиксировать терминальные состояния (fail-closed).
+
+    Устраняет «молчаливые» отказы: если под/job упал, статус в БД становится `failed` с причиной.
+    """
+    if not DB_ENABLED:
+        return 0
+    try:
+        rows = db_query("SELECT bundle_id, job, namespace, status FROM bundle_tests "
+                        "WHERE status IN ('created','preparing','running') AND job <> ''")
+    except Exception:  # noqa: BLE001
+        return 0
+    n = 0
+    for bid, job, ns, status in rows or []:
+        pr = _llm_job_progress(ns or LLM_TEST_NS, job)
+        if not pr:
+            continue
+        if pr.get("phase") == "failed":
+            err = (pr.get("error") or "job failed")[:300]
+            try:
+                db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(err)
+                        + ", updated=now() WHERE bundle_id=" + _lit(bid))
+            except Exception:  # noqa: BLE001
+                pass
+            _k8s_delete_job_async(ns or LLM_TEST_NS, job)
+            n += 1
+        elif pr.get("phase") == "done" and status != "done":
+            try:
+                db_exec("UPDATE bundle_tests SET status='done', updated=now() WHERE bundle_id=" + _lit(bid))
+                n += 1
+            except Exception:  # noqa: BLE001
+                pass
+    return n
+
+
+def _reconcile_loop() -> None:
+    while True:
+        try:
+            _reconcile_bundle_tests()
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(30)
+
+
+
 def _hf_key(repo: str, fname: str) -> str:
     """Безопасный ключ объекта S3 для файла HF (без выхода за префикс hf/<repo>/)."""
     parts = [p for p in str(repo or "").split("/") if p]
@@ -3149,16 +3278,24 @@ class Handler(BaseHTTPRequestHandler):
             out.update({"scan_id": rows[0][0], "job": rows[0][1], "namespace": rows[0][2],
                         "status": rows[0][3], "gpu": rows[0][4], "error": rows[0][5]})
             job = rows[0][1]
-            if job and rows[0][3] == "running":
-                try:
-                    j = k8s("GET", f"/apis/batch/v1/namespaces/{rows[0][2] or LLM_TEST_NS}/jobs/{job}")
-                    stt = j.get("status", {})
-                    if stt.get("succeeded"):
+            if job and rows[0][3] in ("created", "preparing", "running"):
+                pr = _llm_job_progress(rows[0][2] or LLM_TEST_NS, job)
+                if pr:
+                    out["stage"] = pr.get("stage")
+                    if pr.get("phase") == "done":
                         out["status"] = "done"
-                    elif stt.get("failed"):
+                    elif pr.get("phase") == "failed":
+                        err = (pr.get("error") or "job failed")[:300]
                         out["status"] = "failed"
-                except Exception:  # noqa: BLE001
-                    pass
+                        out["error"] = err
+                        try:
+                            db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(err)
+                                    + ", updated=now() WHERE bundle_id=" + _lit(bundle_id))
+                        except Exception:  # noqa: BLE001
+                            pass
+                        _k8s_delete_job_async(rows[0][2] or LLM_TEST_NS, job)   # освободить GPU
+                    else:
+                        out["status"] = "running"
         vr = db_query("SELECT verdict,action,attestation_digest FROM bundle_verdicts WHERE bundle_id="
                       + _lit(bundle_id))
         if vr:
@@ -4930,6 +5067,8 @@ def main() -> None:
     threading.Thread(target=lambda: ThreadingHTTPServer(("0.0.0.0", ARTIFACT_PORT),
                                                         ArtifactHandler).serve_forever(),
                      daemon=True).start()
+    # Мониторинг хода проверок: сверка активных bundle-тестов с k8s (нет «молчаливых» отказов).
+    threading.Thread(target=_reconcile_loop, daemon=True).start()
     try:
         reap_stale_scans()
     except Exception as exc:  # noqa: BLE001

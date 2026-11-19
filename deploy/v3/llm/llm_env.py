@@ -544,6 +544,9 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
         annotations["cdi.k8s.io/mlscan-gpu"] = gpu_cdi_devices    # containerd сам инжектит устройства
     spec = {
         "backoffLimit": 0, "ttlSecondsAfterFinished": max(int(ttl_seconds), int(run_budget_s) + 600),
+        # Жёсткий дедлайн прогона: зависший job (напр., движок упал, а probe ждёт) не висит вечно —
+        # по истечении job → Failed, и сервис зафиксирует failed с причиной.
+        "activeDeadlineSeconds": int(run_budget_s) + 900,
         "template": {
             "metadata": ({"labels": {"app": "mlscan-llm-test", "bundle": bundle_id[:40]},
                           "annotations": annotations} if annotations else
