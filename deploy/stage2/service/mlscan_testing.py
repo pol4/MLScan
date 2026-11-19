@@ -585,9 +585,13 @@ def _pod_log_tail(namespace: str, pod: str, container: str, tail: int = 40) -> s
         return ""
     txt = raw.decode("utf-8", "ignore") if isinstance(raw, (bytes, bytearray)) else (raw or "")
     lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+    prio = ("CUDA out of memory", "No available memory", "OutOfMemory", "out of memory", "OOM")
+    gen = ("RuntimeError", "ValueError", "Error", "error:", "Traceback")
     for ln in reversed(lines):
-        if any(w in ln for w in ("CUDA out of memory", "OutOfMemory", "RuntimeError", "ValueError",
-                                 "Error", "error:", "Traceback", "No available memory", "OOM")) and len(ln) <= 400:
+        if any(w in ln for w in prio):
+            return ln[:300]
+    for ln in reversed(lines):
+        if any(w in ln for w in gen) and len(ln) <= 400:
             return ln[:300]
     return (lines[-1][:300] if lines else "")
 
@@ -3279,24 +3283,25 @@ class Handler(BaseHTTPRequestHandler):
             out.update({"scan_id": rows[0][0], "job": rows[0][1], "namespace": rows[0][2],
                         "status": rows[0][3], "gpu": rows[0][4], "error": rows[0][5]})
             job = rows[0][1]
-            if job and rows[0][3] in ("created", "preparing", "running"):
+            if job:
                 pr = _llm_job_progress(rows[0][2] or LLM_TEST_NS, job)
                 if pr:
                     out["stage"] = pr.get("stage")
-                    if pr.get("phase") == "done":
-                        out["status"] = "done"
-                    elif pr.get("phase") == "failed":
-                        err = (pr.get("error") or "job failed")[:300]
-                        out["status"] = "failed"
-                        out["error"] = err
-                        try:
-                            db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(err)
-                                    + ", updated=now() WHERE bundle_id=" + _lit(bundle_id))
-                        except Exception:  # noqa: BLE001
-                            pass
-                        _k8s_delete_job_async(rows[0][2] or LLM_TEST_NS, job)   # освободить GPU
-                    else:
-                        out["status"] = "running"
+                    if rows[0][3] in ("created", "preparing", "running"):
+                        if pr.get("phase") == "done":
+                            out["status"] = "done"
+                        elif pr.get("phase") == "failed":
+                            err = (pr.get("error") or "job failed")[:300]
+                            out["status"] = "failed"
+                            out["error"] = err
+                            try:
+                                db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(err)
+                                        + ", updated=now() WHERE bundle_id=" + _lit(bundle_id))
+                            except Exception:  # noqa: BLE001
+                                pass
+                            _k8s_delete_job_async(rows[0][2] or LLM_TEST_NS, job)   # освободить GPU
+                        else:
+                            out["status"] = "running"
         vr = db_query("SELECT verdict,action,attestation_digest FROM bundle_verdicts WHERE bundle_id="
                       + _lit(bundle_id))
         if vr:
