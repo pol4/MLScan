@@ -707,19 +707,51 @@ def _llm_job_progress(namespace: str, job: str) -> dict:
 def _reconcile_bundle_tests() -> int:
     """Сверить активные тесты bundle с k8s и зафиксировать терминальные состояния (fail-closed).
 
-    Устраняет «молчаливые» отказы: если под/job упал, статус в БД становится `failed` с причиной.
+    Устраняет «молчаливые» отказы и рассинхрон с k8s: если под/job упал — `failed` с причиной;
+    если job отсутствует в k8s или `preparing` остался без job (потеря потока подготовки при
+    перезапуске сервиса) — тоже `failed`, чтобы статус соответствовал реальности.
     """
     if not DB_ENABLED:
         return 0
     try:
-        rows = db_query("SELECT bundle_id, job, namespace, status FROM bundle_tests "
-                        "WHERE status IN ('created','preparing','running') AND job <> ''")
+        rows = db_query("SELECT t.bundle_id, t.job, t.namespace, t.status, "
+                        "COALESCE(EXTRACT(EPOCH FROM (now() - t.updated)), 0) "
+                        "FROM bundle_tests t WHERE t.status IN ('created','preparing','running')") or []
     except Exception:  # noqa: BLE001
         return 0
     n = 0
-    for bid, job, ns, status in rows or []:
-        pr = _llm_job_progress(ns or LLM_TEST_NS, job)
+    for bid, job, ns, status, age in rows:
+        ns = ns or LLM_TEST_NS
+        try:
+            age = float(age or 0)
+        except (TypeError, ValueError):
+            age = 0.0
+        if not job:
+            # `preparing` без job: поток подготовки потерян (напр., перезапуск сервиса во время
+            # догрузки модели) — если давно, помечаем как failed (иначе ждём завершения догрузки).
+            if status == "preparing" and age >= 180:
+                err = ("подготовка прервана: job не создан (возможен перезапуск сервиса) — "
+                       "запустите проверку заново")[:300]
+                try:
+                    db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(err)
+                            + ", updated=now() WHERE bundle_id=" + _lit(bid))
+                    n += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            continue
+        pr = _llm_job_progress(ns, job)
         if not pr:
+            # job отсутствует в k8s (удалён/очищен, перезапуск) — прогон потерян (с небольшой задержкой,
+            # чтобы не сработать на транзиентной ошибке API).
+            if age >= 120:
+                err = ("прогон потерян: job не найден в k8s (очищен/перезапуск сервиса) — "
+                       "запустите заново")[:300]
+                try:
+                    db_exec("UPDATE bundle_tests SET status='failed', error=" + _lit(err)
+                            + ", updated=now() WHERE bundle_id=" + _lit(bid))
+                    n += 1
+                except Exception:  # noqa: BLE001
+                    pass
             continue
         if pr.get("phase") == "failed":
             err = (pr.get("error") or "job failed")[:300]
