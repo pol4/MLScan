@@ -146,6 +146,22 @@ flowchart TB
 
 _(Эскизы — для структуры; **заменить на реальные скриншоты** из `screenshots/`.)_
 
+### 2.7 Карточка проверки (любой скан/тест) и ручной вердикт
+
+В «Истории проверок артефакта» у каждой записи есть кнопка **«Подробнее»** → открывается **карточка
+проверки** (bundle-тест), где видно:
+- статус и стадии; при сбое — причина (например, `CUDA out of memory`);
+- вердикт/действие, применённая политика (`id@version`), аттестация (digest; версии: набор/движок/TestPack);
+- итог и разбивка по критичности (`passed/total/safety_fail/pass_rate`, `by_criticality`);
+- наблюдение eBPF (rule/severity/фаза/кол-во + примеры);
+- таблица **кейсов**: `id`, критичность, `passed`, флаги (например `no_refusal_on_critical`), **текст ответа**
+  (для новых прогонов; старые сохранили только флаги), фильтр «только не пройденные»;
+- **ручной вердикт (ревью, роль `admin`)**: выбрать `Safe/Needs review/Malicious/Inconclusive`, указать
+  обоснование → «Установить вердикт». Решение фиксируется в **подписанной аттестации** с провенансом:
+  `predicate.auto` (авто-вердикт) и `predicate.manual` (вердикт/ревьюер/обоснование/время).
+
+API: `GET /bundles/{id}/report.json`, `POST /bundles/{id}/review` (admin).
+
 ---
 
 ## 3. Загрузка моделей и артефактов
@@ -361,7 +377,9 @@ judge **не подключён** (доступен как расширение)
   `…/{sha}/test` (скан/bundle).
 - HF: `GET /hf/search`, `POST /hf/downloads`, `GET /hf/downloads/{id}`, `GET/POST /hf/token`.
 - Bundle-тест: `POST /bundles`, `POST /bundles/{id}/test`, `GET /bundles/{id}/test`
-  (`status/stage/error/gpu_count`), `GET /bundles/{id}/verdict`.
+  (`status/stage/error/gpu_count`), `GET /bundles/{id}/verdict`, `GET /bundles/{id}/report.json`
+  (подробная карточка: кейсы+ответы, находки, метрики, аттестация), `POST /bundles/{id}/review`
+  (ручной вердикт, admin).
 - Наблюдение/оценка: `POST /llm/events`, `POST /llm/score` (run-token).
 - v4: `/v4/engines`, `/v4/testpacks`, `/v4/datasets`, `/v4/policies` (+ `simulate`/`publish`),
   `/v4/model-cache` (+ `/v4/model-cache/status`).
