@@ -486,9 +486,12 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   Exit 255; краш-лог: `redis ... lookup ... i/o timeout`) → нет backend у nginx → 502. Переведён на
   **cookie session-store**; redis удалён (использовался только им).
   (2) `--skip-oidc-discovery` без `--login-url/--redeem-url` → oauth2-proxy строил **относительный**
-  authorize-redirect `/?...` → цикл логина. Добавлены явные endpoints Keycloak realm `tenants`
-  (authorize/token). Проверено: 302 → `https://kc.platform.rtx.local/realms/tenants/protocol/openid-connect/auth?...`;
+  authorize-redirect `/?...` → цикл логина (растущие URL → 502). Добавлены явные endpoints Keycloak
+  realm `tenants` (authorize/token). Проверено: 302 → `https://kc.platform.rtx.local/realms/tenants/protocol/openid-connect/auth?...`;
   под oauth2-proxy стабилен (0 рестартов), Argo Synced/Healthy.
+  (2b) Чтобы cookie-сессия не переполнялась (ранее причина отказа от cookie: ID-token >4KB), включён
+  `--session-cookie-minimal` (oauth2-proxy v7.7.1) — токены в cookie не кладутся; groups/user для
+  `X-Forwarded-*` сохраняются. Redis (использовался только oauth2-proxy) удалён.
 - Проверено E2E: прогон Qwen3-4B → fetcher `STATUS_POSTED`; `GET /v4/model-cache` →
   `count=1, total=8.06GB, target=200G, pvc=mlscan-model-cache`; HTML UI содержит панель.
 - **Тесты**: `tests/v4` = 58 OK, `tests/v3` = 219 OK.
