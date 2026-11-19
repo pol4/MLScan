@@ -919,7 +919,7 @@ V3UI_SCRIPT = """
           : histBundles.map(b=>"<tr><td>—</td><td>—</td><td>"+esc(b.inference_verdict||'—')+"</td>"
               +"<td>"+esc(histTest(b))+"</td>"
               +"<td>"+esc((b.engine_image||'').split('@')[0].split('/').pop())+"</td><td>"+esc(b.prompt_set||'—')+"</td>"
-              +"<td>"+esc((b.attestation_digest||'').slice(0,18))+"</td><td>—</td>"
+              +"<td>"+esc((b.attestation_digest||'').slice(0,18))+"</td><td>"+esc(b.test_finished||b.created||'')+"</td>"
               +"<td>"+(b.bundle_id?("<button type='button' class='v3bd' data-bid='"+esc(b.bundle_id)+"'>Подробнее</button>"):'—')+"</td></tr>").join('');
         if(!rendered){
           rendered=true;
@@ -1964,6 +1964,9 @@ class Handler(BaseHTTPRequestHandler):
         if p.startswith("/bundles/") and p.endswith("/test"):
             code, body = self._test_request("GET", p)
             return self._send(code, body, "application/json; charset=utf-8")
+        if p.startswith("/bundles/") and (p.endswith("/report.json") or p.endswith("/verdict")):
+            code, body = self._test_request("GET", p)
+            return self._send(code, body, "application/json; charset=utf-8")
         # v3 UI API: артефакты, операции, целостность, решения gate, квоты/egress, обзор HF
         if p.startswith("/v3/") or p.startswith("/v4/") or p.startswith("/gate") or p in ("/hf/quota", "/hf/egress") \
                 or p.startswith("/hf/egress"):
@@ -2172,6 +2175,11 @@ class Handler(BaseHTTPRequestHandler):
             code, body = self._test_request("POST", "/bundles", data)
             return self._send(code, body, "application/json; charset=utf-8")
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            data = self.rfile.read(n) if n else b"{}"
+            code, body = self._test_request("POST", u.path, data)
+            return self._send(code, body, "application/json; charset=utf-8")
+        if u.path.startswith("/bundles/") and u.path.endswith("/review"):
             n = int(self.headers.get("Content-Length", "0") or "0")
             data = self.rfile.read(n) if n else b"{}"
             code, body = self._test_request("POST", u.path, data)
