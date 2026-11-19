@@ -544,3 +544,14 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - **`__showBundle` «api is not defined»**: функция вынесена самодостаточной (локальные `esc` и `api` на `fetch`).
 - **Дата/время проверки**: в «Истории проверок артефакта» для bundle-строк заполняется из `test_finished`.
 - Образ `services:uifix@sha256:67bf0612…96c2eb`; Argo Synced.
+
+### Реконсиляция «потерянных» прогонов (2026-11-19)
+
+- Проблема: строки `bundle_tests` не соответствовали k8s — `preparing` без job (поток подготовки
+  `_prepare_and_start` терялся при перезапуске сервиса во время догрузки модели) и `running` с уже
+  отсутствующим в k8s job.
+- Фикс (fail-closed) в `_reconcile_bundle_tests` (каждые 30с): если `preparing` без job и старше 180с →
+  `failed` («подготовка прервана…»); если у `running` job не найден в k8s и старше 120с → `failed`
+  («прогон потерян…»). Теперь статус соответствует реальности.
+- Проверено: `b-a01bf18a…` (`preparing`, job='') → `failed`; `b-5779ede5…` (`running`, job удалён) → `failed`.
+- Образ `services:statusfix@sha256:b8f03cdd…507ce5`; Argo Synced.
