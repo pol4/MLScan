@@ -190,6 +190,10 @@ flowchart TD
 идёт до терминального состояния. Неуспешные прогоны **персистятся** (`status='failed'`, `error`) —
 см. [`03`](03-test-framework.md) §11.
 
+![Стадии bundle-теста и результат](screenshots/ui-bundle-stage.png)
+
+![Кэш моделей](screenshots/ui-model-cache.png)
+
 ---
 
 ## 5. Аутентификация
@@ -293,6 +297,8 @@ ESO/Vault; **ConfigMaps** `mlscan-policy`, `mlscan-s3client`, `platform-ca`, `de
   кейсов) → публикация**. Публикация версионируется и подписывается; в вердикт вкладываются
   `policy_id/policy_version/policy_sig` (в UI «Связки» — колонка «Политика», в подписанной
   аттестации — `statement.predicate.versions`).
+
+![Редактор политики вердикта](screenshots/ui-policy-editor.png)
 
 ---
 
