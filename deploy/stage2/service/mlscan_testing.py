@@ -2363,6 +2363,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._bundle_test_get(u.path[len("/bundles/"):-len("/test")].strip("/"))
         if u.path.startswith("/bundles/") and u.path.endswith("/verdict"):
             return self._bundle_verdict_get(u.path.split("/", 3)[2])
+        if u.path.startswith("/bundles/") and u.path.endswith("/report.json"):
+            return self._bundle_report_get(u.path.split("/", 3)[2])
         if u.path.startswith("/bundles/"):
             return self._bundles_get(u.path.split("/", 2)[2])
         if u.path.startswith("/uploads/") and u.path.endswith("/parts"):
@@ -2855,7 +2857,14 @@ class Handler(BaseHTTPRequestHandler):
             if key not in responses and key not in {str(k) for k in responses}:
                 continue
             answers = responses.get(key) or responses.get(int(c["id"]) if str(c["id"]).isdigit() else key) or []
-            results.append(v3evaluators.evaluate_case(c, answers))
+            _res = v3evaluators.evaluate_case(c, answers)
+            try:      # сохраняем ответы (для ревью в UI): id/criticality/... + текст ответов
+                _res["prompt"] = (c.get("prompt") or "")[:2000]
+                _res["reference"] = (c.get("reference") or "")[:2000]
+                _res["answers"] = [str(a or "")[:2000] for a in (answers or [])]
+            except Exception:  # noqa: BLE001
+                pass
+            results.append(_res)
         agg = v3evaluators.aggregate(results)
         agg.update({"version": ver})
         if DB_ENABLED and body.get("scan_id"):
@@ -3313,6 +3322,132 @@ class Handler(BaseHTTPRequestHandler):
                 "scan_id": scan_id, "status": "running", "questions": len(cases), "gpu_count": gpu_count,
                 "gpu": gpu, "plan": plan,
                 "hint": "по завершении job появится вердикт bundle (/bundles/<id>/verdict)"}
+
+    def _bundle_report_get(self, bundle_id: str) -> None:
+        """Подробная карточка проверки bundle: тест, вердикт, метрики/критичность, кейсы с ответами,
+        находки, применённая политика. Для ревью любого скана/теста из истории."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT bundle_id,engine_image,model_sha256,prompt_set,detectors,created FROM bundles "
+                        "WHERE bundle_id=" + _lit(bundle_id))
+        if not rows:
+            return self._json(404, {"error": "bundle not found"})
+        bundle = dict(zip(("bundle_id", "engine_image", "model_sha256", "prompt_set", "detectors", "created"), rows[0]))
+        test: dict = {}
+        trows = db_query("SELECT scan_id,job,namespace,status,error,gpu,sensor_events,updated FROM bundle_tests "
+                         "WHERE bundle_id=" + _lit(bundle_id))
+        if trows:
+            test = dict(zip(("scan_id", "job", "namespace", "status", "error", "gpu", "sensor_events", "updated"), trows[0]))
+            if test.get("status") in ("created", "preparing", "running") and test.get("job"):
+                pr = _llm_job_progress(test.get("namespace") or LLM_TEST_NS, test.get("job"))
+                if pr:
+                    test["stage"] = pr.get("stage")
+                    if pr.get("phase") == "failed":
+                        test["status"] = "failed"
+                        test["error"] = pr.get("error") or test.get("error")
+        verdict: dict = {}
+        vrows = db_query("SELECT verdict,action,coverage,metrics,statement,attestation_digest,signature "
+                         "FROM bundle_verdicts WHERE bundle_id=" + _lit(bundle_id))
+        if vrows:
+            r = vrows[0]
+            verdict = {"verdict": r[0], "action": r[1], "coverage": json.loads(r[2] or "{}"),
+                       "metrics": json.loads(r[3] or "{}"), "statement": json.loads(r[4] or "{}"),
+                       "attestation_digest": r[5], "signature": r[6]}
+        sid = (test.get("scan_id") or "")
+        summary: dict = {}
+        cases: list = []
+        if sid:
+            srows = db_query("SELECT prompt_set,passed,total,safety_fail,pass_rate,details FROM llm_scores "
+                             "WHERE scan_id=" + _lit(sid) + " ORDER BY created DESC LIMIT 1")
+            if srows:
+                summary = {"prompt_set": srows[0][0], "passed": srows[0][1], "total": srows[0][2],
+                           "safety_fail": srows[0][3], "pass_rate": srows[0][4]}
+                try:
+                    cases = json.loads(srows[0][5] or "[]")
+                except Exception:  # noqa: BLE001
+                    cases = []
+        findings: list = []
+        if sid:
+            try:
+                ev = db_query("SELECT check_id,severity,phase,count(*) FROM llm_events WHERE scan_id=" + _lit(sid)
+                              + " GROUP BY check_id,severity,phase ORDER BY check_id,phase") or []
+                for r in ev:
+                    f = {"check_id": r[0], "severity": r[1], "phase": r[2], "count": int(r[3] or 0), "samples": []}
+                    try:
+                        ss = db_query("SELECT evidence FROM llm_events WHERE scan_id=" + _lit(sid)
+                                      + " AND check_id=" + _lit(r[0]) + " AND phase=" + _lit(r[2]) + " LIMIT 3") or []
+                        f["samples"] = [str(x[0] or "")[:200] for x in ss]
+                    except Exception:  # noqa: BLE001
+                        pass
+                    findings.append(f)
+            except Exception:  # noqa: BLE001
+                findings = []
+        pol = _policy_latest("default")
+        return self._json(200, {"bundle": bundle, "test": test, "verdict": verdict, "summary": summary,
+                                "cases": cases, "findings": findings,
+                                "policy": {"id": pol.get("id"), "version": pol.get("version"),
+                                           "status": pol.get("status"), "body": pol.get("body")}})
+
+    def _bundle_review_post(self, bundle_id: str) -> None:
+        """Ручной вердикт по результатам ревью (admin). Фиксируется в подписанной аттестации с
+        провенансом: сохраняется автоматический вердикт (`predicate.auto`) и решение ревьюера (`predicate.manual`).
+        """
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        if v3attest is None:
+            return self._json(503, {"error": "attest module unavailable"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        verdict = (body.get("verdict") or "").strip()
+        if verdict not in ("Safe", "Needs review", "Malicious", "Inconclusive"):
+            return self._json(400, {"error": "verdict ∈ [Safe, Needs review, Malicious, Inconclusive]"})
+        reason = (body.get("reason") or "").strip()
+        reviewer = (body.get("reviewer") or getattr(self, "_subject", "") or "admin").strip()
+        action = (body.get("action")
+                  or {"Safe": "allow", "Needs review": "review", "Malicious": "block",
+                      "Inconclusive": "quarantine"}[verdict])
+        vrows = db_query("SELECT verdict,action,coverage,metrics,statement,attestation_digest FROM bundle_verdicts "
+                         "WHERE bundle_id=" + _lit(bundle_id))
+        if not vrows:
+            return self._json(404, {"error": "нет автоматического вердикта для ревью"})
+        r = vrows[0]
+        auto = {"verdict": r[0], "action": r[1], "coverage": json.loads(r[2] or "{}"),
+                "metrics": json.loads(r[3] or "{}"), "statement": json.loads(r[4] or "{}"), "attestation_digest": r[5]}
+        b = db_query("SELECT engine_image,model_sha256 FROM bundles WHERE bundle_id=" + _lit(bundle_id))
+        image = b[0][0] if b else ""
+        model = b[0][1] if b else ""
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        versions = dict((((auto.get("statement") or {}).get("predicate") or {}).get("versions")) or {})
+        metrics = dict(auto.get("metrics") or {})
+        metrics.update({"manual": True, "auto_verdict": auto.get("verdict"), "reviewed_by": reviewer,
+                        "review_reason": reason, "reviewed_at": ts})
+        st = v3attest.make_statement(bundle_id=bundle_id, engine_image=image, model_sha256=model,
+                                     verdict=verdict, action=action, coverage=auto.get("coverage") or {},
+                                     metrics=metrics, versions=versions)
+        pred = st.setdefault("predicate", {})
+        pred["auto"] = {"verdict": auto.get("verdict"), "action": auto.get("action"),
+                        "metrics": auto.get("metrics"), "attestation_digest": auto.get("attestation_digest")}
+        pred["manual"] = {"verdict": verdict, "action": action, "reviewer": reviewer, "reason": reason, "at": ts}
+        digest = v3attest.statement_digest(st)
+        sig = v3attest.sign(st, ATTEST_KEY)
+        db_exec("INSERT INTO bundle_verdicts(bundle_id,verdict,action,coverage,metrics,statement,"
+                "attestation_digest,signature) VALUES ("
+                + _lit(bundle_id) + "," + _lit(verdict) + "," + _lit(action) + ","
+                + _lit(json.dumps(auto.get("coverage") or {}, ensure_ascii=False)) + ","
+                + _lit(json.dumps(metrics, ensure_ascii=False)) + ","
+                + _lit(json.dumps(st, ensure_ascii=False)) + "," + _lit(digest) + "," + _lit(sig) + ") "
+                "ON CONFLICT (bundle_id) DO UPDATE SET verdict=EXCLUDED.verdict, action=EXCLUDED.action, "
+                "coverage=EXCLUDED.coverage, metrics=EXCLUDED.metrics, statement=EXCLUDED.statement, "
+                "attestation_digest=EXCLUDED.attestation_digest, signature=EXCLUDED.signature")
+        try:
+            _chain_append(bundle_id, verdict, action,
+                          json.dumps({"manual": True, "attestation_digest": digest, "reviewer": reviewer,
+                                      "reason": reason}, ensure_ascii=False, sort_keys=True))
+        except Exception:  # noqa: BLE001
+            pass
+        return self._json(200, {"bundle_id": bundle_id, "verdict": verdict, "action": action,
+                                "reviewer": reviewer, "attestation_digest": digest, "signature": sig})
 
     def _bundle_test_get(self, bundle_id: str) -> None:
         """Статус теста bundle: фаза job + сохранённый вердикт (если тест завершён)."""
@@ -4957,6 +5092,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._hf_quota_set()
         if u.path.startswith("/bundles/") and u.path.endswith("/rebind"):
             return self._bundle_rebind(u.path.split("/", 3)[2])
+        if u.path.startswith("/bundles/") and u.path.endswith("/review"):
+            return self._bundle_review_post(u.path.split("/", 3)[2])
         # v4: политики вердикта и дескрипторы движков
         if u.path == "/v4/policies":
             return self._v4_policy_save()

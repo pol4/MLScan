@@ -914,17 +914,20 @@ V3UI_SCRIPT = """
               return "<tr><td>"+esc(s.scan_id)+"</td><td>"+esc(s.state||'')+"</td><td>"+esc(s.verdict||'')+"</td>"
                 +"<td>"+esc(histTest(b))+"</td>"
                 +"<td>"+esc((b.engine_image||'').split('@')[0].split('/').pop()||'—')+"</td><td>"+esc(b.prompt_set||'—')+"</td>"
-                +"<td>"+esc((b.attestation_digest||'').slice(0,18)||'—')+"</td><td>"+esc(s.finished||'')+"</td></tr>";}).join('')
+                +"<td>"+esc((b.attestation_digest||'').slice(0,18)||'—')+"</td><td>"+esc(s.finished||'')+"</td>"
+                +"<td>"+(b.bundle_id?("<button type='button' class='v3bd' data-bid='"+esc(b.bundle_id)+"'>Подробнее</button>"):'—')+"</td></tr>";}).join('')
           : histBundles.map(b=>"<tr><td>—</td><td>—</td><td>"+esc(b.inference_verdict||'—')+"</td>"
               +"<td>"+esc(histTest(b))+"</td>"
               +"<td>"+esc((b.engine_image||'').split('@')[0].split('/').pop())+"</td><td>"+esc(b.prompt_set||'—')+"</td>"
-              +"<td>"+esc((b.attestation_digest||'').slice(0,18))+"</td><td>—</td></tr>").join('');
+              +"<td>"+esc((b.attestation_digest||'').slice(0,18))+"</td><td>—</td>"
+              +"<td>"+(b.bundle_id?("<button type='button' class='v3bd' data-bid='"+esc(b.bundle_id)+"'>Подробнее</button>"):'—')+"</td></tr>").join('');
         if(!rendered){
           rendered=true;
           detail.innerHTML="<button type='button' id='v3d-back'>← Назад</button><br>"
             +"<b>"+esc(art.filename)+"</b> <span style='color:#9aa4b2'>"+esc(sha.slice(0,16))+"…</span><br>"
             +"формат: "+esc(art.format)+", размер: "+esc(art.size)+", вердикт: <b id='v3d-verdict'>"+esc(art.verdict||'—')+"</b><br>"
             +"<div id='v3d-report' style='margin-top:8px;font-size:12px;color:#c8d2e0'></div>"
+            +"<div id='v3d-bundle' style='margin-top:10px'></div>"
             +"<div style='margin-top:10px'><b>Находки последнего скана:</b><ul id='v3d-findings'>"+(fnd||'<li>нет</li>')+"</ul></div>"
             +"<div style='margin-top:10px'><b>Запустить тест</b><br>"
             +"<select id='v3test-engine'><option value=''>engine: (текущий/выберите)</option></select> "
@@ -933,7 +936,9 @@ V3UI_SCRIPT = """
             +"<a href='/v3/artifacts/"+encodeURIComponent(sha)+"/report.html' target='_blank'>Печать/PDF</a></div>"
             +"<div id='v3bind-status' style='font-size:12px;color:#9aa4b2'></div>"
             +"<div style='margin-top:10px'><b>История проверок артефакта</b>"
-            +"<table style='width:100%;border-collapse:collapse;font-size:12px'><thead><tr><th>Скан</th><th>Статус</th><th>Вердикт</th><th>Проверка</th><th>Движок</th><th>Набор</th><th>Аттестация</th><th>Завершён</th></tr></thead><tbody id='v3d-history'>"+(historyRows||'<tr><td colspan=8>нет</td></tr>')+"</tbody></table></div>";
+            +"<table style='width:100%;border-collapse:collapse;font-size:12px'><thead><tr><th>Скан</th><th>Статус</th><th>Вердикт</th><th>Проверка</th><th>Движок</th><th>Набор</th><th>Аттестация</th><th>Завершён</th><th>Детали</th></tr></thead><tbody id='v3d-history'>"+(historyRows||'<tr><td colspan=9>нет</td></tr>')+"</tbody></table></div>";
+          const hh0=document.getElementById('v3d-history');
+          hh0&&hh0.addEventListener('click',ev=>{const _b=ev.target.closest('button.v3bd'); if(_b&&_b.dataset.bid) window.__showBundle(_b.dataset.bid);});
           document.getElementById('v3d-back')&&document.getElementById('v3d-back').addEventListener('click',()=>{
             stopDetailTimer();
             detail.style.display='none'; const nav=document.getElementById('v3nav'); if(nav)nav.style.display='block';
@@ -962,7 +967,7 @@ V3UI_SCRIPT = """
                 startPoll();})
               .catch(e2=>{document.getElementById('v3bind-status').textContent='ERR '+e2.message;});});
         } else {
-          const h=document.getElementById('v3d-history'); if(h)h.innerHTML=historyRows||'<tr><td colspan=8>нет</td></tr>';
+          const h=document.getElementById('v3d-history'); if(h)h.innerHTML=historyRows||'<tr><td colspan=9>нет</td></tr>';
           const f=document.getElementById('v3d-findings'); if(f)f.innerHTML=fnd||'<li>нет</li>';
           const v=document.getElementById('v3d-verdict'); if(v)v.textContent=art.verdict||'—';
         }
@@ -1235,6 +1240,48 @@ document.getElementById('f').addEventListener('submit',e=>{
     }).catch(()=>{});
   }
   window.__renderModelHistory=renderModelHistory;
+  window.__showBundle=async function(bid){
+    const box=document.getElementById('v3d-bundle'); if(!box||!bid)return;
+    box.innerHTML='загрузка карточки проверки…';
+    try{
+      const d=await api('/bundles/'+encodeURIComponent(bid)+'/report.json');
+      const b=d.bundle||{}, t=d.test||{}, v=d.verdict||{}, s=d.summary||{}, pol=d.policy||{};
+      const m=v.metrics||{}; const bc=m.by_criticality||{};
+      const critRows=Object.keys(bc).sort().map(k=>{const x=bc[k]||{};return "<tr><td>"+esc(k)+"</td><td>"+esc(x.total||0)+"</td><td>"+esc(x.passed||0)+"</td><td>"+esc(x.pass_rate)+"</td></tr>";}).join('');
+      const stat=esc(t.status||'—')+(t.stage?(' · '+esc(t.stage)):'')+(t.error?(' · ОШИБКА: '+esc(t.error)):'');
+      const ver=esc(v.verdict||'—')+' / действие '+esc(v.action||'—')+(m.manual?(' <b>(ручной: '+esc(m.auto_verdict||'')+' → '+esc(v.verdict)+', '+esc(m.reviewed_by||'')+')</b>'):'');
+      const verRow=v.attestation_digest?("<div style='font-size:12px'>Аттестация <code>"+esc(String(v.attestation_digest).slice(0,24))+"…</code> · политика "+esc(pol.id||'')+"@"+esc(pol.version||'')+" · набор "+esc(b.prompt_set||s.prompt_set||'')+" · движок "+esc((b.engine_image||'').split('@')[0].split('/').pop())+"</div>"):'';
+      const fndRows=(d.findings||[]).map(f=>"<tr><td>"+esc(f.check_id)+"</td><td>"+esc(f.severity)+"</td><td>"+esc(f.phase)+"</td><td>"+esc(f.count)+"</td><td>"+esc((f.samples||[]).join(' | ').slice(0,160))+"</td></tr>").join('');
+      const cases=(d.cases||[]);
+      const caseRows=cases.map(c=>{const det=((c.detail||[])[0]||{}); const fl=(det.details||[]).join(', ');
+        const ans=((c.answers||[])[0]||'');
+        return "<tr data-pass='"+(c.passed?'1':'0')+"'"+(c.passed?'':' style=\"background:#fff3f3\"')+"><td>"+esc(c.id)+"</td><td>"+esc(c.criticality)+"</td><td>"+(c.passed?'да':'нет')+"</td><td>"+esc(fl)+"</td><td style='max-width:520px;white-space:pre-wrap'>"+esc(String(ans).slice(0,400))+"</td></tr>";}).join('');
+      const failed=cases.filter(c=>!c.passed).length;
+      box.innerHTML=
+        "<div class='upload' style='margin-top:0'><b>Проверка "+esc(bid)+"</b>"
+        +"<div style='font-size:12px;color:#9aa4b2;margin:4px 0'>статус: "+stat+"</div>"
+        +"<div>Вердикт: <b>"+ver+"</b></div>"+verRow
+        +"<div style='margin-top:6px'>Итог: passed "+esc((s.passed!=null?s.passed:m.passed)||0)+" / "+esc((s.total!=null?s.total:m.total)||0)
+          +" · safety_fail "+esc((s.safety_fail!=null?s.safety_fail:m.safety_fail)||0)+" · pass_rate "+esc((s.pass_rate!=null?s.pass_rate:m.pass_rate))+"</div>"
+        +"<table style='width:100%;border-collapse:collapse;font-size:12px;margin-top:6px'><tr><th>criticality</th><th>total</th><th>passed</th><th>pass_rate</th></tr>"+(critRows||'<tr><td colspan=4>—</td></tr>')+"</table></div>"
+        +"<div class='upload' style='margin-top:6px'><b>Наблюдение (eBPF)</b><table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th>rule</th><th>sev</th><th>фаза</th><th>кол-во</th><th>пример</th></tr>"+(fndRows||'<tr><td colspan=5>нет</td></tr>')+"</table></div>"
+        +"<div class='upload' style='margin-top:6px'><b>Кейсы</b> (не пройдено: "+failed+" из "+cases.length+") <label><input type='checkbox' id='v3bd-onlyfail' checked> только не пройденные</label>"
+        +"<div style='max-height:380px;overflow:auto;margin-top:4px'><table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th>id</th><th>crit</th><th>passed</th><th>flags</th><th>ответ (фрагмент)</th></tr><tbody id='v3bd-cases'>"+caseRows+"</tbody></table></div></div>"
+        +"<div class='upload' style='margin-top:6px'><b>Ручной вердикт (ревью)</b> "
+        +"<select id='v3bd-verdict'><option>Safe</option><option>Needs review</option><option>Malicious</option><option>Inconclusive</option></select> "
+        +"<input id='v3bd-reason' placeholder='обоснование' style='width:38%'> "
+        +"<button type='button' id='v3bd-apply'>Установить вердикт</button> <span id='v3bd-status' style='font-size:12px;color:#9aa4b2'></span></div>";
+      const of=document.getElementById('v3bd-onlyfail');
+      const flt=()=>{const only=of&&of.checked;[...document.querySelectorAll('#v3bd-cases tr')].forEach(tr=>{tr.style.display=(!only||tr.dataset.pass==='0')?'':'none';});};
+      of&&of.addEventListener('change',flt); flt();
+      const ap=document.getElementById('v3bd-apply');
+      ap&&ap.addEventListener('click',async()=>{const st2=document.getElementById('v3bd-status'); st2.textContent='отправка…';
+        try{ await api('/bundles/'+encodeURIComponent(bid)+'/review',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({verdict:document.getElementById('v3bd-verdict').value, reason:document.getElementById('v3bd-reason').value})});
+          st2.textContent='применено'; window.__showBundle(bid);
+        }catch(e){st2.textContent='ERR '+(e&&e.message||e);} });
+    }catch(e){ box.innerHTML='ERR '+(e&&e.message||e); }
+  };
   renderModelHistory();
   const etm=document.getElementById('engtestmodel');
   if(etm){fetch('/v3/artifacts?limit=200').then(r=>r.ok?r.json():null).then(d=>{
