@@ -4731,12 +4731,14 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         # N2: job теста bundle аутентифицируется одноразовым run-token (только для своего bundle)
-        if u.path in ("/llm/score", "/llm/events"):
+        if u.path in ("/llm/score", "/llm/events", "/v4/model-cache/status"):
             tok = (self.headers.get("Authorization") or "").replace("Bearer ", "").strip()
             if tok and self._run_token_ok(tok):
                 if u.path == "/llm/score":
                     return self._llm_score(run_token=tok)
-                return self._llm_events()      # B1: события in-guest eBPF от job'а теста
+                if u.path == "/llm/events":
+                    return self._llm_events()      # B1: события in-guest eBPF от job'а теста
+                return self._model_cache_status_post()   # G4: статус кэша от механизма кэша (job)
         if self._require() is None:
             return
         if self._rate_limited():
