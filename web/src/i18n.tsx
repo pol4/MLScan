@@ -59,6 +59,15 @@ const DICT: Record<string, { ru: string; en: string }> = {
   "col.policy": { ru: "Политика", en: "Policy" },
   "col.coverage": { ru: "Охват", en: "Coverage" },
   "run.manual": { ru: "Ручной вердикт (ревью, admin)", en: "Manual verdict (review, admin)" },
+  "nav.compare": { ru: "Сравнение", en: "Compare" },
+  "cmp.title": { ru: "Сравнение прогонов и тренды", en: "Run comparison and trends" },
+  "cmp.pick": { ru: "Выберите прогоны для сравнения (в «Проверках»)", en: "Pick runs in Runs list" },
+  "cmp.metrics": { ru: "Метрики", en: "Metrics" },
+  "cmp.diff": { ru: "Дифф кейсов", en: "Case diff" },
+  "cmp.trends": { ru: "Тренды по модели", en: "Trends by model" },
+  "cmp.model": { ru: "Модель", en: "Model" },
+  "cmp.changed": { ru: "Изменилось", en: "Changed" },
+  "runs.compare": { ru: "Сравнить", en: "Compare" },
 };
 
 const Ctx = createContext<{ lang: Lang; t: (k: string) => string; setLang: (l: Lang) => void;

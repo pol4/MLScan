@@ -5,6 +5,7 @@ const NAV: { to: string; key: string }[] = [
   { to: "/", key: "nav.overview" },
   { to: "/models", key: "nav.models" },
   { to: "/runs", key: "nav.runs" },
+  { to: "/compare", key: "nav.compare" },
   { to: "/findings", key: "nav.findings" },
   { to: "/policies", key: "nav.policies" },
   { to: "/catalog", key: "nav.catalog" },

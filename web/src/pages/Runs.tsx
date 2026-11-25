@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { Card, StatusChip, VerdictBadge, Table, Td, EmptyState, ErrorState } from "../components/ui";
 import { useI18n } from "../i18n";
@@ -20,6 +20,9 @@ export default function Runs() {
   const [kind, setKind] = useState(sp.get("kind") || "");
   const [q, setQ] = useState(sp.get("q") || "");
   const [attn, setAttn] = useState(sp.get("attn") === "1");
+  const [sel, setSel] = useState<string[]>([]);
+  const nav = useNavigate();
+  const toggle = (id: string, on: boolean) => setSel((s) => on ? [...s, id] : s.filter((x) => x !== id));
 
   const runsQ = useQuery({ queryKey: ["runs", "200"], queryFn: () => api<any>("/runs?limit=200"), refetchInterval: 15000 });
   const runs: Run[] = (runsQ.data?.runs as Run[]) || [];
@@ -55,13 +58,15 @@ export default function Runs() {
           {["Safe", "Needs review", "Malicious", "Inconclusive"].map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}><input type="checkbox" checked={attn} onChange={(e) => setAttn(e.target.checked)} />{t("runs.onlyattn")}</label>
         <button onClick={saveView} style={btn}>{t("runs.saved")}</button>
+        <button disabled={sel.length < 2} onClick={() => nav(`/compare?ids=${sel.join(",")}`)} style={{ ...btn, opacity: sel.length < 2 ? 0.5 : 1 }}>{t("runs.compare")} ({sel.length})</button>
         <button onClick={() => { setState(""); setVerdict(""); setKind(""); setQ(""); setAttn(false); setSp({}); }} style={btn}>Сброс</button>
       </div>
       {runsQ.isError ? <ErrorState error={runsQ.error} onRetry={() => runsQ.refetch()} />
         : !filtered.length ? <EmptyState text={t("common.empty")} />
-        : <Table head={[t("col.name"), t("col.kind"), t("col.engine"), t("col.status"), t("col.verdict"), t("col.updated"), ""]}>
+        : <Table head={["", t("col.name"), t("col.kind"), t("col.engine"), t("col.status"), t("col.verdict"), t("col.updated"), ""]}>
           {filtered.map((r) => (
             <tr key={r.id + r.kind}>
+              <Td>{r.kind === "bundle" ? <input type="checkbox" checked={sel.includes(r.id)} onChange={(e) => toggle(r.id, e.target.checked)} /> : null}</Td>
               <Td>{r.model || r.id}</Td>
               <Td>{t("kind." + r.kind)}</Td>
               <Td>{eng(r.engine)}</Td>

@@ -3610,7 +3610,9 @@ class Handler(BaseHTTPRequestHandler):
                                  "model_sha256": r[1], "engine": r[2], "status": r[3], "stage": stage,
                                  "error": r[4] or "", "gpu": bool(r[5]), "updated": r[6],
                                  "verdict": r[7], "action": r[8], "policy_id": mt.get("policy_id"),
-                                 "policy_version": mt.get("policy_version")})
+                                 "policy_version": mt.get("policy_version"),
+                                 "pass_rate": mt.get("pass_rate"), "safety_fail": mt.get("safety_fail"),
+                                 "total": mt.get("total")})
             except Exception:  # noqa: BLE001
                 pass
             try:
