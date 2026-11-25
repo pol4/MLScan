@@ -68,6 +68,20 @@ const DICT: Record<string, { ru: string; en: string }> = {
   "cmp.model": { ru: "Модель", en: "Model" },
   "cmp.changed": { ru: "Изменилось", en: "Changed" },
   "runs.compare": { ru: "Сравнить", en: "Compare" },
+  "nav.upload": { ru: "Загрузка", en: "Upload" },
+  "models.title": { ru: "Модели", en: "Models" },
+  "model.info": { ru: "Артефакт", en: "Artifact" },
+  "model.runs": { ru: "Проверки модели", en: "Model runs" },
+  "model.cache": { ru: "Кэш", en: "Cache" },
+  "model.run": { ru: "Запустить проверку", en: "Run check" },
+  "col.size": { ru: "Размер", en: "Size" },
+  "onb.title": { ru: "Загрузка модели", en: "Model upload" },
+  "onb.query": { ru: "Поиск на Hugging Face", en: "Search Hugging Face" },
+  "onb.search": { ru: "Найти", en: "Search" },
+  "onb.download": { ru: "Скачать", en: "Download" },
+  "onb.local": { ru: "Локальный файл", en: "Local file" },
+  "onb.upload": { ru: "Загрузить", en: "Upload" },
+  "onb.engine": { ru: "Движок инференса", en: "Inference engine" },
 };
 
 const Ctx = createContext<{ lang: Lang; t: (k: string) => string; setLang: (l: Lang) => void;

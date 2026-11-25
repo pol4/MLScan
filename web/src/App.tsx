@@ -5,6 +5,9 @@ import Stub from "./pages/Stub";
 import Runs from "./pages/Runs";
 import RunDetail from "./pages/RunDetail";
 import Compare from "./pages/Compare";
+import Models from "./pages/Models";
+import ModelDetail from "./pages/ModelDetail";
+import Onboarding from "./pages/Onboarding";
 
 export default function App() {
   return (
@@ -12,7 +15,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<AppShell />}>
           <Route index element={<Overview />} />
-          <Route path="models" element={<Stub title="Модели" phase="Ф4" />} />
+          <Route path="models" element={<Models />} />
+          <Route path="models/:sha" element={<ModelDetail />} />
+          <Route path="onboarding" element={<Onboarding />} />
           <Route path="runs" element={<Runs />} />
           <Route path="runs/:id" element={<RunDetail />} />
           <Route path="compare" element={<Compare />} />

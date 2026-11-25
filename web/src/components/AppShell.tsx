@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 const NAV: { to: string; key: string }[] = [
   { to: "/", key: "nav.overview" },
   { to: "/models", key: "nav.models" },
+  { to: "/onboarding", key: "nav.upload" },
   { to: "/runs", key: "nav.runs" },
   { to: "/compare", key: "nav.compare" },
   { to: "/findings", key: "nav.findings" },
