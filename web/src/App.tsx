@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import AppShell from "./components/AppShell";
 import Overview from "./pages/Overview";
 import Stub from "./pages/Stub";
+import Runs from "./pages/Runs";
+import RunDetail from "./pages/RunDetail";
 
 export default function App() {
   return (
@@ -10,7 +12,8 @@ export default function App() {
         <Route path="/" element={<AppShell />}>
           <Route index element={<Overview />} />
           <Route path="models" element={<Stub title="Модели" phase="Ф4" />} />
-          <Route path="runs" element={<Stub title="Проверки" phase="Ф2" />} />
+          <Route path="runs" element={<Runs />} />
+          <Route path="runs/:id" element={<RunDetail />} />
           <Route path="findings" element={<Stub title="Находки" phase="Ф2" />} />
           <Route path="policies" element={<Stub title="Политики" phase="Ф5" />} />
           <Route path="catalog" element={<Stub title="Каталог" phase="Ф6" />} />

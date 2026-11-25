@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { ReactNode, CSSProperties } from "react";
 
 export function Card({ title, children, right }: { title?: string; children: ReactNode; right?: ReactNode }) {
   return (
@@ -85,6 +85,6 @@ export function Table({ head, children }: { head: string[]; children: ReactNode 
         <tbody>{children}</tbody>
       </table></div>);
 }
-export function Td({ children }: { children: ReactNode }) {
-  return <td className="cell" style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>{children}</td>;
+export function Td({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return <td className="cell" style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", ...style }}>{children}</td>;
 }

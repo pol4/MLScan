@@ -2040,6 +2040,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"scans": overview()})
         if p == "/api/stats":
             return self._json(200, stats())
+        if p == "/api/me":
+            return self._json(200, {"subject": getattr(self, "_subject", ""),
+                                    "roles": getattr(self, "_roles", [])})
         if p == "/api/evidence/verify":
             return self._json(200, verify_chain())
         if p == "/policy":
