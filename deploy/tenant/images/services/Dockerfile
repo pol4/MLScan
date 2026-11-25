@@ -17,4 +17,6 @@ COPY deploy/v3/obs/metrics.py deploy/v3/obs/slo.py /opt/v3obs/
 COPY deploy/v3/migration/migrate.py /opt/v3migration/
 # v4 (унифицированная песочница): движки как данные + политика вердикта
 COPY deploy/v4 /opt/v4
+# Новый UI (Ф0): собранный статический бандл Vite/React, раздаётся analytics под /app
+COPY web/dist /opt/web
 CMD ["python3"]

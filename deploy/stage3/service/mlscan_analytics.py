@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import mimetypes
 import os
 import sys
 import threading
@@ -1920,6 +1921,31 @@ class Handler(BaseHTTPRequestHandler):
         cx.close()
         self._send(resp.status, body, "application/json; charset=utf-8")
 
+    def _serve_web(self, p: str) -> None:
+        """Раздача нового UI (статическая сборка web/dist) под /app с SPA-fallback."""
+        base = os.environ.get("MLSCAN_WEB_DIR", "/opt/web")
+        rel = p[len("/app"):].lstrip("/") or "index.html"
+        if ".." in rel.split("/"):
+            return self._json(404, {"error": "not found"})
+        full = os.path.join(base, rel)
+        if not os.path.isfile(full):          # SPA: глубокие ссылки отдают index.html
+            full = os.path.join(base, "index.html")
+        try:
+            with open(full, "rb") as fh:
+                body = fh.read()
+        except Exception:  # noqa: BLE001
+            return self._send(404, b"not found", "text/plain")
+        ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
+        if rel.startswith("assets/"):         # хэшированные ассеты — долгий кэш
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        return self._send(200, body, ctype)
+
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         p = u.path
@@ -2037,6 +2063,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps(report_sarif(rec, lang), ensure_ascii=False, indent=2).encode(),
                                   "application/json; charset=utf-8")
             return self._json(404, {"error": T("msg.unknown_format", lang)})
+        if p == "/legacy" or p.startswith("/legacy/"):
+            return self._send(200, ui_index(lang, roles=getattr(self, "_roles", []),
+                                           path=self.path), "text/html; charset=utf-8")
+        if p == "/app" or p.startswith("/app/"):
+            return self._serve_web(p)
         if p == "/":
             return self._send(200, ui_index(lang, roles=getattr(self, "_roles", []),
                                            path=self.path), "text/html; charset=utf-8")
