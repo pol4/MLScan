@@ -33,4 +33,4 @@ PNG)** для всех экранов (сгенерированы как заг�
 ## Эскизы концепта нового UI (ui2-*)
 
 Сгенерированы для [`../15-ui-ux-concept.md`](../15-ui-ux-concept.md):
-`ui2-overview.png`, `ui2-runs.png`, `ui2-run-detail.png`, `ui2-model.png`, `ui2-onboarding.png`, `ui2-policies.png`, `ui2-catalog.png`, `ui2-admin.png` (заменить на реальные скриншоты после реализации).
+`ui2-overview.png`, `ui2-runs.png`, `ui2-run-detail.png`, `ui2-model.png`, `ui2-onboarding.png`, `ui2-policies.png`, `ui2-catalog.png`, `ui2-admin.png`, `ui2-compare.png`, `ui2-judge.png` (заменить на реальные скриншоты после реализации).
