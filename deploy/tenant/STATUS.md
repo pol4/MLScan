@@ -579,3 +579,16 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
   **bf16-модели с vLLM 0.9.2** (Qwen3-0.6/1.7/4B — ок). Для новых архитектур и квантованных (AWQ) моделей
   нужен **GPU sm_80+**.
 - Dockerfile движка возвращён на v0.9.2 (рабочий на sm_75); образ v0.11.0 оставлен в реестре для sm_80+.
+
+### UI/UX Ф0: каркас нового интерфейса (2026-11-25)
+
+- Добавлен пакет `web/` (**Vite + React + TypeScript**): дизайн-токены (`theme/tokens.css`, тёмная/
+  светлая темы, плотность), i18n ru/en, оболочка (`AppShell`: навигация Обзор/Модели/Проверки/Находки/
+  Политики/Каталог/Гейт/Админ, глобальный поиск, переключатели темы/языка), базовые компоненты
+  (VerdictBadge/StatusChip/StageStepper/CoverageMeter/SeverityTag/EmptyState/ErrorState/Table/KpiCard),
+  страница **Обзор** на реальных API (`/v3/artifacts`, `/v4/model-cache`).
+- **BFF (analytics)** отдаёт собранный бандл под **`/app`** (`MLSCAN_WEB_DIR=/opt/web`, SPA-fallback,
+  хэшированные ассеты — `immutable`); **`/legacy`** и `/` — старый UI. `MLSCAN_KEY` в браузер не попадает.
+- Образ `services:web0@sha256:82d8b5f6…e426ab8` (в образ добавлен `COPY web/dist /opt/web`); Argo Synced.
+- **Проверено:** `/app/` → 200 (HTML + `#root`), ассет → 200 (`immutable`), `/legacy` → 200 (старый UI).
+- Следующее: **Ф1 — Обзор целиком** (KPI/«требует внимания»/очередь/кэш), затем **Ф2 Проверки+Run detail**.
