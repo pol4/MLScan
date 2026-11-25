@@ -1988,6 +1988,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/bundles":
             code, body = self._test_request("GET", "/bundles" + (("?" + (u.query or "")) if u.query else ""))
             return self._send(code, body, "application/json; charset=utf-8")
+        if p == "/runs":
+            code, body = self._test_request("GET", "/runs" + (("?" + (u.query or "")) if u.query else ""))
+            return self._send(code, body, "application/json; charset=utf-8")
         if p.startswith("/bundles/") and p.endswith("/test"):
             code, body = self._test_request("GET", p)
             return self._send(code, body, "application/json; charset=utf-8")

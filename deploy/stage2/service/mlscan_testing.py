@@ -2382,6 +2382,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._detectors_list()
         if u.path == "/bundles":
             return self._bundles_list(q)
+        if u.path == "/runs" or u.path.startswith("/runs?"):
+            return self._runs_get()
         if u.path == "/hf/token":
             return self._hf_token_get()
         if u.path == "/tenants/fairshare":
@@ -3568,6 +3570,64 @@ class Handler(BaseHTTPRequestHandler):
             pass
         return self._json(200, {"bundle_id": bundle_id, "verdict": verdict, "action": action,
                                 "reviewer": reviewer, "attestation_digest": digest, "signature": sig})
+
+    def _runs_get(self) -> None:
+        """Единый список прогонов (bundle-тесты + сканы) для UI: статус/стадия/вердикт/действие."""
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        limit = 50
+        for kv in qs.split("&"):
+            if kv.startswith("limit="):
+                try:
+                    limit = int(kv.split("=", 1)[1])
+                except (TypeError, ValueError):
+                    pass
+        limit = max(1, min(limit, 500))
+        runs: list = []
+        if DB_ENABLED:
+            try:
+                rows = db_query("SELECT t.bundle_id,b.model_sha256,b.engine_image,t.status,t.error,t.gpu,"
+                                "COALESCE(EXTRACT(EPOCH FROM t.updated),0),COALESCE(v.verdict,''),"
+                                "COALESCE(v.action,''),COALESCE(a.filename,''),COALESCE(t.job,''),"
+                                "COALESCE(t.namespace,''),COALESCE(v.metrics,'') "
+                                "FROM bundle_tests t JOIN bundles b ON b.bundle_id=t.bundle_id "
+                                "LEFT JOIN bundle_verdicts v ON v.bundle_id=t.bundle_id "
+                                "LEFT JOIN artifacts a ON a.sha256=b.model_sha256 "
+                                "ORDER BY t.updated DESC LIMIT " + str(limit)) or []
+                for r in rows:
+                    stage = ""
+                    if r[3] in ("preparing", "running"):
+                        if r[10]:
+                            pr = _llm_job_progress(r[11] or LLM_TEST_NS, r[10]) or {}
+                            stage = pr.get("stage") or ""
+                        else:
+                            stage = "preparing: модель" if _hf_active_for(r[1]) else "preparing"
+                    mt: dict = {}
+                    try:
+                        mt = json.loads(r[12] or "{}")
+                    except Exception:  # noqa: BLE001
+                        mt = {}
+                    runs.append({"id": r[0], "kind": "bundle", "model": r[9] or (r[1] or "")[:16],
+                                 "model_sha256": r[1], "engine": r[2], "status": r[3], "stage": stage,
+                                 "error": r[4] or "", "gpu": bool(r[5]), "updated": r[6],
+                                 "verdict": r[7], "action": r[8], "policy_id": mt.get("policy_id"),
+                                 "policy_version": mt.get("policy_version")})
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                srows = db_query("SELECT s.scan_id,s.status,s.stage,COALESCE(s.verdict,''),COALESCE(s.risk_score,0),"
+                                 "COALESCE(a.filename,''),COALESCE(a.sha256,''),"
+                                 "COALESCE(EXTRACT(EPOCH FROM COALESCE(s.finished_at,s.started_at,s.created_at)),0) "
+                                 "FROM scans s LEFT JOIN artifacts a ON a.id=s.artifact_id "
+                                 "ORDER BY COALESCE(s.finished_at,s.started_at,s.created_at) DESC LIMIT " + str(limit)) or []
+                for r in srows:
+                    runs.append({"id": r[0], "kind": "scan", "model": r[5] or (r[6] or "")[:16],
+                                 "model_sha256": r[6], "engine": "", "status": r[1], "stage": r[2] or "",
+                                 "error": "", "gpu": False, "updated": r[7], "verdict": r[3],
+                                 "action": "", "risk": r[4]})
+            except Exception:  # noqa: BLE001
+                pass
+        runs.sort(key=lambda x: x.get("updated") or 0, reverse=True)
+        return self._json(200, {"runs": runs[:limit]})
 
     def _bundle_test_get(self, bundle_id: str) -> None:
         """Статус теста bundle: фаза job + сохранённый вердикт (если тест завершён)."""
