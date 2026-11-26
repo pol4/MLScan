@@ -660,3 +660,14 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - Образ `services:web6@sha256:12da27f7…7afb2387`; Argo Synced. Проверено: testpacks 5, datasets 1,
   quota ключи, `/app/` — новый бандл.
 - Осталось: **Ф7 — снятие `/legacy` + e2e (Playwright)/a11y**.
+
+### UI/UX Ф7: новый UI по умолчанию + e2e/a11y (2026-11-26)
+
+- analytics: **`/` → 302 `/app/`** (новый UI по умолчанию); **`/legacy`** сохранён (старый UI).
+- web: добавлены **Playwright e2e** (`web/tests/e2e/smoke.spec.ts`: навигация, Обзор, Проверки→карточка,
+  Каталог) и **a11y (axe)**: критичных/serious нарушений нет; npm‑скрипт `e2e`.
+- Проверено: `/` → 302 `/app/`; `/app/` → 200; `/legacy` → 200; e2e 5/5 passed.
+- Образ `services:web7@sha256:ed541120…3826adb8`; Argo Synced.
+- **План UI/UX (Ф0–Ф7) закрыт.** Остаётся (неблокирующее): перенести в новый UI редкие админ-операции
+  (`/hf/token`, подпись образов, `/sync`, `/domain-class`, изменение квот) и затем окончательно убрать
+  `/legacy`.
