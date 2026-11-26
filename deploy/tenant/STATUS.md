@@ -649,3 +649,14 @@ UI `/api/scans` — 200 (admin-key), `/` — 401 (требуется аутен�
 - Образ `services:web5@sha256:f8a9ae00…cdcfe0d7`; Argo Synced. Проверено: `GET /v4/judge` → `{config:{}}`,
   `POST /v4/judge` → ok, `POST /v4/policies/default/simulate` → summary (accuracy 1.0), `/app/` — новый бандл.
 - Далее: **Ф6 — Каталог + Админ** (движки/TestPack/Datasets/Наборы, настройки/квоты/аудит/кэш).
+
+### UI/UX Ф6: Каталог + Админ (2026-11-26)
+
+- **Каталог** (`/catalog`): движки (`/images/list`, отметка подписи), **TestPack** (список + сохранение
+  JSON, admin), **Датасеты** (`/v4/datasets`), **Наборы вопросов** (`/prompt-sets`: список, **активация**,
+  **импорт XLSX** через base64).
+- **Админ**: редактор **Модели-судьи** + **квоты HF** (`/hf/quota`), **egress‑журнал** (`/hf/egress`),
+  **аудит** (цепочка, `/api/evidence/verify`), **кэш моделей** (`/v4/model-cache`).
+- Образ `services:web6@sha256:12da27f7…7afb2387`; Argo Synced. Проверено: testpacks 5, datasets 1,
+  quota ключи, `/app/` — новый бандл.
+- Осталось: **Ф7 — снятие `/legacy` + e2e (Playwright)/a11y**.
