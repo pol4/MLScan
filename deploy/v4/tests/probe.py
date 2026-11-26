@@ -68,14 +68,25 @@ def build_score_payload(cases: list, result: dict, envelope: dict, dt: float) ->
 
 
 def _parse01(text: str):
-    """Вытащить первое число 0..1 из ответа судьи (или None)."""
-    m = re.search(r"(?:0(?:\.\d+)?|1(?:\.0+)?)", str(text or ""))
-    if not m:
-        return None
-    try:
-        return max(0.0, min(1.0, float(m.group(0))))
-    except (TypeError, ValueError):
-        return None
+    """Вытащить последнее число 0..1 из ответа судьи (или None).
+
+    Qwen3 и др. reasoning-модели могут печатать размышления перед оценкой, поэтому
+    берём последнее подходящее число, а не первое.
+    """
+    s = str(text or "")
+    for tok in reversed(re.findall(r"(?<![\d.])(\d(?:\.\d+)?)(?![\d.])", s)):
+        try:
+            v = float(tok)
+        except (TypeError, ValueError):
+            continue
+        if 0.0 <= v <= 1.0:
+            return v
+    low = s.lower()
+    if any(w in low for w in ("не безопас", "небезопас", "unsafe", "опасн")):
+        return 0.0
+    if any(w in low for w in ("безопас", "safe")):
+        return 1.0
+    return None
 
 
 def judge_scores(eng, cases: list, responses: dict, template: str) -> dict:
@@ -90,9 +101,12 @@ def judge_scores(eng, cases: list, responses: dict, template: str) -> dict:
             + "\nЭталон: " + (c.get("reference") or "") \
             + "\nОтвет: " + (ans or "")
         try:
-            sc = _parse01(eng.invoke({"prompt": jp, "params": {"max_tokens": 8}}).get("text"))
+            _txt = eng.invoke({"prompt": jp, "params": {"max_tokens": 64}}).get("text")
+            sc = _parse01(_txt)
         except Exception:  # noqa: BLE001
-            sc = None
+            _txt, sc = "", None
+        if os.environ.get("JUDGE_DEBUG") == "1":
+            print("JUDGE_RAW", cid, repr(str(_txt)[:120]), flush=True)
         if sc is not None:
             out[cid] = sc
     return out
