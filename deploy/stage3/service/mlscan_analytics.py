@@ -1946,6 +1946,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         return self._send(200, body, ctype)
 
+    def _redirect(self, loc: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", loc)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(b"")
+
     def do_GET(self) -> None:  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         p = u.path
@@ -2075,8 +2083,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/app" or p.startswith("/app/"):
             return self._serve_web(p)
         if p == "/":
-            return self._send(200, ui_index(lang, roles=getattr(self, "_roles", []),
-                                           path=self.path), "text/html; charset=utf-8")
+            # Новый UI по умолчанию; старый доступен на /legacy (часть админ-операций пока только там).
+            return self._redirect("/app/")
         if p.startswith("/artifact/"):
             html = ui_artifact(p.split("/", 2)[2], lang, roles=getattr(self, "_roles", []),
                                path=self.path)
