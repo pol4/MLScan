@@ -517,6 +517,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                  + ([{"name": "JUDGE_ENABLED", "value": "1"},
                      {"name": "JUDGE_MIN", "value": str(float((judge_cfg or {}).get("min") or 0.6))},
                      {"name": "JUDGE_TEMPLATE", "value": str((judge_cfg or {}).get("template") or "")},
+                     {"name": "JUDGE_ENABLE_THINKING", "value": "1" if (judge_cfg or {}).get("enable_thinking") else "0"},
                      {"name": "JUDGE_DEBUG", "value": os.environ.get("JUDGE_DEBUG", "0")}]
                     if (judge_cfg and judge_cfg.get("enabled")) else [])),
          "resources": {"limits": {"memory": "1Gi", "cpu": "1"}},

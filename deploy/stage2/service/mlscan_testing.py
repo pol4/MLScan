@@ -715,6 +715,18 @@ def _judge_cfg() -> dict:
         return {}
 
 
+def _judge_meta(cfg: dict) -> dict:
+    """Провенанс судьи для метаданных прогона/вердикта (модель, порог, шаблон)."""
+    cfg = cfg or {}
+    tmpl = str(cfg.get("template") or "")
+    return {"enabled": bool(cfg.get("enabled")),
+            "engine": str(cfg.get("engine") or ""),
+            "model": str(cfg.get("model") or ""),
+            "min": float(cfg.get("min") or 0.6),
+            "template_sha256": (hashlib.sha256(tmpl.encode("utf-8")).hexdigest()
+                                if tmpl else "")}
+
+
 def _hf_done_dir(repo: str) -> list:
     """Если полный каталог модели уже скачивался (загрузка done, >1 файла) — вернуть basenames."""
     if not DB_ENABLED or not repo:
@@ -2961,8 +2973,11 @@ class Handler(BaseHTTPRequestHandler):
             cases = json.loads(db_query("SELECT cases FROM prompt_sets WHERE version=" + _lit(ver))[0][0]) if DB_ENABLED else []
         results = []
         jscores = body.get("judge_scores") or {}
+        _jc = _judge_cfg() or {}
+        if (body.get("profile") or "llm") != "llm":   # судья — только для профиля llm
+            _jc = {}
         try:
-            jmin = float((_judge_cfg() or {}).get("min") or 0.6)
+            jmin = float(_jc.get("min") or 0.6)
         except (TypeError, ValueError):
             jmin = 0.6
         for c in cases:
@@ -3006,12 +3021,14 @@ class Handler(BaseHTTPRequestHandler):
                     coverage={"complete": True, "questions": int(agg.get("total") or 0)},
                     metrics=dict(agg, **(body.get("metrics") or {}),
                                  policy_id=pol.get("id") or "default",
-                                 policy_version=int(pol.get("version") or 1)),
+                                 policy_version=int(pol.get("version") or 1),
+                                 judge=_judge_meta(_jc)),
                     versions={"prompt_set": ver, "engine": body.get("engine_image") or "",
                               "testpack": (body.get("testpack") or {}).get("id", ""),
                               "policy_id": pol.get("id") or "default",
                               "policy_version": int(pol.get("version") or 1),
-                              "policy_sig": pol.get("signature") or ""},
+                              "policy_sig": pol.get("signature") or "",
+                              "judge": _judge_meta(_jc)},
                     engine_image=body.get("engine_image") or "")
                 agg.update({"bundle_id": bundle_id, "bundle_verdict": verdict,
                             "policy_id": pol.get("id") or "default",

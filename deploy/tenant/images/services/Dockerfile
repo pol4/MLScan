@@ -1,3 +1,10 @@
+FROM harbor.platform.rtx.local/proxy-dockerhub/library/node:22-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
 FROM harbor.platform.rtx.local/proxy-dockerhub/library/python:3.12-slim
 WORKDIR /opt
 COPY poc/mlscan_poc.py /opt/mlscan/mlscan_poc.py
@@ -17,6 +24,6 @@ COPY deploy/v3/obs/metrics.py deploy/v3/obs/slo.py /opt/v3obs/
 COPY deploy/v3/migration/migrate.py /opt/v3migration/
 # v4 (унифицированная песочница): движки как данные + политика вердикта
 COPY deploy/v4 /opt/v4
-# Новый UI (Ф0): собранный статический бандл Vite/React, раздаётся analytics под /app
-COPY web/dist /opt/web
+# Новый UI (Ф0): собранный статический бандл Vite/React (multi-stage, см. стадию web выше)
+COPY --from=web /web/dist /opt/web
 CMD ["python3"]

@@ -1,0 +1,8 @@
+# Build context = корень репозитория. Исключаем то, что не нужно образу
+# (web собирается внутри образа на стадии `web`, см. Dockerfile).
+.git
+**/node_modules
+web/dist
+web/test-results
+web/playwright-report
+**/*.tsbuildinfo

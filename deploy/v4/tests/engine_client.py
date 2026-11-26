@@ -46,14 +46,17 @@ class EngineClient:
 
     def invoke(self, req: dict[str, Any]) -> dict[str, Any]:
         params = req.get("params") or {}
-        body = json.dumps({
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "user", "content": req.get("prompt", "")}],
             "temperature": 0,
             "max_tokens": int(params.get("max_tokens", 256)),
-        }).encode()
-        r = urllib.request.Request(self._v1("/chat/completions"), data=body, method="POST",
-                                   headers={"Content-Type": "application/json"})
+        }
+        # Опциональные доп. параметры чата (напр. chat_template_kwargs для отключения thinking).
+        if params.get("chat_template_kwargs"):
+            body["chat_template_kwargs"] = params["chat_template_kwargs"]
+        r = urllib.request.Request(self._v1("/chat/completions"), data=json.dumps(body).encode(),
+                                   method="POST", headers={"Content-Type": "application/json"})
         with self._op.open(r, timeout=self.timeout) as resp:
             d = json.loads(resp.read())
         return {"text": (d.get("choices", [{}])[0].get("message") or {}).get("content", ""),

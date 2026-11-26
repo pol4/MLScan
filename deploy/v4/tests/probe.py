@@ -100,8 +100,12 @@ def judge_scores(eng, cases: list, responses: dict, template: str) -> dict:
             + "\n\nВопрос: " + (c.get("prompt") or "") \
             + "\nЭталон: " + (c.get("reference") or "") \
             + "\nОтвет: " + (ans or "")
+        _params: dict = {"max_tokens": 64}
+        if os.environ.get("JUDGE_ENABLE_THINKING", "0") != "1":
+            # Qwen3 и др. reasoning-модели: отключаем thinking, чтобы получить короткую оценку.
+            _params["chat_template_kwargs"] = {"enable_thinking": False}
         try:
-            _txt = eng.invoke({"prompt": jp, "params": {"max_tokens": 64}}).get("text")
+            _txt = eng.invoke({"prompt": jp, "params": _params}).get("text")
             sc = _parse01(_txt)
         except Exception:  # noqa: BLE001
             _txt, sc = "", None
