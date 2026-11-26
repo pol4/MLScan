@@ -371,6 +371,7 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                         gpu_resource: str = "", gpu_count: int = 1,
                         engine_wait_s: int = 0,
                         model_cache: str = "", model_cache_mount: str = "/cache",
+                        judge_cfg: dict | None = None,
                         kata_vm: bool = False) -> dict:
     """Job теста bundle: fetcher (по presigned URL) -> engine (llama.cpp) -> probe (вопросы -> /llm/score).
 
@@ -512,7 +513,11 @@ def make_llama_test_job(*, bundle_id: str, engine_image: str, model_url: str, mo
                  {"name": "TESTING_URL", "value": testing_url},
                  {"name": "MLSCAN_KEY", "value": api_key},
                  {"name": "MAX_TOKENS", "value": str(int(max_tokens))},
-                 {"name": "ENGINE_WAIT", "value": str(int(engine_wait_s))}]),
+                 {"name": "ENGINE_WAIT", "value": str(int(engine_wait_s))}]
+                 + ([{"name": "JUDGE_ENABLED", "value": "1"},
+                     {"name": "JUDGE_MIN", "value": str(float((judge_cfg or {}).get("min") or 0.6))},
+                     {"name": "JUDGE_TEMPLATE", "value": str((judge_cfg or {}).get("template") or "")}]
+                    if (judge_cfg and judge_cfg.get("enabled")) else [])),
          "resources": {"limits": {"memory": "1Gi", "cpu": "1"}},
          "securityContext": dict(hardened, readOnlyRootFilesystem=False)},
     ]

@@ -16,7 +16,9 @@ export default function Catalog() {
   const images = (imgs.data?.images as any[]) || [];
   const packsList = (packs.data?.testpacks as any[]) || (packs.data?.packs as any[]) || [];
   const datasets = (dsets.data?.datasets as any[]) || [];
-  const ps = (psets.data?.prompt_sets as any[]) || [];
+  const psRaw: any = psets.data;
+  // analytics /prompt-sets отдаёт активный набор объектом ({version,name,cases,…}); тестинг — {prompt_sets:[…]}.
+  const ps: any[] = psRaw?.prompt_sets || (psRaw?.version ? [psRaw] : []);
 
   const [packText, setPackText] = useState("{\n  \"id\": \"llm-custom\",\n  \"version\": 1,\n  \"applies_to\": {\"engines\": [\"kind:llm\"]},\n  \"steps\": [{\"type\": \"load\"}, {\"type\": \"invoke\", \"dataset\": \"rt\", \"params\": {\"max_tokens\": 64}}, {\"type\": \"assert\", \"over\": [\"responses\"]}]\n}");
   const [msg, setMsg] = useState("");

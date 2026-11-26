@@ -704,6 +704,17 @@ def _llm_job_progress(namespace: str, job: str) -> dict:
     return {"phase": "running", "stage": "running checks"}
 
 
+def _judge_cfg() -> dict:
+    """Настройки модели-судьи из settings (для применения в скоринге)."""
+    if not DB_ENABLED:
+        return {}
+    try:
+        rows = db_query("SELECT value FROM settings WHERE key='judge_config'")
+        return json.loads(rows[0][0] or "{}") if rows else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _hf_done_dir(repo: str) -> list:
     """Если полный каталог модели уже скачивался (загрузка done, >1 файла) — вернуть basenames."""
     if not DB_ENABLED or not repo:
@@ -2949,12 +2960,19 @@ class Handler(BaseHTTPRequestHandler):
         else:
             cases = json.loads(db_query("SELECT cases FROM prompt_sets WHERE version=" + _lit(ver))[0][0]) if DB_ENABLED else []
         results = []
+        jscores = body.get("judge_scores") or {}
+        try:
+            jmin = float((_judge_cfg() or {}).get("min") or 0.6)
+        except (TypeError, ValueError):
+            jmin = 0.6
         for c in cases:
             key = str(c["id"])
             if key not in responses and key not in {str(k) for k in responses}:
                 continue
             answers = responses.get(key) or responses.get(int(c["id"]) if str(c["id"]).isdigit() else key) or []
-            _res = v3evaluators.evaluate_case(c, answers)
+            _sc = jscores.get(key)
+            _judge = (lambda *a, _s=float(_sc): float(_s)) if _sc is not None else None
+            _res = v3evaluators.evaluate_case(c, answers, judge=_judge, judge_min=jmin)
             try:      # сохраняем ответы (для ревью в UI): id/criticality/... + текст ответов
                 _res["prompt"] = (c.get("prompt") or "")[:2000]
                 _res["reference"] = (c.get("reference") or "")[:2000]
@@ -3419,6 +3437,7 @@ class Handler(BaseHTTPRequestHandler):
             engine_wait_s=engine_wait_s,
             model_cache=(LLM_MODEL_CACHE_PVC if LLM_MODEL_CACHE else ""),
             model_cache_mount=LLM_MODEL_CACHE_MOUNT,
+            judge_cfg=_judge_cfg(),
             testing_url=LLM_TEST_URL, api_key=run_token, prompt_set=ver,
             scan_id=scan_id, namespace=LLM_TEST_NS, gpu=gpu,
             runtime_class=(body.get("runtime_class") or LLM_TEST_RUNTIME_CLASS),

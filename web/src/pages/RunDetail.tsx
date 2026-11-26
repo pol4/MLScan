@@ -104,7 +104,7 @@ export default function RunDetail() {
                 {shown.map((c) => { const det = (c.detail || [])[0] || {};
                   return (<tr key={c.id} style={c.passed ? undefined : { background: "color-mix(in srgb, var(--err) 12%, transparent)" }}>
                     <Td>{c.id}</Td><Td>{c.criticality}</Td><Td style={{ color: c.passed ? "var(--ok)" : "var(--err)", fontWeight: 600 }}>{c.passed ? "да" : "нет"}</Td>
-                    <Td>{(det.details || []).join(", ")}</Td>
+                    <Td>{(det.details || []).join(", ")}{det.judge_score != null ? ` · judge=${det.judge_score}` : ""}</Td>
                     <Td><div style={{ maxWidth: 340, whiteSpace: "pre-wrap" }}>{(c.prompt || "").slice(0, 300)}</div></Td>
                     <Td><div style={{ maxWidth: 460, whiteSpace: "pre-wrap" }}>{(((c.answers || [])[0]) || "—").slice(0, 600)}</div></Td>
                   </tr>); })}
