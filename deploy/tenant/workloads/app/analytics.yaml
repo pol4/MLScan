@@ -24,7 +24,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: analytics
-          image: harbor.platform.rtx.local/mlscan/services@sha256:f8a9ae000f1f2ccbf85addabeeb795f33ed2e7a1a9d4ccc70105fe48cdcfe0d7
+          image: harbor.platform.rtx.local/mlscan/services@sha256:12da27f79fdba9039e1cdad962256fad63a625da1f6e925505545dad7afb2387
           imagePullPolicy: IfNotPresent
           command: ["python", "/opt/svc/mlscan_analytics.py"]
           env:
