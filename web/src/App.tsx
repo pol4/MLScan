@@ -8,6 +8,8 @@ import Compare from "./pages/Compare";
 import Models from "./pages/Models";
 import ModelDetail from "./pages/ModelDetail";
 import Onboarding from "./pages/Onboarding";
+import Policies from "./pages/Policies";
+import Admin from "./pages/Admin";
 
 export default function App() {
   return (
@@ -22,10 +24,10 @@ export default function App() {
           <Route path="runs/:id" element={<RunDetail />} />
           <Route path="compare" element={<Compare />} />
           <Route path="findings" element={<Stub title="Находки" phase="Ф2" />} />
-          <Route path="policies" element={<Stub title="Политики" phase="Ф5" />} />
+          <Route path="policies" element={<Policies />} />
           <Route path="catalog" element={<Stub title="Каталог" phase="Ф6" />} />
           <Route path="gate" element={<Stub title="Гейт и интеграции" phase="Ф6" />} />
-          <Route path="admin" element={<Stub title="Администрирование" phase="Ф6" />} />
+          <Route path="admin" element={<Admin />} />
         </Route>
       </Routes>
     </BrowserRouter>

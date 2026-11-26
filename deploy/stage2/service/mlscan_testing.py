@@ -2452,6 +2452,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._v4_plan_get((q.get("engine") or [""])[0], (q.get("artifact_kind") or [""])[0])
         if u.path == "/v4/model-cache":
             return self._model_cache_get()
+        if u.path == "/v4/judge":
+            return self._judge_get()
         if u.path.startswith("/v4/bundles/") and u.path.endswith("/plan"):
             return self._json(200, self._v4_bundle_plan(u.path[len("/v4/bundles/"):-len("/plan")].strip("/")))
         if u.path.startswith("/bundles/") and u.path.endswith("/test"):
@@ -3068,6 +3070,33 @@ class Handler(BaseHTTPRequestHandler):
                     + _lit(json.dumps(body, ensure_ascii=False)) + ",now()) "
                     "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()")
         return self._json(200, {"ok": True})
+
+    def _judge_get(self) -> None:
+        """Настройки модели-судьи (judge) для UI: движок/модель/порог/шаблон."""
+        cfg: dict = {}
+        if DB_ENABLED:
+            rows = db_query("SELECT value,updated_at FROM settings WHERE key='judge_config'")
+            if rows:
+                try:
+                    cfg = json.loads(rows[0][0] or "{}")
+                except Exception:  # noqa: BLE001
+                    cfg = {}
+                cfg["_updated"] = str(rows[0][1])
+        return self._json(200, {"config": cfg})
+
+    def _judge_post(self) -> None:
+        """Сохранить настройки модели-судьи (admin). Точка расширения: инференс судьи подключается позже."""
+        if not self._admin_ok():
+            return self._json(403, {"error": "требуются права admin"})
+        body = self._v4_body()
+        if body is None:
+            return self._json(400, {"error": "bad json"})
+        cfg = {k: body.get(k) for k in ("engine", "model", "min", "template", "enabled")}
+        if DB_ENABLED:
+            db_exec("INSERT INTO settings(key,value,updated_at) VALUES ('judge_config',"
+                    + _lit(json.dumps(cfg, ensure_ascii=False)) + ",now()) "
+                    "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()")
+        return self._json(200, {"ok": True, "config": cfg})
 
     def _model_cache_get(self) -> None:
         """Отдать последний статус кэша моделей (UI читает обычным способом)."""
@@ -5294,6 +5323,8 @@ class Handler(BaseHTTPRequestHandler):
         # v4: политики вердикта и дескрипторы движков
         if u.path == "/v4/policies":
             return self._v4_policy_save()
+        if u.path == "/v4/judge":
+            return self._judge_post()
         if u.path == "/v4/model-cache/status":
             return self._model_cache_status_post()
         if u.path.startswith("/v4/policies/") and u.path.endswith("/simulate"):
