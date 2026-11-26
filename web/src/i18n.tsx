@@ -100,6 +100,21 @@ const DICT: Record<string, { ru: string; en: string }> = {
   "judge.enabled": { ru: "Применять в профиле llm", en: "Apply in llm profile" },
   "judge.save": { ru: "Сохранить", en: "Save" },
   "admin.title": { ru: "Администрирование", en: "Admin" },
+  "catalog.title": { ru: "Каталог", en: "Catalog" },
+  "cat.engines": { ru: "Движки", en: "Engines" },
+  "cat.testpacks": { ru: "Пакеты тестов", en: "Test packs" },
+  "cat.datasets": { ru: "Датасеты", en: "Datasets" },
+  "cat.prompts": { ru: "Наборы вопросов", en: "Prompt sets" },
+  "cat.activate": { ru: "Активировать", en: "Activate" },
+  "cat.upload": { ru: "Импорт XLSX", en: "Import XLSX" },
+  "cat.save": { ru: "Сохранить пакет", en: "Save pack" },
+  "cat.signed": { ru: "подписан", en: "signed" },
+  "cat.active": { ru: "активен", en: "active" },
+  "admin.quota": { ru: "Квоты HF", en: "HF quota" },
+  "admin.egress": { ru: "Журнал egress HF", en: "HF egress log" },
+  "admin.audit": { ru: "Аудит (цепочка)", en: "Audit (chain)" },
+  "admin.cache": { ru: "Кэш моделей", en: "Model cache" },
+  "admin.gate": { ru: "Gate", en: "Gate" },
 };
 
 const Ctx = createContext<{ lang: Lang; t: (k: string) => string; setLang: (l: Lang) => void;

@@ -9,6 +9,10 @@ export default function Admin() {
   const { t } = useI18n();
   const judge = useQuery({ queryKey: ["judge"], queryFn: () => api<any>("/v4/judge"), retry: false });
   const imgs = useQuery({ queryKey: ["images"], queryFn: () => api<any>("/images/list"), retry: false });
+  const quota = useQuery({ queryKey: ["quota"], queryFn: () => api<any>("/hf/quota"), retry: false });
+  const egress = useQuery({ queryKey: ["egress"], queryFn: () => api<any>("/hf/egress?limit=20"), retry: false });
+  const audit = useQuery({ queryKey: ["audit"], queryFn: () => api<any>("/api/evidence/verify"), retry: false });
+  const cache = useQuery({ queryKey: ["cache"], queryFn: () => api<any>("/v4/model-cache"), retry: false });
   const engines = ((imgs.data?.images as any[]) || []).filter((i) => (i.type || "") === "llm");
 
   const [engine, setEngine] = useState("");
@@ -66,7 +70,22 @@ export default function Admin() {
         </div>
         {!engines.length ? <EmptyState text="Нет доступных LLM-движков" /> : null}
       </Card>
+
+      <Card title={t("admin.quota")}>
+        {quota.isError ? <EmptyState text={t("common.error")} /> : <pre style={pre}>{JSON.stringify(quota.data || {}, null, 2)}</pre>}
+      </Card>
+      <Card title={t("admin.egress")}>
+        {egress.isError ? <EmptyState text={t("common.error")} /> : <pre style={pre}>{JSON.stringify(egress.data || {}, null, 2)}</pre>}
+      </Card>
+      <Card title={t("admin.audit")}>
+        {audit.isError ? <EmptyState text={t("common.error")} /> : <pre style={pre}>{JSON.stringify(audit.data || {}, null, 2)}</pre>}
+      </Card>
+      <Card title={t("admin.cache")}>
+        {cache.isError ? <EmptyState text={t("common.error")} />
+          : <div>Позиций: {(cache.data?.count ?? (cache.data?.entries || []).length) || 0} · Итого: {((cache.data?.total_bytes || 0) / 1e9).toFixed(2)} GB · цель {cache.data?.target_gb ?? "—"} GB · {cache.data?.updated || ""}</div>}
+      </Card>
     </div>
   );
 }
+const pre: React.CSSProperties = { maxHeight: 260, overflow: "auto", background: "var(--bg-soft)", padding: 12, borderRadius: 8, fontSize: 12 };
 const inp: React.CSSProperties = { background: "var(--bg-soft)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "7px 10px" };
