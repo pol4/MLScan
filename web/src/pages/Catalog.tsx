@@ -28,7 +28,7 @@ export default function Catalog() {
     setMsg(t("cat.importing"));
     const b64 = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.readAsDataURL(f); });
     try { const r = await api<any>("/prompt-sets", { method: "POST", body: JSON.stringify({ name: f.name, content_b64: b64 }) });
-      setMsg(`${r.version || ""} ${r.warnings ? "· " + r.warnings.length + " " + t("cat.warningsShort") : ""}`); psets.refetch(); }
+      setMsg(`${t("run.promptSetLabel")} ${r.version || ""} ${r.warnings ? "· " + r.warnings.length + " " + t("cat.warningsShort") : ""}`); psets.refetch(); }
     catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
 

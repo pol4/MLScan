@@ -20,20 +20,20 @@ export default function Admin() {
   const [engine, setEngine] = useState("");
   const [model, setModel] = useState("");
   const [min, setMin] = useState("0.6");
-  const [template, setTemplate] = useState(t("judge.templateDefault"));
+  const [template, setTemplate] = useState("");
   const [enabled, setEnabled] = useState(false);
   const [msg, setMsg] = useState("");
   useEffect(() => {
     const c = judge.data?.config;
     if (c && Object.keys(c).length) {
       setEngine(c.engine || ""); setModel(c.model || ""); setMin(String(c.min ?? "0.6"));
-      setTemplate(c.template || t("judge.templateDefault")); setEnabled(!!c.enabled);
+      setTemplate(c.template || ""); setEnabled(!!c.enabled);
     }
   }, [judge.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     setMsg(t("common.saving"));
-    try { await api("/v4/judge", { method: "POST", body: JSON.stringify({ engine, model, min: Number(min), template, enabled }) });
+    try { await api("/v4/judge", { method: "POST", body: JSON.stringify({ engine, model, min: Number(min), template: template || t("judge.templateDefault"), enabled }) });
       setMsg(t("admin.judgeSaved")); judge.refetch();
     } catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
@@ -85,11 +85,11 @@ export default function Admin() {
           </div>
           <div>
             <div style={{ color: "var(--fg-soft)" }}>{t("judge.template")}</div>
-            <textarea value={template} onChange={(e) => setTemplate(e.target.value)} style={{ ...inp, width: "100%", height: 220, fontFamily: "var(--mono)" }} />
+            <textarea value={template || t("judge.templateDefault")} onChange={(e) => setTemplate(e.target.value)} style={{ ...inp, width: "100%", height: 220, fontFamily: "var(--mono)" }} />
           </div>
         </div>
         <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
-          <button onClick={save} style={btn}>{t("judge.save")}</button>
+          <button onClick={save} style={btn}>{t("common.save")}</button>
           <span style={{ color: "var(--fg-soft)" }}>{msg}</span>
         </div>
         {!engines.length ? <EmptyState text={t("admin.noEngines")} /> : null}

@@ -76,7 +76,7 @@ export function EmptyState({ text }: { text?: string }) {
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const { t } = useI18n();
   return <div style={{ color: "var(--err)", padding: 12 }}>
-    {t("common.errorPrefix")}: {String((error as any)?.message || error)}
+    {t("common.error")}: {String((error as any)?.message || error)}
     {onRetry && <> <button onClick={onRetry} style={{ marginLeft: 8 }}>{t("common.retry")}</button></>}</div>;
 }
 

@@ -46,8 +46,8 @@ export default function Compare() {
           : reports.isError ? <ErrorState error={reports.error} onRetry={() => reports.refetch()} />
           : !reports.isSuccess ? <EmptyState text="…" />
           : <Table head={["", ...cols.map((d) => (d.bundle?.model_sha256 || d.bundle?.bundle_id || "").slice(0, 12) + "…")]}>
-            <Row label={t("cmp.verdict")} cells={cols.map((d) => <VerdictBadge verdict={d.verdict?.verdict} />)} />
-            <Row label={t("cmp.status")} cells={cols.map((d) => <StatusChip status={d.test?.status} stage={d.test?.stage} />)} />
+            <Row label={t("col.verdict")} cells={cols.map((d) => <VerdictBadge verdict={d.verdict?.verdict} />)} />
+            <Row label={t("col.status")} cells={cols.map((d) => <StatusChip status={d.test?.status} stage={d.test?.stage} />)} />
             <Row label={t("col.engine")} cells={cols.map((d) => (d.bundle?.engine_image || "").split("@")[0].split("/").pop())} />
             <Row label={t("col.policy")} cells={cols.map((d) => `${d.policy?.id || "default"}@${d.policy?.version}`)} />
             <Row label="passed/total" cells={cols.map((d) => `${d.summary?.passed ?? "—"}/${d.summary?.total ?? "—"}`)} />

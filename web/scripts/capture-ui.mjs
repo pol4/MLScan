@@ -1,6 +1,8 @@
 // Съёмка скриншотов нового UI (/app) с реального стенда через BFF (analytics).
 // Запуск: node scripts/capture-ui.mjs [baseURL]
 // Аутентификация — заголовками oauth2-proxy (как в e2e): X-Forwarded-User/Groups.
+// ВНИМАНИЕ: кадры с боевого тенанта содержат операционные данные — проверяйте/обезличивайте перед коммитом;
+// для черновых съёмок задавайте git-игнорируемый SHOT_DIR.
 import { chromium } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
