@@ -1,4 +1,5 @@
 import { ReactNode, CSSProperties } from "react";
+import { useI18n } from "../i18n";
 
 export function Card({ title, children, right }: { title?: string; children: ReactNode; right?: ReactNode }) {
   return (
@@ -69,12 +70,14 @@ export function SeverityTag({ sev }: { sev?: string }) {
 }
 
 export function EmptyState({ text }: { text?: string }) {
-  return <div style={{ color: "var(--fg-soft)", padding: 12 }}>{text || "Нет данных"}</div>;
+  const { t } = useI18n();
+  return <div style={{ color: "var(--fg-soft)", padding: 12 }}>{text || t("common.empty")}</div>;
 }
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+  const { t } = useI18n();
   return <div style={{ color: "var(--err)", padding: 12 }}>
-    Ошибка загрузки: {String((error as any)?.message || error)}
-    {onRetry && <> <button onClick={onRetry} style={{ marginLeft: 8 }}>Повторить</button></>}</div>;
+    {t("common.errorPrefix")}: {String((error as any)?.message || error)}
+    {onRetry && <> <button onClick={onRetry} style={{ marginLeft: 8 }}>{t("common.retry")}</button></>}</div>;
 }
 
 export function Table({ head, children }: { head: string[]; children: ReactNode }) {

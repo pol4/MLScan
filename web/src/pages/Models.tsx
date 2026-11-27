@@ -29,8 +29,8 @@ export default function Models() {
     <Card title={t("models.title")} right={<Link to="/onboarding">+ {t("nav.upload")}</Link>}>
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
         <input placeholder={t("search")} value={q} onChange={(e) => setQ(e.target.value)} style={inp} />
-        <select value={fmt} onChange={(e) => setFmt(e.target.value)} style={inp}><option value="">{t("col.format")}: все</option>{fmts.map((f) => <option key={f} value={f}>{f}</option>)}</select>
-        <select value={verdict} onChange={(e) => setVerdict(e.target.value)} style={inp}><option value="">{t("col.verdict")}: все</option>
+        <select value={fmt} onChange={(e) => setFmt(e.target.value)} style={inp}><option value="">{t("col.format")}: {t("common.all")}</option>{fmts.map((f) => <option key={f} value={f}>{f}</option>)}</select>
+        <select value={verdict} onChange={(e) => setVerdict(e.target.value)} style={inp}><option value="">{t("col.verdict")}: {t("common.all")}</option>
           {["Safe", "Needs review", "Malicious", "Inconclusive"].map((v) => <option key={v} value={v}>{v}</option>)}</select>
         <span style={{ color: "var(--fg-soft)" }}>{filtered.length}/{items.length}</span>
       </div>

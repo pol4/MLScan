@@ -27,9 +27,9 @@ export default function Policies() {
 
   const parse = <T,>(s: string): T => { try { return JSON.parse(s); } catch (e) { throw new Error("JSON: " + (e as Error).message); } };
   const simulate = (pol: any) => api<any>(`/v4/policies/${encodeURIComponent(pid)}/simulate`, { method: "POST", body: JSON.stringify({ policy: pol, cases: parse(cases), profile }) });
-  const doSim = async () => { setMsg("симуляция…"); try { setSim(await simulate(parse(text))); setMsg(""); } catch (e) { setMsg("ERR " + (e as Error).message); } };
+  const doSim = async () => { setMsg(t("pol.simulating")); try { setSim(await simulate(parse(text))); setMsg(""); } catch (e) { setMsg("ERR " + (e as Error).message); } };
   const doDiff = async () => {
-    setMsg("дифф…");
+    setMsg(t("pol.diffing"));
     try {
       const a = await simulate(body.data?.body || {}); const b = await simulate(parse(text));
       const am = new Map<string, string>((a.results || []).map((r: any) => [String(r.id), r.predicted]));
@@ -37,8 +37,8 @@ export default function Policies() {
       setDiff({ a: a.summary, b: b.summary, changed }); setMsg("");
     } catch (e) { setMsg("ERR " + (e as Error).message); }
   };
-  const save = async () => { setMsg("сохранение…"); try { await api("/v4/policies", { method: "POST", body: JSON.stringify({ id: pid, body: parse(text) }) }); setMsg("черновик сохранён"); list.refetch(); } catch (e) { setMsg("ERR " + (e as Error).message); } };
-  const publish = async () => { setMsg("публикация…"); try { await api(`/v4/policies/${encodeURIComponent(pid)}/publish`, { method: "POST", body: JSON.stringify({ body: parse(text) }) }); setMsg("опубликовано"); body.refetch(); } catch (e) { setMsg("ERR " + (e as Error).message); } };
+  const save = async () => { setMsg(t("common.saving")); try { await api("/v4/policies", { method: "POST", body: JSON.stringify({ id: pid, body: parse(text) }) }); setMsg(t("pol.draftSaved")); list.refetch(); } catch (e) { setMsg("ERR " + (e as Error).message); } };
+  const publish = async () => { setMsg(t("pol.publishing")); try { await api(`/v4/policies/${encodeURIComponent(pid)}/publish`, { method: "POST", body: JSON.stringify({ body: parse(text) }) }); setMsg(t("pol.published")); body.refetch(); } catch (e) { setMsg("ERR " + (e as Error).message); } };
 
   return (
     <div>
@@ -76,7 +76,7 @@ export default function Policies() {
       </Card>}
 
       {diff && <Card title={t("pol.diff")}>
-        <div style={{ marginBottom: 8 }}>Изменений предсказаний: <b>{diff.changed}</b></div>
+        <div style={{ marginBottom: 8 }}>{t("pol.changed")}: <b>{diff.changed}</b></div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div><div style={{ color: "var(--fg-soft)" }}>published</div><Summary s={diff.a} /></div>
           <div><div style={{ color: "var(--fg-soft)" }}>draft</div><Summary s={diff.b} /></div>

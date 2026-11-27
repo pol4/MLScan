@@ -26,13 +26,13 @@ export default function ModelDetail() {
   const engines = ((imgs.data?.images as any[]) || []).filter((i) => (i.type || "") === "llm");
 
   const start = async () => {
-    if (!engine) { setMsg("Выберите движок"); return; }
-    setMsg("запуск…");
+    if (!engine) { setMsg(t("common.chooseEngine")); return; }
+    setMsg(t("common.starting"));
     try {
       const b = await api<any>("/bundles", { method: "POST", body: JSON.stringify({ engine_image: engine, model_sha256: sha }) });
       const bid = b.bundle_id;
       await api<any>(`/bundles/${encodeURIComponent(bid)}/test`, { method: "POST", body: JSON.stringify({ gpu: true, runtime_class: "kata-gpu", ebpf: true }) });
-      setRunId(bid); setMsg("тест запущен");
+      setRunId(bid); setMsg(t("common.testStarted"));
     } catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
 
@@ -59,14 +59,14 @@ export default function ModelDetail() {
       </Card>
 
       <Card title={t("model.cache")}>
-        {!cacheEntry ? <EmptyState text="нет в кэше" /> :
+        {!cacheEntry ? <EmptyState text={t("common.notCached")} /> :
           <div>{t("col.size")}: {gb(cacheEntry.size)} · last_used: {fmtT(cacheEntry.last_used)}</div>}
       </Card>
 
       <Card title={t("model.run")}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <select value={engine} onChange={(e) => setEngine(e.target.value)} style={inp}>
-            <option value="">{t("onb.engine")}: выберите</option>
+            <option value="">{t("onb.engine")}: {t("common.chooseEngineShort")}</option>
             {engines.map((i) => <option key={i.digest} value={i.ref}>{(i.ref || i.digest).split("@")[0].split("/").pop()}{i.signature ? " ✓" : ""}</option>)}
           </select>
           <button onClick={start} style={{ background: "#3d7dd8", color: "#fff", border: 0, borderRadius: 6, padding: "8px 14px" }}>{t("model.run")}</button>

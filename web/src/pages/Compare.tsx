@@ -46,8 +46,8 @@ export default function Compare() {
           : reports.isError ? <ErrorState error={reports.error} onRetry={() => reports.refetch()} />
           : !reports.isSuccess ? <EmptyState text="…" />
           : <Table head={["", ...cols.map((d) => (d.bundle?.model_sha256 || d.bundle?.bundle_id || "").slice(0, 12) + "…")]}>
-            <Row label="Вердикт" cells={cols.map((d) => <VerdictBadge verdict={d.verdict?.verdict} />)} />
-            <Row label="Статус" cells={cols.map((d) => <StatusChip status={d.test?.status} stage={d.test?.stage} />)} />
+            <Row label={t("cmp.verdict")} cells={cols.map((d) => <VerdictBadge verdict={d.verdict?.verdict} />)} />
+            <Row label={t("cmp.status")} cells={cols.map((d) => <StatusChip status={d.test?.status} stage={d.test?.stage} />)} />
             <Row label={t("col.engine")} cells={cols.map((d) => (d.bundle?.engine_image || "").split("@")[0].split("/").pop())} />
             <Row label={t("col.policy")} cells={cols.map((d) => `${d.policy?.id || "default"}@${d.policy?.version}`)} />
             <Row label="passed/total" cells={cols.map((d) => `${d.summary?.passed ?? "—"}/${d.summary?.total ?? "—"}`)} />
@@ -63,10 +63,10 @@ export default function Compare() {
 
       <Card title={t("cmp.trends")} right={
         <select value={model} onChange={(e) => setModel(e.target.value)} style={{ background: "var(--bg-soft)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: 6, padding: 6 }}>
-          <option value="">{t("cmp.model")}: все</option>
+          <option value="">{t("cmp.model")}: {t("common.all")}</option>
           {models.map(([sha, name]) => <option key={sha} value={sha}>{name}</option>)}
         </select>}>
-        {trendRuns.length < 2 ? <EmptyState text="Недостаточно данных для тренда (нужно ≥2 прогона с метриками)" /> : <LineChart series={series} />}
+        {trendRuns.length < 2 ? <EmptyState text={t("cmp.needTrend")} /> : <LineChart series={series} />}
       </Card>
     </div>
   );
@@ -93,7 +93,7 @@ function CaseDiff({ cols, ids }: { cols: any[]; ids: string[] }) {
     return { cid, cs, passed, flags, changed };
   }).filter((r) => r.changed);
 
-  if (!rows.length) return <EmptyState text="Различий по кейсам не найдено" />;
+  if (!rows.length) return <EmptyState text={t("cmp.noDiff")} />;
   return (
     <div style={{ maxHeight: 420, overflow: "auto" }}>
       <Table head={["id", "crit", ...ids.map((i) => i.slice(0, 10) + "…"), t("col.flags")]}>

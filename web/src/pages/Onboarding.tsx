@@ -20,23 +20,23 @@ export default function Onboarding() {
     queryFn: () => api<any>(`/hf/downloads/${encodeURIComponent(dlId)}`) });
 
   const search = async () => {
-    setMsg("поиск…");
+    setMsg(t("common.searching"));
     try { const r = await api<any>("/hf/search", { method: "POST", body: JSON.stringify({ query, type: "text-generation" }) });
-      setFound(r.models || r.items || []); setMsg(`найдено: ${(r.models || r.items || []).length}`); }
+      setFound(r.models || r.items || []); setMsg(`${t("common.found")}: ${(r.models || r.items || []).length}`); }
     catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
   const download = async (id: string) => {
-    if (!engine) { setMsg("Выберите движок"); return; }
-    setMsg("запуск загрузки…");
+    if (!engine) { setMsg(t("common.chooseEngine")); return; }
+    setMsg(t("common.startingDownload"));
     try { const r = await api<any>("/hf/downloads", { method: "POST", body: JSON.stringify({ repo_id: id, kind: "llm", engine_image: engine }) });
-      setRepo(id); setDlId(r.id); setMsg("загрузка запущена"); }
+      setRepo(id); setDlId(r.id); setMsg(t("common.downloadStarted")); }
     catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
   const upload = async (f: File) => {
-    if (!engine) { setMsg("Выберите движок (для LLM)"); return; }
-    setMsg("загрузка файла…");
+    if (!engine) { setMsg(t("common.chooseEngineLlm")); return; }
+    setMsg(t("common.uploadingFile"));
     try { const r = await fetch(`/upload?name=${encodeURIComponent(f.name)}&fmt=${encodeURIComponent((f.name.split(".").pop() || "").toLowerCase())}`, { method: "POST", body: f });
-      const j = await r.json().catch(() => ({})); setMsg(r.ok ? "загружено" : "ERR " + (j.error || r.status)); }
+      const j = await r.json().catch(() => ({})); setMsg(r.ok ? t("common.uploaded") : "ERR " + (j.error || r.status)); }
     catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
 
@@ -49,7 +49,7 @@ export default function Onboarding() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
           <b>{t("onb.engine")}:</b>
           <select value={engine} onChange={(e) => setEngine(e.target.value)} style={inp}>
-            <option value="">выберите движок</option>
+            <option value="">{t("common.chooseEngineShort")}</option>
             {engines.map((i) => <option key={i.digest} value={i.ref}>{(i.ref || i.digest).split("@")[0].split("/").pop()}{i.signature ? " ✓" : ""}</option>)}
           </select>
         </div>

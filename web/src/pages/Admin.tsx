@@ -20,21 +20,21 @@ export default function Admin() {
   const [engine, setEngine] = useState("");
   const [model, setModel] = useState("");
   const [min, setMin] = useState("0.6");
-  const [template, setTemplate] = useState("Оцени ответ 0..1 относительно вопроса и эталона.");
+  const [template, setTemplate] = useState(t("judge.templateDefault"));
   const [enabled, setEnabled] = useState(false);
   const [msg, setMsg] = useState("");
   useEffect(() => {
     const c = judge.data?.config;
     if (c && Object.keys(c).length) {
       setEngine(c.engine || ""); setModel(c.model || ""); setMin(String(c.min ?? "0.6"));
-      setTemplate(c.template || template); setEnabled(!!c.enabled);
+      setTemplate(c.template || t("judge.templateDefault")); setEnabled(!!c.enabled);
     }
   }, [judge.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
-    setMsg("сохранение…");
+    setMsg(t("common.saving"));
     try { await api("/v4/judge", { method: "POST", body: JSON.stringify({ engine, model, min: Number(min), template, enabled }) });
-      setMsg("сохранено (судья применяется в скоринге bundle-тестов профиля llm)"); judge.refetch();
+      setMsg(t("admin.judgeSaved")); judge.refetch();
     } catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
 
@@ -78,7 +78,7 @@ export default function Admin() {
               {engines.map((i) => <option key={i.digest} value={i.ref}>{(i.ref || i.digest).split("@")[0].split("/").pop()}{i.signature ? " ✓" : ""}</option>)}
             </select>
             <div style={{ color: "var(--fg-soft)", marginTop: 8 }}>{t("judge.model")}</div>
-            <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="напр. Qwen3-8B" style={{ ...inp, width: "100%" }} />
+            <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t("admin.modelPlaceholder")} style={{ ...inp, width: "100%" }} />
             <div style={{ color: "var(--fg-soft)", marginTop: 8 }}>{t("judge.min")}</div>
             <input value={min} onChange={(e) => setMin(e.target.value)} style={{ ...inp, width: 120 }} />
             <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />{t("judge.enabled")}</label>
@@ -92,61 +92,61 @@ export default function Admin() {
           <button onClick={save} style={btn}>{t("judge.save")}</button>
           <span style={{ color: "var(--fg-soft)" }}>{msg}</span>
         </div>
-        {!engines.length ? <EmptyState text="Нет доступных LLM-движков" /> : null}
+        {!engines.length ? <EmptyState text={t("admin.noEngines")} /> : null}
       </Card>
 
-      <Card title="Прочее (админ-операции)">
+      <Card title={t("admin.other")}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           <div>
-            <div style={{ color: "var(--fg-soft)" }}>HF-токен (личный, для скачивания моделей)</div>
-            <div style={{ color: "var(--fg-soft)", fontSize: 12 }}>сейчас: {hftok.data?.masked || "—"}</div>
+            <div style={{ color: "var(--fg-soft)" }}>{t("admin.hfToken")}</div>
+            <div style={{ color: "var(--fg-soft)", fontSize: 12 }}>{t("common.now")}: {hftok.data?.masked || "—"}</div>
             <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
               <input value={tokIn} onChange={(e) => setTokIn(e.target.value)} placeholder="hf_…" style={{ ...inp, flex: 1 }} />
-              <button onClick={() => post("/hf/token", { token: tokIn }, setTokMsg, "ok").then(() => hftok.refetch())} style={btn}>Сохранить</button>
-              <button onClick={() => post("/hf/token", { token: "" }, setTokMsg, "ok").then(() => hftok.refetch())} style={btn2}>Удалить</button>
+              <button onClick={() => post("/hf/token", { token: tokIn }, setTokMsg, "ok").then(() => hftok.refetch())} style={btn}>{t("common.save")}</button>
+              <button onClick={() => post("/hf/token", { token: "" }, setTokMsg, "ok").then(() => hftok.refetch())} style={btn2}>{t("common.delete")}</button>
             </div>
             <div style={{ color: "var(--fg-soft)", marginTop: 4 }}>{tokMsg}</div>
 
-            <div style={{ color: "var(--fg-soft)", marginTop: 12 }}>Доменная классификация (domain → policy_class)</div>
+            <div style={{ color: "var(--fg-soft)", marginTop: 12 }}>{t("admin.domainMap")}</div>
             <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
               <input value={dcDomain} onChange={(e) => setDcDomain(e.target.value)} placeholder="domain" style={{ ...inp, flex: 1 }} />
               <input value={dcClass} onChange={(e) => setDcClass(e.target.value)} placeholder="class" style={{ ...inp, width: 140 }} />
-              <button onClick={() => post("/domain-class", { domain: dcDomain, policy_class: dcClass }, setDcMsg, "ok").then(() => dcls.refetch())} style={btn}>Сохранить</button>
+              <button onClick={() => post("/domain-class", { domain: dcDomain, policy_class: dcClass }, setDcMsg, "ok").then(() => dcls.refetch())} style={btn}>{t("common.save")}</button>
             </div>
             <div style={{ color: "var(--fg-soft)", marginTop: 4 }}>
               {dcMsg} · unmapped: {(dcls.data?.unmapped || []).length} · overrides: {Object.keys(dcls.data?.overrides || {}).length}
             </div>
 
-            <div style={{ color: "var(--fg-soft)", marginTop: 12 }}>Суточная квота HF (байт)</div>
+            <div style={{ color: "var(--fg-soft)", marginTop: 12 }}>{t("admin.quotaBytes")}</div>
             <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-              <input value={quotaBytes} onChange={(e) => setQuotaBytes(e.target.value)} placeholder="напр. 50000000000" style={{ ...inp, flex: 1 }} />
-              <button onClick={() => post("/hf/quota", { daily_bytes: quotaBytes ? Number(quotaBytes) : null }, setQuotaMsg, "ok").then(() => quota.refetch())} style={btn}>Задать</button>
+              <input value={quotaBytes} onChange={(e) => setQuotaBytes(e.target.value)} placeholder={t("admin.quotaPlaceholder")} style={{ ...inp, flex: 1 }} />
+              <button onClick={() => post("/hf/quota", { daily_bytes: quotaBytes ? Number(quotaBytes) : null }, setQuotaMsg, "ok").then(() => quota.refetch())} style={btn}>{t("common.set")}</button>
             </div>
             <div style={{ color: "var(--fg-soft)", marginTop: 4 }}>{quotaMsg}</div>
           </div>
 
           <div>
-            <div style={{ color: "var(--fg-soft)" }}>Rate-limit (rps=0 — выключить)</div>
+            <div style={{ color: "var(--fg-soft)" }}>{t("admin.rateLimit")}</div>
             <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
               <input value={rlRps} onChange={(e) => setRlRps(e.target.value)} placeholder="rps" style={{ ...inp, width: 110 }} />
               <input value={rlBurst} onChange={(e) => setRlBurst(e.target.value)} placeholder="burst" style={{ ...inp, width: 110 }} />
-              <button onClick={() => post("/rate-limit", { rps: Number(rlRps || 0), burst: Number(rlBurst || 1) }, setRlMsg, "ok")} style={btn}>Применить</button>
+              <button onClick={() => post("/rate-limit", { rps: Number(rlRps || 0), burst: Number(rlBurst || 1) }, setRlMsg, "ok")} style={btn}>{t("common.apply")}</button>
             </div>
             <div style={{ color: "var(--fg-soft)", marginTop: 4 }}>{rlMsg}</div>
 
-            <div style={{ color: "var(--fg-soft)", marginTop: 12 }}>Синхронизация реестра (sync)</div>
+            <div style={{ color: "var(--fg-soft)", marginTop: 12 }}>{t("admin.syncCard")}</div>
             <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-              <button onClick={async () => { setSyncMsg("…"); try { const r = await api<any>("/sync", { method: "POST", body: "{}" }); setSyncMsg("ok " + JSON.stringify(r).slice(0, 160)); } catch (e) { setSyncMsg("ERR " + String((e as any)?.message || e)); } }} style={btn}>Синхронизировать</button>
+              <button onClick={async () => { setSyncMsg("…"); try { const r = await api<any>("/sync", { method: "POST", body: "{}" }); setSyncMsg("ok " + JSON.stringify(r).slice(0, 160)); } catch (e) { setSyncMsg("ERR " + String((e as any)?.message || e)); } }} style={btn}>{t("admin.sync")}</button>
             </div>
             <div style={{ color: "var(--fg-soft)", marginTop: 4 }}>{syncMsg}</div>
 
-            <div style={{ color: "var(--fg-soft)", marginTop: 12 }}>Подпись движка (аттестация образа)</div>
+            <div style={{ color: "var(--fg-soft)", marginTop: 12 }}>{t("admin.engineSign")}</div>
             <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
               <select value={signDigest} onChange={(e) => setSignDigest(e.target.value)} style={{ ...inp, flex: 1 }}>
                 <option value="">—</option>
                 {((imgs.data?.images as any[]) || []).map((i) => <option key={i.digest} value={i.digest}>{i.digest.slice(0, 16)} {i.signature ? "✓" : ""}</option>)}
               </select>
-              <button disabled={!signDigest} onClick={() => post(`/images/${encodeURIComponent(signDigest)}/sign`, {}, setSignMsg, "ok").then(() => imgs.refetch())} style={btn}>Подписать</button>
+              <button disabled={!signDigest} onClick={() => post(`/images/${encodeURIComponent(signDigest)}/sign`, {}, setSignMsg, "ok").then(() => imgs.refetch())} style={btn}>{t("admin.sign")}</button>
             </div>
             <div style={{ color: "var(--fg-soft)", marginTop: 4 }}>{signMsg}</div>
           </div>
@@ -164,7 +164,7 @@ export default function Admin() {
       </Card>
       <Card title={t("admin.cache")}>
         {cache.isError ? <EmptyState text={t("common.error")} />
-          : <div>Позиций: {(cache.data?.count ?? (cache.data?.entries || []).length) || 0} · Итого: {((cache.data?.total_bytes || 0) / 1e9).toFixed(2)} GB · цель {cache.data?.target_gb ?? "—"} GB · {cache.data?.updated || ""}</div>}
+          : <div>{t("common.items")}: {(cache.data?.count ?? (cache.data?.entries || []).length) || 0} · {t("common.total")}: {((cache.data?.total_bytes || 0) / 1e9).toFixed(2)} GB · {t("common.target")} {cache.data?.target_gb ?? "—"} GB · {cache.data?.updated || ""}</div>}
       </Card>
     </div>
   );

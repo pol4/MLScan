@@ -6,7 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const BASE = (process.argv[2] || process.env.E2E_BASE_URL || "http://127.0.0.1:18080").replace(/\/$/, "");
-const OUT = process.env.SHOT_DIR || path.resolve(process.cwd(), "..", "docs", "img", "ui-v4");
+const LANG = process.env.SHOT_LANG || "ru";              // ru | en (UI хранит язык в localStorage.mlscan_lang)
+const OUT = process.env.SHOT_DIR || path.resolve(process.cwd(), "..", "docs", "img", "ui-v4", ...(LANG === "en" ? ["en"] : []));
 fs.mkdirSync(OUT, { recursive: true });
 
 const RUN_ID = process.env.SHOT_RUN || "b-6ab839753931fa5c1ca89aa4";
@@ -28,7 +29,7 @@ const browser = await chromium.launch();
 const ctx = await browser.newContext({
   viewport: { width: 1512, height: 900 },
   deviceScaleFactor: Number(process.env.SHOT_DSF || 1),
-  locale: "ru-RU",
+  locale: LANG === "en" ? "en-US" : "ru-RU",
   ignoreHTTPSErrors: true,
   extraHTTPHeaders: {
     "X-Forwarded-User": process.env.E2E_USER || "admin",
@@ -37,6 +38,8 @@ const ctx = await browser.newContext({
   },
 });
 const page = await ctx.newPage();
+// Зафиксировать язык интерфейса (localStorage.mlscan_lang) до первой отрисовки.
+await ctx.addInitScript((l) => { try { localStorage.setItem("mlscan_lang", l); } catch {} }, LANG);
 
 let failed = 0;
 for (const [name, url] of PAGES) {

@@ -25,7 +25,7 @@ export default function AppShell() {
         <input placeholder={t("search")} aria-label={t("search")} onKeyDown={(e) => { if (e.key === "Enter") nav(`/models?q=${encodeURIComponent((e.target as HTMLInputElement).value)}`); }}
           style={{ flex: "0 1 360px", background: "var(--bg-soft)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "7px 10px" }} />
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", color: "var(--fg-soft)" }}>
-          <a href="/legacy" title="старый интерфейс">legacy</a>
+          <a href="/legacy" title={t("nav.legacyTitle")}>legacy</a>
           <select aria-label="lang" value={lang} onChange={(e) => setLang(e.target.value as any)}
             style={{ background: "var(--bg-soft)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: 6 }}>
             <option value="ru">RU</option><option value="en">EN</option></select>

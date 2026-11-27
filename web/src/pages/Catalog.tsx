@@ -22,13 +22,13 @@ export default function Catalog() {
 
   const [packText, setPackText] = useState("{\n  \"id\": \"llm-custom\",\n  \"version\": 1,\n  \"applies_to\": {\"engines\": [\"kind:llm\"]},\n  \"steps\": [{\"type\": \"load\"}, {\"type\": \"invoke\", \"dataset\": \"rt\", \"params\": {\"max_tokens\": 64}}, {\"type\": \"assert\", \"over\": [\"responses\"]}]\n}");
   const [msg, setMsg] = useState("");
-  const savePack = async () => { setMsg("сохранение…"); try { await api("/v4/testpacks", { method: "POST", body: JSON.stringify({ pack: JSON.parse(packText) }) }); setMsg("пакет сохранён"); packs.refetch(); } catch (e) { setMsg("ERR " + String((e as any)?.message || e)); } };
+  const savePack = async () => { setMsg(t("common.saving")); try { await api("/v4/testpacks", { method: "POST", body: JSON.stringify({ pack: JSON.parse(packText) }) }); setMsg(t("cat.packSaved")); packs.refetch(); } catch (e) { setMsg("ERR " + String((e as any)?.message || e)); } };
   const activate = async (ver: string) => { try { await api("/prompt-sets/activate", { method: "POST", body: JSON.stringify({ version: ver }) }); psets.refetch(); } catch (e) { alert("ERR " + String((e as any)?.message || e)); } };
   const importXlsx = async (f: File) => {
-    setMsg("импорт XLSX…");
+    setMsg(t("cat.importing"));
     const b64 = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.readAsDataURL(f); });
     try { const r = await api<any>("/prompt-sets", { method: "POST", body: JSON.stringify({ name: f.name, content_b64: b64 }) });
-      setMsg(`набор ${r.version || ""} ${r.warnings ? "· " + r.warnings.length + " предупр." : ""}`); psets.refetch(); }
+      setMsg(`${r.version || ""} ${r.warnings ? "· " + r.warnings.length + " " + t("cat.warningsShort") : ""}`); psets.refetch(); }
     catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
 
@@ -49,7 +49,7 @@ export default function Catalog() {
               <Td>{(p.applies_to?.artifact_kinds || []).join(", ") || "—"}</Td><Td>{(p.applies_to?.engines || []).join(", ") || "—"}</Td></tr>))}
           </Table>}
         <div style={{ marginTop: 10 }}>
-          <div style={{ color: "var(--fg-soft)" }}>Новый/обновить пакет (JSON):</div>
+          <div style={{ color: "var(--fg-soft)" }}>{t("cat.newPack")}</div>
           <textarea value={packText} onChange={(e) => setPackText(e.target.value)} spellCheck={false} style={{ ...inp, width: "100%", height: 180, fontFamily: "var(--mono)" }} />
           <div style={{ marginTop: 6 }}><button onClick={savePack} style={btn}>{t("cat.save")}</button> <span style={{ color: "var(--fg-soft)" }}>{msg}</span></div>
         </div>

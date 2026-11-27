@@ -24,10 +24,10 @@ export default function App() {
           <Route path="runs" element={<Runs />} />
           <Route path="runs/:id" element={<RunDetail />} />
           <Route path="compare" element={<Compare />} />
-          <Route path="findings" element={<Stub title="Находки" phase="Ф2" />} />
+          <Route path="findings" element={<Stub titleKey="nav.findings" phase="Ф2" />} />
           <Route path="policies" element={<Policies />} />
           <Route path="catalog" element={<Catalog />} />
-          <Route path="gate" element={<Stub title="Гейт и интеграции" phase="Ф6" />} />
+          <Route path="gate" element={<Stub titleKey="nav.gate" phase="Ф6" />} />
           <Route path="admin" element={<Admin />} />
         </Route>
       </Routes>

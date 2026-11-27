@@ -29,12 +29,12 @@ export default function RunDetail() {
 
   if (kind === "scan") {
     const r = ((runsAll.data?.runs as any[]) || []).find((x) => x.id === id);
-    return (<Card title={`Скан ${id}`} right={<Link to="/runs">← {t("nav.runs")}</Link>}>
+    return (<Card title={`${t("run.scan")} ${id}`} right={<Link to="/runs">← {t("nav.runs")}</Link>}>
       {!runsAll.isSuccess ? <EmptyState text="…" />
         : !r ? <EmptyState text={t("common.empty")} />
         : <div>
           <div style={{ marginBottom: 8 }}><b>{r.model || id}</b> · <StatusChip status={r.status} stage={r.stage} /> · <VerdictBadge verdict={r.verdict} /></div>
-          <div style={{ color: "var(--fg-soft)" }}>Детали скана — в legacy: <a href={`/legacy/artifact/${encodeURIComponent(r.model_sha256 || "")}`}>открыть</a></div>
+          <div style={{ color: "var(--fg-soft)" }}>{t("run.legacyDetails")} <a href={`/legacy/artifact/${encodeURIComponent(r.model_sha256 || "")}`}>{t("run.open")}</a></div>
         </div>}
     </Card>);
   }
@@ -69,7 +69,7 @@ export default function RunDetail() {
         <span>{test.gpu ? "GPU" : ""}</span>
       </div>
 
-      <Card title="Статус">
+      <Card title={t("run.statusCard")}>
         {bundle.isError ? <ErrorState error={bundle.error} onRetry={() => bundle.refetch()} />
           : <div>
             <StatusChip status={test.status || "—"} stage={test.stage || ""} />
@@ -85,10 +85,10 @@ export default function RunDetail() {
 
       {tab === "summary" && (
         <Card title={t("run.tab.summary")}>
-          <div style={{ marginBottom: 8 }}>Вердикт: <b><VerdictBadge verdict={v.verdict} /></b> · действие: <b>{v.action || "—"}</b>
-            {m.manual ? <b style={{ color: "var(--warn)" }}> (ручной: {m.auto_verdict} → {v.verdict}, {m.reviewed_by})</b> : null}</div>
-          <div style={{ color: "var(--fg-soft)", marginBottom: 8 }}>Политика: {pol.id || "default"}@{pol.version} · набор {b.prompt_set || s.prompt_set || "—"} · аттестация <code>{(v.attestation_digest || "").slice(0, 20)}…</code></div>
-          <div style={{ marginBottom: 8 }}>Итог: passed {s.passed ?? m.passed ?? "—"} / {s.total ?? m.total ?? "—"} · safety_fail {s.safety_fail ?? m.safety_fail ?? "—"} · pass_rate {s.pass_rate ?? m.pass_rate ?? "—"}</div>
+          <div style={{ marginBottom: 8 }}>{t("run.verdict")}: <b><VerdictBadge verdict={v.verdict} /></b> · {t("run.action")}: <b>{v.action || "—"}</b>
+            {m.manual ? <b style={{ color: "var(--warn)" }}> ({t("run.manualMark")}: {m.auto_verdict} → {v.verdict}, {m.reviewed_by})</b> : null}</div>
+          <div style={{ color: "var(--fg-soft)", marginBottom: 8 }}>{t("run.policyLabel")}: {pol.id || "default"}@{pol.version} · {t("run.promptSetLabel")} {b.prompt_set || s.prompt_set || "—"} · {t("run.attestation")} <code>{(v.attestation_digest || "").slice(0, 20)}…</code></div>
+          <div style={{ marginBottom: 8 }}>{t("run.result")}: passed {s.passed ?? m.passed ?? "—"} / {s.total ?? m.total ?? "—"} · safety_fail {s.safety_fail ?? m.safety_fail ?? "—"} · pass_rate {s.pass_rate ?? m.pass_rate ?? "—"}</div>
           {Object.keys(bc).length ? <Table head={[t("col.criticality"), "total", t("col.passed"), "pass_rate"]}>
             {Object.keys(bc).sort().map((k) => (<tr key={k}><Td>{k}</Td><Td>{bc[k].total ?? ""}</Td><Td>{bc[k].passed ?? ""}</Td><Td>{bc[k].pass_rate ?? ""}</Td></tr>))}
           </Table> : <EmptyState text={t("common.empty")} />}
@@ -98,12 +98,12 @@ export default function RunDetail() {
         <Card title={`${t("run.tab.cases")} (${cases.length})`} right={
           <span><label style={{ marginRight: 10 }}><input type="checkbox" checked={onlyFailed} onChange={(e) => setOnlyFailed(e.target.checked)} /> {t("run.onlyfailed")}</label>
             <button onClick={exportCsv} style={{ background: "var(--bg-soft)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: 6, padding: "5px 10px" }}>{t("run.export")}</button></span>}>
-          {!cases.length ? <EmptyState text="Нет кейсов: прогон не дал ответов (сбой/отменён) или ещё не выполнен." />
+          {!cases.length ? <EmptyState text={t("run.noCases")} />
             : <div style={{ maxHeight: 520, overflow: "auto" }}>
               <Table head={["id", t("col.criticality"), t("col.passed"), t("col.flags"), t("col.question"), t("col.answer")]}>
                 {shown.map((c) => { const det = (c.detail || [])[0] || {};
                   return (<tr key={c.id} style={c.passed ? undefined : { background: "color-mix(in srgb, var(--err) 12%, transparent)" }}>
-                    <Td>{c.id}</Td><Td>{c.criticality}</Td><Td style={{ color: c.passed ? "var(--ok)" : "var(--err)", fontWeight: 600 }}>{c.passed ? "да" : "нет"}</Td>
+                    <Td>{c.id}</Td><Td>{c.criticality}</Td><Td style={{ color: c.passed ? "var(--ok)" : "var(--err)", fontWeight: 600 }}>{c.passed ? t("common.yes") : t("common.no")}</Td>
                     <Td>{(det.details || []).join(", ")}{det.judge_score != null ? ` · judge=${det.judge_score}` : ""}</Td>
                     <Td><div style={{ maxWidth: 340, whiteSpace: "pre-wrap" }}>{(c.prompt || "").slice(0, 300)}</div></Td>
                     <Td><div style={{ maxWidth: 460, whiteSpace: "pre-wrap" }}>{(((c.answers || [])[0]) || "—").slice(0, 600)}</div></Td>
@@ -114,7 +114,7 @@ export default function RunDetail() {
       {tab === "obs" && (
         <Card title={t("run.tab.obs")}>
           {!findings.length ? <EmptyState text={t("common.empty")} />
-            : <Table head={["rule", "severity", "фаза", "кол-во", "пример"]}>
+            : <Table head={["rule", "severity", t("run.phase"), t("run.count"), t("run.example")]}>
               {findings.map((f, i) => (<tr key={i}><Td>{f.check_id}</Td><Td><SeverityTag sev={f.severity} /></Td><Td>{f.phase}</Td><Td>{f.count}</Td>
                 <Td>{(f.samples || []).join(" | ").slice(0, 160)}</Td></tr>))}
             </Table>}
@@ -122,7 +122,7 @@ export default function RunDetail() {
 
       {tab === "evidence" && (
         <Card title={t("run.tab.evidence")} right={<a download={`${id}.statement.json`} href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(v.statement || {}, null, 2))}`}>download</a>}>
-          <div style={{ color: "var(--fg-soft)", marginBottom: 6 }}>digest <code>{v.attestation_digest}</code> · подпись <code>{(v.signature || "").slice(0, 24)}…</code></div>
+          <div style={{ color: "var(--fg-soft)", marginBottom: 6 }}>digest <code>{v.attestation_digest}</code> · {t("run.signature")} <code>{(v.signature || "").slice(0, 24)}…</code></div>
           <pre style={{ maxHeight: 420, overflow: "auto", background: "var(--bg-soft)", padding: 12, borderRadius: 8 }}>{JSON.stringify(v.statement || {}, null, 2)}</pre>
         </Card>)}
 
@@ -137,10 +137,10 @@ function ReviewForm({ id, onDone }: { id: string; onDone: () => void }) {
   const [reason, setReason] = useState("");
   const [msg, setMsg] = useState("");
   const apply = async () => {
-    setMsg("отправка…");
+    setMsg(t("common.sending"));
     try {
       const r = await api<any>(`/bundles/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify({ verdict, reason }) });
-      setMsg(`применено: ${r.verdict} / ${r.action}`); onDone();
+      setMsg(`${t("common.applied")}: ${r.verdict} / ${r.action}`); onDone();
     } catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
   return (
