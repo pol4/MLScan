@@ -521,15 +521,16 @@ The **node** has internet; **pod** egress is restricted by our NetworkPolicy (`m
 unreachable from pods, but **image pulls are done by kubelet** (outside policies) — that is how the llama.cpp
 image was obtained. Kata guest kernel is **without BTF** by default (host kernel has BTF).
 
-### GPU (проверено)
-- На узле: **2× Quadro RTX 4000 (8 ГБ)** + GTX 1050 (драйвер 580.178, toolkit 1.20.1).
-- Инференс на GPU работает через `runtimeClassName: nvidia` + hostPath `/dev`; образ llama.cpp **CUDA**
-  (`server-cuda`, `-ngl 99`) выдаёт ответы на RTX 4000 (подтверждено `nvidia-smi`).
-- E2E: 10 случайных вопросов заказчика на GPU — `passed=6/10`, `~23.9 tok/s` (`tests/e2e/llama_cpp_gpu_e2e.sh`).
-- `nvidia.com/gpu` **включён**: официальный `nvidia/k8s-device-plugin` v0.17.0 собран из исходников (kaniko) и
-  опубликован в локальный реестр; pod’ы получают GPU через `resources.limits."nvidia.com/gpu"` + `runtimeClassName: nvidia`.
-- **MIG** на этих GPU не поддерживается (`mig.mode.current=[N/A]`; нужны A100/A30/H100).
-- **Две карты**: `nvidia.com/gpu=2` (обе RTX 4000); проверены (A) запуск небольшой модели на **второй** карте
-  и (B) **двухкарточный** инференс 3B-модели (`--tensor-split 1,1`) — обе карты заняты (nvidia-smi 40–45%,
-  ~1.1–1.3 ГБ), 10 вопросов `passed=10/10`.
+### GPU (verified)
+- On the node: **2× Quadro RTX 4000 (8 GB)** + GTX 1050 (driver 580.178, toolkit 1.20.1).
+- GPU inference works via `runtimeClassName: nvidia` + hostPath `/dev`; the **CUDA** llama.cpp image
+  (`server-cuda`, `-ngl 99`) answers on the RTX 4000 (confirmed with `nvidia-smi`).
+- E2E: 10 random customer questions on GPU — `passed=6/10`, `~23.9 tok/s` (`tests/e2e/llama_cpp_gpu_e2e.sh`).
+- `nvidia.com/gpu` is **enabled**: the official `nvidia/k8s-device-plugin` v0.17.0 was built from source
+  (kaniko) and published to the local registry; pods get a GPU via `resources.limits."nvidia.com/gpu"` +
+  `runtimeClassName: nvidia`.
+- **MIG** is not supported on these GPUs (`mig.mode.current=[N/A]`; needs A100/A30/H100).
+- **Two cards**: `nvidia.com/gpu=2` (both RTX 4000); verified (A) running a small model on the **second**
+  card and (B) **dual-card** inference of a 3B model (`--tensor-split 1,1`) — both cards busy (nvidia-smi
+  40–45%, ~1.1–1.3 GB), 10 questions `passed=10/10`.
 - Operator guide (model verification: scenarios, data requirements, result interpretation) — [`Arch_v3/en/20-operator-guide.md`](Arch_v3/en/20-operator-guide.md)
