@@ -8,12 +8,15 @@
 
 ```bash
 kubectl -n t-mlscan-app port-forward svc/mlscan-analytics 18080:8080 &
-cd web && node scripts/capture-ui.mjs http://127.0.0.1:18080
-# каталог вывода: docs/img/ui-v4 (переменная SHOT_DIR)
+cd web && node scripts/capture-ui.mjs http://127.0.0.1:18080            # русская локаль → docs/img/ui-v4
+SHOT_LANG=en node scripts/capture-ui.mjs http://127.0.0.1:18080        # английская  → docs/img/ui-v4/en
+# каталог вывода можно переопределить переменной SHOT_DIR
 ```
 
 Сервис доверяет заголовкам oauth2-proxy `X-Forwarded-User`/`X-Forwarded-Groups` (в скрипте — `admin`/
 `mlscan-admins`).
+
+Англоязычная локаль — подкаталог [`en/`](en/) (те же имена файлов; `SHOT_LANG=en`).
 
 | Файл | Экран |
 |------|-------|

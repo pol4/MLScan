@@ -48,6 +48,7 @@ What **v4** adds (current):
   all workloads (`testing`/`analytics`/`integrations`/`ops`) and the GC cron are pinned by digest.
 
 Live screenshots of the new UI (`/app`) are in [`docs/img/ui-v4/`](docs/img/ui-v4/README.md)
+(English locale — [`docs/img/ui-v4/en/`](docs/img/ui-v4/en); RU — [`docs/img/ui-v4/`](docs/img/ui-v4/README.md))
 (overview, runs, run detail, compare, policies, catalog, onboarding, admin); captured from the running
 stand via `web/scripts/capture-ui.mjs`. The legacy UI (v3) remains at `/legacy`.
 
@@ -335,18 +336,19 @@ UI (v3) is kept at `/legacy`.
 ### New UI (v4) — Vite/React under `/app`
 
 Task-oriented navigation: **Overview · Models · Upload · Runs · Compare · Findings · Policies · Catalog ·
-Gate · Admin**. Live screenshots (captured from the running stand with `web/scripts/capture-ui.mjs`) are
-in [`docs/img/ui-v4/`](docs/img/ui-v4/README.md):
+Gate · Admin**. Live screenshots in **English locale** (captured from the running stand with
+`web/scripts/capture-ui.mjs`, `SHOT_LANG=en`) are in
+[`docs/img/ui-v4/en/`](docs/img/ui-v4/en) (Russian-locale set — [`docs/img/ui-v4/`](docs/img/ui-v4/README.md)):
 
-![v4 — Overview](docs/img/ui-v4/01-overview.png)
+![v4 — Overview](docs/img/ui-v4/en/01-overview.png)
 
-![v4 — Runs](docs/img/ui-v4/03-runs.png)
+![v4 — Runs](docs/img/ui-v4/en/03-runs.png)
 
-![v4 — Run detail](docs/img/ui-v4/04-run-detail.png)
+![v4 — Run detail](docs/img/ui-v4/en/04-run-detail.png)
 
-![v4 — Compare & trends](docs/img/ui-v4/05-compare.png)
+![v4 — Compare & trends](docs/img/ui-v4/en/05-compare.png)
 
-![v4 — Admin (judge model + legacy ops)](docs/img/ui-v4/09-admin.png)
+![v4 — Admin (judge model + legacy ops)](docs/img/ui-v4/en/09-admin.png)
 
 ### Legacy UI (v3, `/legacy`)
 
