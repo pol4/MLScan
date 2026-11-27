@@ -44,7 +44,7 @@ What **v4** adds (current):
   Overview · Models · Runs (run detail: summary/Q&A cases/observation/evidence/logs/review) · Compare ·
   Policies · Catalog · Admin; the legacy UI is kept under `/legacy`. The static bundle is built inside the
   image (multi-stage) and served by the analytics BFF behind oauth2-proxy (`MLSCAN_KEY` never reaches the browser).
-- Current services image — `harbor.platform.rtx.local/mlscan/services@sha256:3e503733…16c48191b` (`web13`):
+- Current services image — `harbor.platform.rtx.local/mlscan/services@sha256:0affdb50…a4abd6cac` (`web14`):
   all workloads (`testing`/`analytics`/`integrations`/`ops`) and the GC cron are pinned by digest.
 
 Live screenshots of the new UI (`/app`) are in [`docs/img/ui-v4/`](docs/img/ui-v4/README.md)
