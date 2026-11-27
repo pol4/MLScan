@@ -46,7 +46,7 @@
   Обзор · Модели · Проверки (Run detail: сводка/кейсы Q&A/наблюдение/доказательства/логи/ревью) · Сравнение ·
   Политики · Каталог · Админ; прежний UI сохранён в `/legacy`. Сборка статики — в образе (multi-stage),
   раздаётся BFF-сервисом analytics под oauth2-proxy (ключ `MLSCAN_KEY` в браузер не попадает).
-- Актуальный образ сервисов — `harbor.platform.rtx.local/mlscan/services@sha256:0affdb50…a4abd6cac` (`web14`):
+- Актуальный образ сервисов — `harbor.platform.rtx.local/mlscan/services@sha256:16670095…8b2933abb` (`web15`):
   все ворклоады (`testing`/`analytics`/`integrations`/`ops`) и GC-крон зафиксированы по digest.
 
 Сквозное описание процессов, sequence-диаграммы и **области наблюдения / открытые зоны и проблемы ИБ** —
