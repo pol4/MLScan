@@ -30,6 +30,23 @@ Beyond the v2 stand described below:
 - The LLM test **Job deletes itself after the verdict** (frees the GPU).
 - S3 is **Ceph RGW**; Garage removed.
 
+What **v4** adds (current):
+- **Unified Kata sandbox**: every inference engine and artifact runs inside a micro-VM (including
+  GPU-in-Kata) with mandatory traps and observation (eBPF); engines and tests are described as **data**
+  (`EngineDescriptor`, `TestPack`/`Dataset`).
+- **Managed verdict policy**: draft → **simulation with A/B diff** over a corpus → publish/versions; the
+  verdict is signed (attestation carries `policy_id@version`).
+- **Answer verification + LLM judge**: active XLSX set (726 questions), rules (mandatory refusal at
+  criticality 1, `regex`/JSON-schema/length, `disallow`) and an **LLM judge** — configurable from the UI
+  (`GET/POST /v4/judge`), applied during scoring (`judge_score`, `judge_min` threshold); judge provenance
+  (`engine/model/template_sha256`) is recorded in the verdict (`metrics.judge`/`versions.judge`).
+- **New UI (Ф0–Ф7)**: **Vite + React + TypeScript** under `/app` (TanStack Query/Table, SSE, Monaco) with
+  Overview · Models · Runs (run detail: summary/Q&A cases/observation/evidence/logs/review) · Compare ·
+  Policies · Catalog · Admin; the legacy UI is kept under `/legacy`. The static bundle is built inside the
+  image (multi-stage) and served by the analytics BFF behind oauth2-proxy (`MLSCAN_KEY` never reaches the browser).
+- Current services image — `harbor.platform.rtx.local/mlscan/services@sha256:f61cf934…b8ccff09` (`web10`):
+  all workloads (`testing`/`analytics`/`integrations`/`ops`) and the GC cron are pinned by digest.
+
 End-to-end processes, sequence diagrams and the **observation scope / open gaps** —
 [`CrossProcess_overview.md`](CrossProcess_overview.md) (RU). Deployment status and procedures —
 [`deploy/tenant/STATUS.md`](deploy/tenant/STATUS.md) (RU).

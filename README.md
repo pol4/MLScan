@@ -32,6 +32,23 @@
   карточке артефакта.
 - S3 — **Ceph RGW**; Garage выведен; oauth2-proxy устойчив к временной недоступности Keycloak.
 
+Что сделано в **v4** (актуально):
+- **Унифицированная Kata-песочница**: все движки инференса и артефакты исполняются внутри микро-ВМ
+  (включая GPU-в-Kata) с обязательными ловушками и наблюдением (eBPF); движки и тесты описаны **данными**
+  (`EngineDescriptor`, `TestPack`/`Dataset`).
+- **Управляемая политика вердикта**: черновик → **симуляция с A/B-diff** на корпусе → публикация/версии;
+  вердикт подписывается (аттестация с `policy_id@version`).
+- **Проверка ответов + модель-судья**: активный набор XLSX (726 вопросов), правила (обязательный отказ на
+  критичности 1, `regex`/JSON-схема/длина, `disallow`) и **LLM-judge** — включается из UI (`GET/POST /v4/judge`),
+  применяется в скоринге (`judge_score`, порог `judge_min`), провенанс судьи (`engine/model/template_sha256`)
+  фиксируется в вердикте (`metrics.judge`/`versions.judge`).
+- **Новый UI (Ф0–Ф7)**: **Vite + React + TypeScript** под `/app` (TanStack Query/Table, SSE, Monaco), разделы
+  Обзор · Модели · Проверки (Run detail: сводка/кейсы Q&A/наблюдение/доказательства/логи/ревью) · Сравнение ·
+  Политики · Каталог · Админ; прежний UI сохранён в `/legacy`. Сборка статики — в образе (multi-stage),
+  раздаётся BFF-сервисом analytics под oauth2-proxy (ключ `MLSCAN_KEY` в браузер не попадает).
+- Актуальный образ сервисов — `harbor.platform.rtx.local/mlscan/services@sha256:f61cf934…b8ccff09` (`web10`):
+  все ворклоады (`testing`/`analytics`/`integrations`/`ops`) и GC-крон зафиксированы по digest.
+
 Сквозное описание процессов, sequence-диаграммы и **области наблюдения / открытые зоны и проблемы ИБ** —
 [`CrossProcess_overview.md`](CrossProcess_overview.md). Статус развёртывания и процедуры —
 [`deploy/tenant/STATUS.md`](deploy/tenant/STATUS.md).
