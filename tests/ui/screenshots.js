@@ -17,7 +17,7 @@ const puppeteer = require('puppeteer-core');
 const BASE = process.env.MLSCAN_UI_URL || 'http://127.0.0.1:18081';
 const USER = process.env.MLSCAN_UI_USER || 'platformadmin';
 const GROUPS = process.env.MLSCAN_UI_GROUPS || 'mlscan-admins';
-const OUT = process.env.MLSCAN_SHOT_DIR || path.join(__dirname, '..', '..', 'docs', 'img', 'ui-e2e');
+const OUT = process.env.MLSCAN_SHOT_DIR || path.join(__dirname, '..', '..', 'docs', 'img', 'ui-legacy');
 
 function chrome() {
   if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH;

@@ -76,19 +76,13 @@ flowchart LR
 
 ---
 
-### 2.6 Экраны (эскизы) и скриншоты
+### 2.6 Экраны
 
-Ниже — эскизы экранов (wireframes) по разделам. Они показывают структуру и элементы управления;
-**реальные скриншоты** кладутся в каталог [`screenshots/`](screenshots/README.md) под именами
-`ui-scans.png`, `ui-artifact-detail.png`, `ui-upload.png`, `ui-settings.png`, `ui-admin.png`
-(список и инструкция по съёмке — в `screenshots/README.md`). Эскиз заменяется картинкой:
-
-`![Сканы](screenshots/ui-scans.png)` — «Раздел „Сканы“ и карточка артефакта».
+Живые скриншоты реализованного UI — в [`docs/img/ui-v4/`](../../docs/img/ui-v4/README.md) (новый UI
+`/app`) и по доступу `/legacy` (прежний UI). Ниже — структура разделов; макеты концепта — в
+[`screenshots/`](screenshots/README.md).
 
 #### Сканы
-![Сканы](screenshots/ui-scans.png)
-
-![Карточка артефакта](screenshots/ui-artifact-detail.png)
 
 ```mermaid
 flowchart LR
@@ -100,7 +94,6 @@ flowchart LR
 ```
 
 #### Загрузка
-![Загрузка](screenshots/ui-upload.png)
 
 ```mermaid
 flowchart TB
@@ -112,7 +105,6 @@ flowchart TB
 ```
 
 #### Настройки
-![Настройки](screenshots/ui-settings.png)
 
 ```mermaid
 flowchart LR
@@ -122,7 +114,6 @@ flowchart LR
 ```
 
 #### Администрирование
-![Администрирование](screenshots/ui-admin.png)
 
 ```mermaid
 flowchart TB
@@ -143,8 +134,6 @@ flowchart TB
   BD["Связки: движок, TestPack, политика, аттестация"] --> C
   RT["Запустить тест: движок, запуск, стадии, причина ошибки"] --> C
 ```
-
-_(Эскизы — для структуры; **заменить на реальные скриншоты** из `screenshots/`.)_
 
 ### 2.7 Карточка проверки (любой скан/тест) и ручной вердикт
 
@@ -210,10 +199,6 @@ flowchart TD
 (или терминальный `failed` с причиной из лога, приоритет — строка про OOM/память). Опрос статуса
 идёт до терминального состояния. Неуспешные прогоны **персистятся** (`status='failed'`, `error`) —
 см. [`03`](03-test-framework.md) §11.
-
-![Стадии bundle-теста и результат](screenshots/ui-bundle-stage.png)
-
-![Кэш моделей](screenshots/ui-model-cache.png)
 
 ---
 
@@ -318,8 +303,6 @@ ESO/Vault; **ConfigMaps** `mlscan-policy`, `mlscan-s3client`, `platform-ca`, `de
   кейсов) → публикация**. Публикация версионируется и подписывается; в вердикт вкладываются
   `policy_id/policy_version/policy_sig` (в UI «Связки» — колонка «Политика», в подписанной
   аттестации — `statement.predicate.versions`).
-
-![Редактор политики вердикта](screenshots/ui-policy-editor.png)
 
 ---
 

@@ -8,5 +8,8 @@ report.md
 report*.md
 attestation.txt
 
+# генерируемые скриншоты прежнего UI (снимаются локально; галерея — docs/img/ui-v4)
+docs/img/ui-legacy/
+
 # локальные бэкапы стенда (секреты/образы — вне git)
 backup/

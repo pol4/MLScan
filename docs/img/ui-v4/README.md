@@ -27,5 +27,6 @@ cd web && node scripts/capture-ui.mjs http://127.0.0.1:18080
 | `08-onboarding.png` | Онбординг: HF/локально, движок, план, авто-GPU |
 | `09-admin.png` | Администрирование: модель-судья, HF-токен, домены, квоты, rate-limit, sync, подпись движка |
 
-Прежний UI (v3) сохранён по `/legacy`; его снимки — в [`../ui-e2e/`](../ui-e2e/). Концепт/макеты —
+Прежний UI (v3) сохранён по `/legacy` (снимки не хранятся в репозитории; снимаются скриптом
+`tests/ui/screenshots.js` в `docs/img/ui-legacy/`, вне git). Концепт/макеты —
 в [`Arch_v4/screenshots/`](../../../Arch_v4/screenshots/README.md).

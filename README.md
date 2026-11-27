@@ -361,68 +361,13 @@ HF-токен, `domain→class`, квоты HF, rate-limit, sync, подпись
 
 ### Прежний UI (v3, `/legacy`)
 
-Разделы: **Сканы · Загрузка · История операций · Настройки · Администрирование** (снимки сделаны
-`tests/ui/screenshots.js`).
-
-**Сканы** — список проверенных артефактов с вердиктами (в т.ч. `Inconclusive` при неполной
-проверке), фильтрами и статистикой по вердиктам/объёму; виден движок инференса:
-
-![MLScan UI — список сканов](docs/img/ui-e2e/01-scans.png)
-
-**Карточка артефакта (LLM + инференс)** — `Qwen3-1.7B`, формат safetensors: покрытие
-(статика/динамика/поведение), находки, сенсор и раздел **«Связи»** — по одному вердикту на каждый
-движок (**bundle**) с аттестацией: `engine-sglang:v0.5.9 → Needs review`, `engine-vllm:v0.9.2`:
-
-![MLScan UI — карточка артефакта с инференсом](docs/img/ui-e2e/02-artifact-card.png)
-
-**Загрузка — Модели** (локальные артефакты, в т.ч. большие; формат определяется по расширению):
-
-![MLScan UI — загрузка моделей](docs/img/ui-e2e/03-upload-models.png)
-
-**Загрузка — Тест bundle** (прогон набора вопросов на выбранном движке инференса):
-
-![MLScan UI — тест bundle](docs/img/ui-e2e/04-upload-bundletest.png)
-
-**Загрузка — Движки инференса** (реестр образов движков по digest, подпись/SBOM):
-
-![MLScan UI — движки инференса](docs/img/ui-e2e/05-upload-engines.png)
-
-**Загрузка — Модель с HF** — фоновые загрузки с докачкой; для vLLM/SGLang скачивается **весь
-каталог** модели; прогресс, статус и вердикт по каждой загрузке:
-
-![MLScan UI — модель с HF](docs/img/ui-e2e/06-upload-hf.png)
-
-**История операций** — журнал действий и загрузок:
-
-![MLScan UI — история операций](docs/img/ui-e2e/07-operations.png)
-
-**Настройки** — язык системы и параметры:
-
-![MLScan UI — настройки](docs/img/ui-e2e/08-settings.png)
-
-**Администрирование** — активный набор вопросов и его размер (`вопросов 726`), сопоставление
-`домен → класс policy` (`auto/overrides`), импорт XLSX, rate-limit, квоты HF/egress, проверка
-цепочки вердиктов:
-
-![MLScan UI — администрирование](docs/img/ui-e2e/09-admin.png)
-
-> **Архив (v2-стенд, прежний UI).** Снимки ниже — с прежней установки (`analytics.mlscan.local`);
-> сохранены как иллюстрация классических карточек **не-LLM** артефактов: вход/сессия, дашборд,
-> неполная проверка (`Inconclusive`), крупная torch-модель и model-as-code (`.mar`).
-
-![MLScan UI — вход (v2)](docs/img/ui-login.png)
-
-![MLScan UI — дашборд (v2)](docs/img/ui-dashboard.png)
-
-![MLScan UI — неполная проверка (v2)](docs/img/ui-incomplete-scan.png)
-
-![MLScan UI — карточка torch-модели (v2)](docs/img/ui-torch-large.png)
-
-![MLScan UI — карточка формата .mar (v2)](docs/img/ui-format-artifact.png)
+Прежний интерфейс (разделы **Сканы · Загрузка · История операций · Настройки · Администрирование**)
+доступен по `/legacy` — сохранён до полного паритета новых экранов. Снапшоты этого UI не дублируются в
+документации: актуальная галерея — снимки нового UI выше.
 
 **Снять свои снимки:** новый UI — `cd web && node scripts/capture-ui.mjs http://127.0.0.1:18080`
-(port-forward к `mlscan-analytics`); прежний UI — `bash tests/ui/run_ui_tests.sh` или
-`MLSCAN_UI_URL=http://127.0.0.1:18081 node tests/ui/screenshots.js` (сервис доверяет заголовкам
+(port-forward к `mlscan-analytics`); прежний UI — `MLSCAN_UI_URL=http://127.0.0.1:18081 node
+tests/ui/screenshots.js` (пишет в `docs/img/ui-legacy/`, вне git; сервис доверяет заголовкам
 oauth2-proxy `X-Forwarded-User/Groups`).
 
 ---

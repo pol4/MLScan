@@ -329,97 +329,34 @@ TPR=1.0, FPR=0.0. A quick corpus run against a deployed stand is
 ## Screenshots (UI)
 
 Current stand: UI behind **Keycloak (OIDC)** — `https://mlscan.platform.rtx.local` (roles come from
-Keycloak groups, e.g. `mlscan-admins` → `admin`). Sections: **Scans · Upload · Operations history ·
-Settings · Administration**. UI is localized RU/EN; the fresh screenshots below are RU-locale
-(taken with `tests/ui/screenshots.js` against the live tenant).
+Keycloak groups, e.g. `mlscan-admins` → `admin`). The **new UI (v4)** lives under `/app`; the legacy
+UI (v3) is kept at `/legacy`.
 
-![MLScan UI — scans](docs/img/ui-e2e/01-scans.png)
+### New UI (v4) — Vite/React under `/app`
 
-**Artifact card (LLM + inference)** — `Qwen3-1.7B`: coverage (static/dynamic/behaviour), findings,
-sensor, and **Bindings** — one verdict per engine (**bundle**) with attestation
-(`engine-sglang:v0.5.9 → Needs review`, `engine-vllm:v0.9.2`):
+Task-oriented navigation: **Overview · Models · Upload · Runs · Compare · Findings · Policies · Catalog ·
+Gate · Admin**. Live screenshots (captured from the running stand with `web/scripts/capture-ui.mjs`) are
+in [`docs/img/ui-v4/`](docs/img/ui-v4/README.md):
 
-![MLScan UI — artifact card](docs/img/ui-e2e/02-artifact-card.png)
+![v4 — Overview](docs/img/ui-v4/01-overview.png)
 
-**Upload — Models / Test bundle / Inference engines / Model from HF**: local artifacts, bundle test
-run, engine image registry by digest, and background HF downloads fetching the **whole model
-directory** for vLLM/SGLang:
+![v4 — Runs](docs/img/ui-v4/03-runs.png)
 
-![MLScan UI — upload models](docs/img/ui-e2e/03-upload-models.png)
+![v4 — Run detail](docs/img/ui-v4/04-run-detail.png)
 
-![MLScan UI — bundle test](docs/img/ui-e2e/04-upload-bundletest.png)
+![v4 — Compare & trends](docs/img/ui-v4/05-compare.png)
 
-![MLScan UI — inference engines](docs/img/ui-e2e/05-upload-engines.png)
+![v4 — Admin (judge model + legacy ops)](docs/img/ui-v4/09-admin.png)
 
-![MLScan UI — model from HF](docs/img/ui-e2e/06-upload-hf.png)
+### Legacy UI (v3, `/legacy`)
 
-**Operations history / Settings / Administration** (active question set size — `726 questions`,
-`domain → policy class` `auto/overrides`, XLSX import, limits):
+Sections **Scans · Upload · Operations history · Settings · Administration** remain available at
+`/legacy` until full parity; their snapshots are not duplicated in the docs.
 
-![MLScan UI — operations](docs/img/ui-e2e/07-operations.png)
-
-![MLScan UI — settings](docs/img/ui-e2e/08-settings.png)
-
-![MLScan UI — administration](docs/img/ui-e2e/09-admin.png)
-
-> **Archive (v2 stand, previous UI).** The screenshots below are from the earlier installation
-> (`analytics.mlscan.local`) and illustrate the classic **non-LLM** artifact cards.
-
-**Sign-in (v2)** — username and password (session cookie on `.mlscan.local`, single sign-on for
-analytics/ops/integrations); CI/scripts can sign in with an API key:
-
-![MLScan UI — sign in](docs/img/en/ui-login.png)
-
-**Session expired** — when a session in an open tab runs out (12 h), the UI returns to the sign-in
-screen with a notice instead of silently showing an empty table:
-
-![MLScan UI — session expired](docs/img/en/ui-login-expired.png)
-
-**Dashboard** — model upload (including large files), statistics by verdict/volume, filtering by
-name and result, sorting by date/volume, a table with SHA-256, size, scan progress, verdict, risk
-score and policy action (the current stand holds 3575 scans):
-
-![MLScan UI — dashboard](docs/img/en/ui-dashboard.png)
-
-**UI address:** `http://analytics.mlscan.local:30217` (HTTP by default; HTTPS is optional:
-`bash deploy/install.sh 3 --with-tls` -> `https://analytics.mlscan.local:30921`, self-signed
-certificate). A browser error `SSL_ERROR_RX_RECORD_TOO_LONG` means `https://` was used on HTTP port
-30217 - use `http://...:30217` or enable TLS. Add the hosts first: `/etc/hosts` ->
-`<NODE_IP> analytics.mlscan.local ops.mlscan.local integrations.mlscan.local api.mlscan.local`.
-
-**UI credentials.** Users are created by the level-3 installation: `admin` (role `admin`) and
-`analyst` (role `analyst`). The passwords are **printed by `bash deploy/install.sh 3`** and stored in
-`/tmp/mlscan-users.json`; show them later with `bash deploy/v2/auth/users.sh --show`, set or reset with
-`MLSCAN_ADMIN_PASSWORD='...' bash deploy/v2/auth/users.sh`. Re-running the installation **does not
-change** the passwords. API-key sign-in (CI/scripts) — `bash deploy/v2/auth/keys.sh`.
-
-**Settings** — the global message language of the whole system (available to the `admin` role; stored
-in the database and applied by every service to new and historical records):
-
-![MLScan UI — settings](docs/img/en/ui-settings.png)
-
-**Incomplete scan card** — a model the dynamic stage could not load (module `mymod` is missing):
-verdict **Inconclusive** instead of a false `Safe`, the banner "The scan is incomplete" and the
-partial result:
-
-![MLScan UI — incomplete scan](docs/img/en/ui-incomplete-scan.png)
-
-**Artifact card** — the largest scanned model: the torch model `pytorch_model.pt` of
-**268,470,293 bytes (≈256 MiB)**. Visible are SHA-256, size, timings (static 0.42 s / sandbox
-20.3 s), risk score 10.0, policy `block-rce → block`, findings with evidence
-(`A-01` critical `posix.system`, `A-02` high, `F-30` high `os.system(...)`) and the
-**"Dynamic stage"** section: `load: ok`, `type: dict`, `subprocess: 1` — the model was really
-loaded and the payload executed in the sandbox:
-
-![MLScan UI — artifact card (torch model ≈256 MiB)](docs/img/en/ui-torch-large.png)
-
-**Non-pickle artifact card** (`evil_mar.mar`, model-as-code): verdict **Malicious**, findings
-`EXEC-01` (critical) and `EXEC-02` (high) from the format adapter, plus dynamic confirmation
-`F-30` — the "Dynamic stage" section shows `subprocess: 1`:
-
-![MLScan UI — format artifact card](docs/img/en/ui-format-artifact.png)
-
-Russian screenshots — [`docs/img/`](./docs/img).
+**Capture your own:** new UI — `cd web && node scripts/capture-ui.mjs http://127.0.0.1:18080`
+(port-forward to `mlscan-analytics`); legacy UI —
+`MLSCAN_UI_URL=http://127.0.0.1:18081 node tests/ui/screenshots.js` (writes to `docs/img/ui-legacy/`,
+git-ignored; the service trusts the oauth2-proxy headers `X-Forwarded-User/Groups`).
 
 ---
 
