@@ -326,9 +326,43 @@ P1-8 — аудит изменений, P2).
 
 ## Скриншоты (UI)
 
-Актуальный стенд: UI за **Keycloak (OIDC)** — `https://mlscan.platform.rtx.local` (роли берутся из
-групп Keycloak, напр. `mlscan-admins` → `admin`). Разделы: **Сканы · Загрузка · История операций ·
-Настройки · Администрирование**. Снимки ниже сделаны с боевого тенанта (`tests/ui/screenshots.js`).
+Стенд: UI за **Keycloak (OIDC)** — `https://mlscan.platform.rtx.local` (роли из групп Keycloak, напр.
+`mlscan-admins` → `admin`). Снимки ниже — с боевого тенанта.
+
+### Новый UI (v4) — Vite/React под `/app`
+
+Задачная навигация: **Обзор · Модели · Загрузка · Проверки · Сравнение · Находки · Политики · Каталог ·
+Гейт · Администрирование**; прежний UI доступен по `/legacy`. Снимки сняты скриптом
+`web/scripts/capture-ui.mjs` (порт-форвард к `mlscan-analytics`; сервис доверяет заголовкам oauth2-proxy).
+Полная галерея — [`docs/img/ui-v4/`](docs/img/ui-v4/README.md).
+
+**Обзор** — KPI (артефакты/`Safe`/риск-подобные/кэш), «Требует внимания», очередь GPU, HF-загрузки,
+последние прогоны:
+
+![v4 — Обзор](docs/img/ui-v4/01-overview.png)
+
+**Проверки** — единый список сканов и bundle-тестов с фильтрами/saved views и выбором для сравнения:
+
+![v4 — Проверки](docs/img/ui-v4/03-runs.png)
+
+**Карточка прогона** — вердикт + действие, политика `id@version`, аттестация, охват; вкладки
+Сводка · Кейсы (Q&A) · Наблюдение (eBPF) · Доказательства · Логи · Ревью:
+
+![v4 — Карточка прогона](docs/img/ui-v4/04-run-detail.png)
+
+**Сравнение прогонов и тренды** — дифф кейсов и метрики (`pass_rate`, `safety_fail`) во времени:
+
+![v4 — Сравнение и тренды](docs/img/ui-v4/05-compare.png)
+
+**Администрирование** — модель-судья (движок/модель/порог/шаблон), а также операции из прежнего UI:
+HF-токен, `domain→class`, квоты HF, rate-limit, sync, подпись движка:
+
+![v4 — Администрирование](docs/img/ui-v4/09-admin.png)
+
+### Прежний UI (v3, `/legacy`)
+
+Разделы: **Сканы · Загрузка · История операций · Настройки · Администрирование** (снимки сделаны
+`tests/ui/screenshots.js`).
 
 **Сканы** — список проверенных артефактов с вердиктами (в т.ч. `Inconclusive` при неполной
 проверке), фильтрами и статистикой по вердиктам/объёму; виден движок инференса:
@@ -386,9 +420,10 @@ P1-8 — аудит изменений, P2).
 
 ![MLScan UI — карточка формата .mar (v2)](docs/img/ui-format-artifact.png)
 
-**Снять свои снимки:** `bash tests/ui/run_ui_tests.sh` или
-`MLSCAN_UI_URL=http://127.0.0.1:18081 node tests/ui/screenshots.js` (port-forward к
-`mlscan-analytics`; сервис доверяет заголовкам oauth2-proxy `X-Forwarded-User/Groups`).
+**Снять свои снимки:** новый UI — `cd web && node scripts/capture-ui.mjs http://127.0.0.1:18080`
+(port-forward к `mlscan-analytics`); прежний UI — `bash tests/ui/run_ui_tests.sh` или
+`MLSCAN_UI_URL=http://127.0.0.1:18081 node tests/ui/screenshots.js` (сервис доверяет заголовкам
+oauth2-proxy `X-Forwarded-User/Groups`).
 
 ---
 

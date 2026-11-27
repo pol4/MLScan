@@ -47,6 +47,10 @@ What **v4** adds (current):
 - Current services image — `harbor.platform.rtx.local/mlscan/services@sha256:f61cf934…b8ccff09` (`web10`):
   all workloads (`testing`/`analytics`/`integrations`/`ops`) and the GC cron are pinned by digest.
 
+Live screenshots of the new UI (`/app`) are in [`docs/img/ui-v4/`](docs/img/ui-v4/README.md)
+(overview, runs, run detail, compare, policies, catalog, onboarding, admin); captured from the running
+stand via `web/scripts/capture-ui.mjs`. The legacy UI (v3) remains at `/legacy`.
+
 End-to-end processes, sequence diagrams and the **observation scope / open gaps** —
 [`CrossProcess_overview.md`](CrossProcess_overview.md) (RU). Deployment status and procedures —
 [`deploy/tenant/STATUS.md`](deploy/tenant/STATUS.md) (RU).
