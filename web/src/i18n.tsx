@@ -143,6 +143,8 @@ const DICT: Record<string, { ru: string; en: string }> = {
   "common.chooseEngineShort": { ru: "выберите движок", en: "choose an engine" },
   "common.notCached": { ru: "нет в кэше", en: "not cached" },
   "common.found": { ru: "найдено", en: "found" },
+  "common.showMore": { ru: "Показать ещё", en: "Show more" },
+  "common.of": { ru: "из", en: "of" },
   "common.sending": { ru: "отправка…", en: "sending…" },
   "common.applied": { ru: "применено", en: "applied" },
   // Пакеты/наборы (Каталог)

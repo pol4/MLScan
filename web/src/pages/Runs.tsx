@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
-import { Card, StatusChip, VerdictBadge, Table, Td, EmptyState, ErrorState } from "../components/ui";
+import { Card, StatusChip, VerdictBadge, Table, Td, EmptyState, ErrorState, usePaged } from "../components/ui";
 import { useI18n } from "../i18n";
 
 type Run = { id: string; kind: string; model?: string; model_sha256?: string; engine?: string; status?: string;
@@ -36,6 +36,7 @@ export default function Runs() {
     if (q && !((r.model || "") + " " + (r.model_sha256 || "") + " " + (r.id || "")).toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   }), [runs, state, verdict, kind, q, attn]);
+  const vis = usePaged(filtered);
 
   const saveView = () => {
     const name = prompt(t("runs.viewName"), `${kind || "all"}/${state || "all"}/${verdict || "all"}`);
@@ -64,7 +65,7 @@ export default function Runs() {
       {runsQ.isError ? <ErrorState error={runsQ.error} onRetry={() => runsQ.refetch()} />
         : !filtered.length ? <EmptyState text={t("common.empty")} />
         : <Table head={["", t("col.name"), t("col.kind"), t("col.engine"), t("col.status"), t("col.verdict"), t("col.updated"), ""]}>
-          {filtered.map((r) => (
+          {vis.rows.map((r) => (
             <tr key={r.id + r.kind}>
               <Td>{r.kind === "bundle" ? <input type="checkbox" checked={sel.includes(r.id)} onChange={(e) => toggle(r.id, e.target.checked)} /> : null}</Td>
               <Td>{r.model || r.id}</Td>
@@ -76,6 +77,7 @@ export default function Runs() {
               <Td><Link to={`/runs/${encodeURIComponent(r.id)}?kind=${r.kind}`}>{t("run.open")}</Link></Td>
             </tr>))}
         </Table>}
+      {vis.more && <div style={{ marginTop: 8 }}><button onClick={vis.showMore} style={btn}>{t("common.showMore")} ({vis.rows.length} {t("common.of")} {vis.total})</button></div>}
     </Card>
   );
 }

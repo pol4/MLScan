@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
-import { Card, VerdictBadge, Table, Td, EmptyState, ErrorState } from "../components/ui";
+import { Card, VerdictBadge, Table, Td, EmptyState, ErrorState, usePaged } from "../components/ui";
 import { useI18n } from "../i18n";
 
 type Art = { sha256?: string; filename?: string; format?: string; size?: number; verdict?: string };
@@ -24,6 +24,7 @@ export default function Models() {
     return true;
   }), [items, q, fmt, verdict]);
   const fmts = Array.from(new Set(items.map((a) => a.format || "").filter(Boolean))).sort();
+  const vis = usePaged(filtered);
 
   return (
     <Card title={t("models.title")} right={<Link to="/onboarding">+ {t("nav.upload")}</Link>}>
@@ -37,14 +38,16 @@ export default function Models() {
       {artsQ.isError ? <ErrorState error={artsQ.error} onRetry={() => artsQ.refetch()} />
         : !filtered.length ? <EmptyState text={t("common.empty")} />
         : <Table head={[t("col.name"), t("col.format"), t("col.size"), t("col.verdict"), "sha"]}>
-          {filtered.slice(0, 200).map((a) => (
+          {vis.rows.map((a) => (
             <tr key={a.sha256}>
               <Td><Link to={`/models/${encodeURIComponent(a.sha256 || "")}`}>{a.filename || "—"}</Link></Td>
               <Td>{a.format || "—"}</Td><Td>{gb(a.size)}</Td><Td><VerdictBadge verdict={a.verdict} /></Td>
               <Td><code>{(a.sha256 || "").slice(0, 12)}…</code></Td>
             </tr>))}
         </Table>}
+      {vis.more && <div style={{ marginTop: 8 }}><button onClick={vis.showMore} style={btn}>{t("common.showMore")} ({vis.rows.length} {t("common.of")} {vis.total})</button></div>}
     </Card>
   );
 }
 const inp: React.CSSProperties = { background: "var(--bg-soft)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "7px 10px" };
+const btn: React.CSSProperties = { background: "var(--bg-soft)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "7px 12px", cursor: "pointer" };

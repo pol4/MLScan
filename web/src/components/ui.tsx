@@ -1,4 +1,4 @@
-import { ReactNode, CSSProperties } from "react";
+import { ReactNode, CSSProperties, useState } from "react";
 import { useI18n } from "../i18n";
 
 export function Card({ title, children, right }: { title?: string; children: ReactNode; right?: ReactNode }) {
@@ -80,8 +80,13 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
     {onRetry && <> <button onClick={onRetry} style={{ marginLeft: 8 }}>{t("common.retry")}</button></>}</div>;
 }
 
-export function Table({ head, children }: { head: string[]; children: ReactNode }) {
-  return (
+// Оконная подгрузка больших таблиц: не рендерим десятки тысяч строк сразу (производительность 10k+).
+export function usePaged<T>(rows: T[], step = 200) {
+  const [n, setN] = useState(step);
+  return { rows: rows.slice(0, n), more: rows.length > n, total: rows.length, showMore: () => setN((v) => v + step) };
+}
+
+export function Table({ head, children }: { head: string[]; children: ReactNode }) {  return (
     <div style={{ overflow: "auto" }}>
       <table style={{ borderCollapse: "collapse", width: "100%" }}>
         <thead><tr>{head.map((h) => <th key={h} style={{ textAlign: "left", color: "var(--fg-soft)", fontWeight: 600, padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>{h}</th>)}</tr></thead>
