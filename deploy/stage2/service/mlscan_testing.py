@@ -459,13 +459,25 @@ def _v4_digest(engine: str) -> str:
 
 
 def _v4_available_runtime_classes() -> list:
-    """Фактически доступные RuntimeClass в кластере (для честного плана v4)."""
+    """Фактически доступные RuntimeClass в кластере (для честного плана v4).
+
+    Сервисный аккаунт может не иметь RBAC на `list runtimeclasses` (403) — тогда полагаемся на
+    класс, которым сервис фактически запускает job'ы (`LLM_TEST_RUNTIME_CLASS`) и на известный
+    набор Kata-профилей, чтобы план не «деградировал» ложно (kata-gpu существует, но API недоступен).
+    """
+    names: list = []
     try:
         d = k8s("GET", "/apis/node.k8s.io/v1/runtimeclasses")
         names = [it.get("metadata", {}).get("name", "") for it in d.get("items", [])]
-        return [n for n in names if n]
     except Exception:  # noqa: BLE001
-        return ["kata"]
+        names = []
+    names = [n for n in names if n]
+    kata = set(getattr(v4ed, "KATA_CLASSES", ("kata", "kata-btf", "kata-gpu")) or ())
+    if LLM_TEST_RUNTIME_CLASS and LLM_TEST_RUNTIME_CLASS in kata and LLM_TEST_RUNTIME_CLASS not in names:
+        names.append(LLM_TEST_RUNTIME_CLASS)
+    if not names:
+        names = sorted(kata) or ["kata"]
+    return names
 
 
 def _v4_engine_descriptor_for(engine: str):
@@ -716,13 +728,16 @@ def _judge_cfg() -> dict:
 
 
 def _judge_meta(cfg: dict) -> dict:
-    """Провенанс судьи для метаданных прогона/вердикта (модель, порог, шаблон)."""
+    """Провенанс судьи для метаданных прогона/вердикта (модель, порог, шаблон, режим)."""
     cfg = cfg or {}
     tmpl = str(cfg.get("template") or "")
+    url = str(cfg.get("url") or "")
     return {"enabled": bool(cfg.get("enabled")),
             "engine": str(cfg.get("engine") or ""),
             "model": str(cfg.get("model") or ""),
             "min": float(cfg.get("min") or 0.6),
+            "mode": "external" if url else "self",
+            "url": url,
             "template_sha256": (hashlib.sha256(tmpl.encode("utf-8")).hexdigest()
                                 if tmpl else "")}
 
@@ -1505,6 +1520,7 @@ try:  # v3 (L0): классификатор LLM + binding/bundle
     import gguf as v3gguf  # noqa: E402
     import promptset as v3promptset  # noqa: E402
     import evaluators as v3evaluators  # noqa: E402
+    import bundle_check as v3bundlecheck  # noqa: E402
 except Exception:  # noqa: BLE001
     v3classifier = None  # type: ignore
     v3binding = None  # type: ignore
@@ -1513,6 +1529,7 @@ except Exception:  # noqa: BLE001
     v3gguf = None  # type: ignore
     v3promptset = None  # type: ignore
     v3evaluators = None  # type: ignore
+    v3bundlecheck = None  # type: ignore
 
 sys.path.insert(0, "/opt/v3security")
 try:  # v3 (P6/L4): per-tenant KMS — обратимое шифрование HF-токена
@@ -2485,6 +2502,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._bundle_verdict_get(u.path.split("/", 3)[2])
         if u.path.startswith("/bundles/") and u.path.endswith("/report.json"):
             return self._bundle_report_get(u.path.split("/", 3)[2])
+        if u.path.startswith("/bundles/") and u.path.endswith("/preflight"):
+            return self._bundle_preflight_get(u.path.split("/", 3)[2])
         if u.path.startswith("/bundles/"):
             return self._bundles_get(u.path.split("/", 2)[2])
         if u.path.startswith("/uploads/") and u.path.endswith("/parts"):
@@ -2988,6 +3007,13 @@ class Handler(BaseHTTPRequestHandler):
             _sc = jscores.get(key)
             _judge = (lambda *a, _s=float(_sc): float(_s)) if _sc is not None else None
             _res = v3evaluators.evaluate_case(c, answers, judge=_judge, judge_min=jmin)
+            try:      # судья vs правила (для «теста судьи на корпусе»): согласие по кейсу
+                _dets = [d for d in (_res.get("detail") or []) if isinstance(d, dict)]
+                _jv = next((d.get("judge_score") for d in _dets if d.get("judge_score") is not None), None)
+                if _jv is not None and _dets:
+                    _res["judge_agreement"] = bool((float(_jv) >= jmin) == all(bool(d.get("rule_ok")) for d in _dets))
+            except Exception:  # noqa: BLE001
+                pass
             try:      # сохраняем ответы (для ревью в UI): id/criticality/... + текст ответов
                 _res["prompt"] = (c.get("prompt") or "")[:2000]
                 _res["reference"] = (c.get("reference") or "")[:2000]
@@ -2997,6 +3023,12 @@ class Handler(BaseHTTPRequestHandler):
             results.append(_res)
         agg = v3evaluators.aggregate(results)
         agg.update({"version": ver})
+        # Согласие судьи и правил по корпусу прогона (только кейсы с оценкой судьи) — видно в UI/метриках.
+        _agr = [r for r in results if "judge_agreement" in r]
+        if _agr:
+            _agree = sum(1 for r in _agr if r["judge_agreement"])
+            agg["judge_agreement"] = {"n": len(_agr), "agree": _agree,
+                                      "rate": round(_agree / len(_agr), 4)}
         if DB_ENABLED and body.get("scan_id"):
             try:
                 db_exec("INSERT INTO llm_scores(scan_id,prompt_set,passed,total,safety_fail,pass_rate,details) "
@@ -3126,7 +3158,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self._v4_body()
         if body is None:
             return self._json(400, {"error": "bad json"})
-        cfg = {k: body.get(k) for k in ("engine", "model", "min", "template", "enabled")}
+        cfg = {k: body.get(k) for k in ("engine", "model", "min", "template", "enabled", "url")}
         if DB_ENABLED:
             db_exec("INSERT INTO settings(key,value,updated_at) VALUES ('judge_config',"
                     + _lit(json.dumps(cfg, ensure_ascii=False)) + ",now()) "
@@ -3211,6 +3243,22 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 meta = {}
         return (rows[0][0] or ""), (rows[0][1] or ""), meta
+
+
+    def _bundle_preflight(self, engine: str, model_sha: str) -> dict:
+        """Пред-проверка bundle до запуска: артефакт есть и пригоден для движка (fail-fast).
+
+        Ловит заведомо неисправные bundle до создания job'а (артефакт отсутствует либо dir-манифест
+        неполный: нет `config.json`/весов). Совместимость архитектуры модели с версией движка
+        проверяется уже самим движком при загрузке (ошибка прогона видна в UI).
+        """
+        sha = (model_sha or "").lower()
+        key, _fname, meta = self._bundle_model_key(sha) if sha else ("", "", {})
+        if v3bundlecheck is None:
+            return {"ok": True, "reasons": [], "info": {"skipped": "bundle_check unavailable"}}
+        reasons, info = v3bundlecheck.preflight_manifest(
+            engine, sha, engine_ok=(self._engine_ok(engine) if sha else False), key=key, meta=meta)
+        return {"ok": not reasons, "reasons": reasons, "info": info}
 
     def _prompt_cases(self, prompt_set: str, limit: int = 0) -> tuple[list, str]:
         """Кейсы набора вопросов для job'а теста: (кейсы, фактическая версия набора).
@@ -3304,6 +3352,10 @@ class Handler(BaseHTTPRequestHandler):
                                              "Используйте vLLM или образ engine-sglang-*-sm75."})
         if not self._engine_ok(engine):
             return self._json(400, {"error": "движок bundle не найден в registry_images"})
+        _pf = self._bundle_preflight(engine, model_sha)
+        if not _pf["ok"]:
+            return self._json(409, {"error": "bundle не прошёл предполётную проверку",
+                                    "details": _pf["reasons"], "preflight": _pf})
         key, fname, meta = self._bundle_model_key(model_sha)
         if not key:
             return self._json(409, {"error": "модель bundle не найдена в хранилище (загрузите её через UI)",
@@ -5219,6 +5271,10 @@ class Handler(BaseHTTPRequestHandler):
         ok, why = v3binding.validate_bundle(b)
         if not ok:
             return self._json(400, {"error": why})
+        _pf = self._bundle_preflight(eng, b.get("model_sha256") or "")
+        if not _pf["ok"]:
+            return self._json(400, {"error": "bundle не прошёл проверку артефакта",
+                                    "details": _pf["reasons"], "preflight": _pf})
         if DB_ENABLED:
             try:
                 db_exec("INSERT INTO bundles(bundle_id,engine_image,model_sha256,engine_manifest,"
@@ -5230,6 +5286,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 return self._json(502, {"error": f"db: {type(exc).__name__}: {exc}"})
         return self._json(201, b)
+
+    def _bundle_preflight_get(self, bundle_id: str) -> None:
+        """GET /bundles/<id>/preflight — предполётная проверка bundle (артефакт/совместимость)."""
+        if not DB_ENABLED:
+            return self._json(503, {"error": "db disabled"})
+        rows = db_query("SELECT engine_image,model_sha256 FROM bundles WHERE bundle_id=" + _lit(bundle_id))
+        if not rows:
+            return self._json(404, {"error": "bundle not found"})
+        return self._json(200, dict(self._bundle_preflight(rows[0][0], rows[0][1]), bundle_id=bundle_id))
 
     def _bundles_list(self, q: dict) -> None:
         if not DB_ENABLED:

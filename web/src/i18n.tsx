@@ -98,6 +98,8 @@ const DICT: Record<string, { ru: string; en: string }> = {
   "judge.min": { ru: "Порог judge_min", en: "judge_min threshold" },
   "judge.template": { ru: "Шаблон промпта", en: "Prompt template" },
   "judge.enabled": { ru: "Применять в профиле llm", en: "Apply in llm profile" },
+  "judge.url": { ru: "URL движка-судьи (внешний, необязательно)", en: "Judge engine URL (external, optional)" },
+  "run.judgeAgree": { ru: "Согласие судьи и правил", en: "Judge–rules agreement" },
   "admin.title": { ru: "Администрирование", en: "Admin" },
   "catalog.title": { ru: "Каталог", en: "Catalog" },
   "cat.engines": { ru: "Движки", en: "Engines" },

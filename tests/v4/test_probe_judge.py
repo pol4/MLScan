@@ -59,5 +59,26 @@ class JudgeScoresTest(unittest.TestCase):
         self.assertEqual(probe.judge_scores(eng, cases, {"1": ["a"]}, "T"), {})
 
 
+class JudgeEngineTest(unittest.TestCase):
+    def tearDown(self):
+        for k in ("JUDGE_URL", "JUDGE_MODEL"):
+            os.environ.pop(k, None)
+
+    def test_self_when_no_url(self):
+        os.environ.pop("JUDGE_URL", None)
+        sentinel = object()
+        eng, mode = probe.judge_engine(sentinel)
+        self.assertIs(eng, sentinel)
+        self.assertEqual(mode, "self")
+
+    def test_external_when_url(self):
+        os.environ["JUDGE_URL"] = "http://judge:8000"
+        os.environ["JUDGE_MODEL"] = "judge-m"
+        eng, mode = probe.judge_engine(object())
+        self.assertEqual(mode, "external")
+        self.assertEqual(eng.base, "http://judge:8000")
+        self.assertEqual(eng.model, "judge-m")
+
+
 if __name__ == "__main__":
     unittest.main()

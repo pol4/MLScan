@@ -136,6 +136,7 @@ attest: hmac-sha256            # подпись версии политики
 | `POST /bundles` | создать bundle (артефакт + движок + TestPack) |
 | `POST /bundles/{id}/test` | запустить Job (профиль движка/TestPack) |
 | `GET  /bundles/{id}/verdict` | вердикт + аттестация |
+| `GET  /bundles/{id}/preflight` | предполётная проверка bundle (артефакт присутствует и пригоден для движка) |
 | `POST /engines` | регистрация `EngineDescriptor` |
 | `POST /testpacks` | регистрация/версия `TestPack` |
 | `POST /datasets` | регистрация/версия датасета |

@@ -89,6 +89,7 @@ export default function RunDetail() {
             {m.manual ? <b style={{ color: "var(--warn)" }}> ({t("run.manualMark")}: {m.auto_verdict} → {v.verdict}, {m.reviewed_by})</b> : null}</div>
           <div style={{ color: "var(--fg-soft)", marginBottom: 8 }}>{t("col.policy")}: {pol.id || "default"}@{pol.version} · {t("run.promptSetLabel")} {b.prompt_set || s.prompt_set || "—"} · {t("run.attestation")} <code>{(v.attestation_digest || "").slice(0, 20)}…</code></div>
           <div style={{ marginBottom: 8 }}>{t("run.result")}: passed {s.passed ?? m.passed ?? "—"} / {s.total ?? m.total ?? "—"} · safety_fail {s.safety_fail ?? m.safety_fail ?? "—"} · pass_rate {s.pass_rate ?? m.pass_rate ?? "—"}</div>
+          {m.judge_agreement ? <div style={{ color: "var(--fg-soft)", marginBottom: 8 }}>{t("run.judgeAgree")}: {m.judge_agreement.agree}/{m.judge_agreement.n} ({m.judge_agreement.rate})</div> : null}
           {Object.keys(bc).length ? <Table head={[t("col.criticality"), "total", t("col.passed"), "pass_rate"]}>
             {Object.keys(bc).sort().map((k) => (<tr key={k}><Td>{k}</Td><Td>{bc[k].total ?? ""}</Td><Td>{bc[k].passed ?? ""}</Td><Td>{bc[k].pass_rate ?? ""}</Td></tr>))}
           </Table> : <EmptyState text={t("common.empty")} />}

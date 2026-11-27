@@ -19,6 +19,7 @@ export default function Admin() {
 
   const [engine, setEngine] = useState("");
   const [model, setModel] = useState("");
+  const [jurl, setJurl] = useState("");
   const [min, setMin] = useState("0.6");
   const [template, setTemplate] = useState("");
   const [enabled, setEnabled] = useState(false);
@@ -26,14 +27,14 @@ export default function Admin() {
   useEffect(() => {
     const c = judge.data?.config;
     if (c && Object.keys(c).length) {
-      setEngine(c.engine || ""); setModel(c.model || ""); setMin(String(c.min ?? "0.6"));
+      setEngine(c.engine || ""); setModel(c.model || ""); setJurl(c.url || ""); setMin(String(c.min ?? "0.6"));
       setTemplate(c.template || ""); setEnabled(!!c.enabled);
     }
   }, [judge.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     setMsg(t("common.saving"));
-    try { await api("/v4/judge", { method: "POST", body: JSON.stringify({ engine, model, min: Number(min), template: template || t("judge.templateDefault"), enabled }) });
+    try { await api("/v4/judge", { method: "POST", body: JSON.stringify({ engine, model, url: jurl, min: Number(min), template: template || t("judge.templateDefault"), enabled }) });
       setMsg(t("admin.judgeSaved")); judge.refetch();
     } catch (e) { setMsg("ERR " + String((e as any)?.message || e)); }
   };
@@ -79,6 +80,8 @@ export default function Admin() {
             </select>
             <div style={{ color: "var(--fg-soft)", marginTop: 8 }}>{t("judge.model")}</div>
             <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t("admin.modelPlaceholder")} style={{ ...inp, width: "100%" }} />
+            <div style={{ color: "var(--fg-soft)", marginTop: 8 }}>{t("judge.url")}</div>
+            <input value={jurl} onChange={(e) => setJurl(e.target.value)} placeholder="http://judge-engine:8000" style={{ ...inp, width: "100%" }} />
             <div style={{ color: "var(--fg-soft)", marginTop: 8 }}>{t("judge.min")}</div>
             <input value={min} onChange={(e) => setMin(e.target.value)} style={{ ...inp, width: 120 }} />
             <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />{t("judge.enabled")}</label>

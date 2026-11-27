@@ -116,6 +116,19 @@ def judge_scores(eng, cases: list, responses: dict, template: str) -> dict:
     return out
 
 
+def judge_engine(default_eng):
+    """Движок для судьи: отдельный внешний (JUDGE_URL) или основной (self-judge)."""
+    url = (os.environ.get("JUDGE_URL") or "").strip()
+    if not url:
+        return default_eng, "self"
+    try:
+        eng = EngineClient(url, model=(os.environ.get("JUDGE_MODEL") or "m") or "m",
+                           wait_s=int(os.environ.get("JUDGE_WAIT", "600")))
+        return eng, "external"
+    except Exception:  # noqa: BLE001
+        return default_eng, "self"
+
+
 def main() -> int:
     cases, envelope = _load_cases()
     eng = EngineClient()
@@ -138,9 +151,11 @@ def main() -> int:
           f"{(res.get('budgets_used') or {}).get('tokens', 0)} secs={dt:.1f}", flush=True)
     payload = build_score_payload(cases, res, envelope, dt)
     if os.environ.get("JUDGE_ENABLED") == "1":
-        js = judge_scores(eng, cases, payload.get("responses") or {}, os.environ.get("JUDGE_TEMPLATE", ""))
+        jeng, jmode = judge_engine(eng)
+        js = judge_scores(jeng, cases, payload.get("responses") or {}, os.environ.get("JUDGE_TEMPLATE", ""))
         payload["judge_scores"] = js
-        print("JUDGE_SCORES", len(js), flush=True)
+        payload["judge_mode"] = jmode
+        print("JUDGE_SCORES", len(js), jmode, flush=True)
     req = urllib.request.Request(os.environ["TESTING_URL"] + "/llm/score",
                                  data=json.dumps(payload).encode(), method="POST",
                                  headers={"Authorization": "Bearer " + os.environ.get("MLSCAN_KEY", ""),
