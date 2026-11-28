@@ -26,7 +26,7 @@ spec:
         app: mlscan-judge-engine
       annotations:
         # GPU без device-plugin: прямая CDI-инъекция (как у job'ов тестов). =1 — вторая карта.
-        cdi.k8s.io/mlscan-gpu: "nvidia.com/gpu=1"
+        cdi.k8s.io/mlscan-gpu: "nvidia.com/gpu=0"
     spec:
       runtimeClassName: kata-gpu
       securityContext:
