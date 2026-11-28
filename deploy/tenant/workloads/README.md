@@ -50,3 +50,14 @@ kubectl kustomize deploy/tenant > /tmp/tenant.yaml
 kubectl apply --dry-run=client --validate=false -f /tmp/tenant.yaml
 bash deploy/tenant/check-schema.sh
 ```
+
+## GPU-нагрузки (`workloads/gpu/`, ns `t-mlscan-gpu`)
+
+| Файл | Назначение |
+|------|-----------|
+| `model-cache.yaml` | общий read-mostly кэш моделей (RWX, `/cache/<sha>/files`) |
+| `model-cache-gc.yaml` | крон-GC кэша моделей |
+| `sgl-shim.yaml` | шим SGLang под sm_75 |
+| `ebpf-agent.yaml` | in-guest наблюдатель (kata-btf) |
+| `deception.yaml` | honeypot-ConfigMap'ы для LLM-пути |
+| `judge-engine.yaml` | **отдельный движок-судья** (vLLM, kata-gpu, 1 GPU). По умолчанию `replicas: 0` (занимает GPU — включайте осознанно). Для «внешней» судьи: поднять до 1 и задать в настройках `POST /v4/judge {"url": "http://mlscan-judge-engine.t-mlscan-gpu.svc:8000", "model": "m"}`. |

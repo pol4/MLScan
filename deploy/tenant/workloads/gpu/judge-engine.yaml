@@ -1,0 +1,99 @@
+# Доверенная модель-судья (v4): отдельный движок-судья под kata-gpu.
+#
+# Зачем: judge может быть «внешним» движком (не тем, что тестируется) — см. Arch_v4/14 §4 `url`.
+# Сервис тестирования указывает на него в настройках (`POST /v4/judge {"url": "http://mlscan-judge-engine.t-mlscan-gpu.svc:8000", "model": "m"}`),
+# и probe оценивает ответы через него (`mode=external`), а не self-judge.
+#
+# ВАЖНО (ресурсы): занимает 1 GPU. На стенде 2 GPU, поэтому по умолчанию `replicas: 0` —
+# включайте осознанно (при этом тесты, требующие 2 GPU (TP=2), не смогут стартовать параллельно).
+# Модель берётся из общего кэша моделей `/cache/<sha256>/files` (read-only, без скачивания).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlscan-judge-engine
+  namespace: t-mlscan-gpu
+  labels:
+    app.kubernetes.io/part-of: mlscan
+    app: mlscan-judge-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlscan-judge-engine
+  template:
+    metadata:
+      labels:
+        app: mlscan-judge-engine
+      annotations:
+        # GPU без device-plugin: прямая CDI-инъекция (как у job'ов тестов). =1 — вторая карта.
+        cdi.k8s.io/mlscan-gpu: "nvidia.com/gpu=1"
+    spec:
+      runtimeClassName: kata-gpu
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: engine
+          image: harbor.platform.rtx.local/mlscan/engine-vllm:v0.9.2@sha256:37cd5bd18d220a0f4c70401ce1d4a0cc588fbfe03cc210579428f2c47e6eac33
+          command:
+            - vllm
+            - serve
+            - /cache/169ad53ec313c3a34b06c0809216e4fc072cce444a5d4ff2b59690d064130ed5/files
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --max-model-len
+            - "4096"
+            - --gpu-memory-utilization
+            - "0.90"
+            - --swap-space
+            - "0"
+            - --served-model-name
+            - m
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: XDG_CACHE_HOME, value: /tmp/.cache}
+            - {name: TORCHINDUCTOR_CACHE_DIR, value: /tmp/torchinductor}
+            - {name: TRITON_CACHE_DIR, value: /tmp/triton}
+          ports:
+            - {name: openai, containerPort: 8000}
+          resources:
+            limits:
+              memory: 16Gi
+              cpu: "4"
+              ephemeral-storage: 20Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: false
+          readinessProbe:
+            httpGet: {path: /v1/models, port: 8000}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 60
+          volumeMounts:
+            - {name: cache, mountPath: /cache, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: cache
+          persistentVolumeClaim: {claimName: mlscan-model-cache, readOnly: true}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlscan-judge-engine
+  namespace: t-mlscan-gpu
+  labels:
+    app.kubernetes.io/part-of: mlscan
+    app: mlscan-judge-engine
+spec:
+  selector:
+    app: mlscan-judge-engine
+  ports:
+    - {name: openai, port: 8000, targetPort: 8000}
