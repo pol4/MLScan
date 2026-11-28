@@ -12,6 +12,14 @@
 # ВАЖНО (ресурсы): занимает 1 GPU; по умолчанию `suspend: true` (не запущено). Включение —
 # `suspend: false` (тесты, требующие 2 GPU (TP=2), не смогут стартовать параллельно).
 # Модель берётся из общего кэша моделей `/cache/<sha256>/files` (read-only, без скачивания).
+#
+# ПРОВЕРЕНО (стенд): под `kata-gpu` движок стартует и отвечает `/v1/models`, `/v1/chat/completions`;
+# в микро-ВМ видны `/dev/nvidia*` (GPU passthrough). `runAsNonRoot` обязателен на уровне КОНТЕЙНЕРА
+# (Kyverno `require-nonroot-except-agent`), иначе Job отклоняется.
+#
+# ОГРАНИЧЕНИЕ (инфра): на узле с 2 GPU параллельный GPU-прогон теста не стартует (вторая kata-ВМ с GPU
+# застревает в PodInitializing) → «внешняя» судья требует **свободный GPU**; host-runtime (`nvidia`)
+# запрещён admission-политикой тенанта (инвариант: только kata-профили).
 apiVersion: batch/v1
 kind: Job
 metadata:

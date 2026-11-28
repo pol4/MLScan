@@ -60,4 +60,4 @@ bash deploy/tenant/check-schema.sh
 | `sgl-shim.yaml` | шим SGLang под sm_75 |
 | `ebpf-agent.yaml` | in-guest наблюдатель (kata-btf) |
 | `deception.yaml` | honeypot-ConfigMap'ы для LLM-пути |
-| `judge-engine.yaml` | **отдельный движок-судья** (vLLM, kata-gpu, 1 GPU). По умолчанию `suspend: true` (занимает GPU — включайте осознанно). Для «внешней» судьи: `suspend: false` и задать в настройках `POST /v4/judge {"url": "http://mlscan-judge-engine.t-mlscan-gpu.svc:8000", "model": "m"}`. |
+| `judge-engine.yaml` | **отдельный движок-судья** (vLLM, kata-gpu, 1 GPU). По умолчанию `suspend: true` (занимает GPU; включайте осознанно — проверено, что движок стартует и отвечает под kata-gpu). Для «внешней» судьи: `suspend: false` и задать в настройках `POST /v4/judge {"url": "http://mlscan-judge-engine.t-mlscan-gpu.svc:8000", "model": "m"}`. |
