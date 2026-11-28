@@ -1,14 +1,19 @@
 # Доверенная модель-судья (v4): отдельный движок-судья под kata-gpu.
 #
 # Зачем: judge может быть «внешним» движком (не тем, что тестируется) — см. Arch_v4/14 §4 `url`.
-# Сервис тестирования указывает на него в настройках (`POST /v4/judge {"url": "http://mlscan-judge-engine.t-mlscan-gpu.svc:8000", "model": "m"}`),
+# Сервис тестирования указывает на него в настройках
+#   POST /v4/judge {"url": "http://mlscan-judge-engine.t-mlscan-gpu.svc:8000", "model": "m"}
 # и probe оценивает ответы через него (`mode=external`), а не self-judge.
 #
-# ВАЖНО (ресурсы): занимает 1 GPU. На стенде 2 GPU, поэтому по умолчанию `replicas: 0` —
-# включайте осознанно (при этом тесты, требующие 2 GPU (TP=2), не смогут стартовать параллельно).
+# Почему Job, а не Deployment: под kata-gpu Deployment с restartPolicy=Always после старта
+# контейнера падает на QEMU memory-hotplug ("no slots … duplicate property 'hotplugged-0'").
+# Job с restartPolicy=Never создаёт свежую микро-ВМ (как и job'ы тестов) — проверенный путь.
+#
+# ВАЖНО (ресурсы): занимает 1 GPU; по умолчанию `suspend: true` (не запущено). Включение —
+# `suspend: false` (тесты, требующие 2 GPU (TP=2), не смогут стартовать параллельно).
 # Модель берётся из общего кэша моделей `/cache/<sha256>/files` (read-only, без скачивания).
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
   name: mlscan-judge-engine
   namespace: t-mlscan-gpu
@@ -16,18 +21,17 @@ metadata:
     app.kubernetes.io/part-of: mlscan
     app: mlscan-judge-engine
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mlscan-judge-engine
+  suspend: false
+  backoffLimit: 0
   template:
     metadata:
       labels:
         app: mlscan-judge-engine
       annotations:
-        # GPU без device-plugin: прямая CDI-инъекция (как у job'ов тестов). =1 — вторая карта.
+        # GPU без device-plugin: прямая CDI-инъекция (как у job'ов тестов).
         cdi.k8s.io/mlscan-gpu: "nvidia.com/gpu=0"
     spec:
+      restartPolicy: Never
       runtimeClassName: kata-gpu
       securityContext:
         runAsNonRoot: true
@@ -63,18 +67,13 @@ spec:
             - {name: openai, containerPort: 8000}
           resources:
             limits:
-              # kata-gpu: cpu/memory НЕ задаём (VM-память из limits → известная ошибка QEMU hotplug),
-              # как и в job'ах тестов (см. llm_env: для kata оставляем только GPU/диск).
+              # kata-gpu: cpu/memory НЕ задаём (VM-память из limits → ошибка QEMU hotplug),
+              # как и в job'ах тестов.
               ephemeral-storage: 20Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: ["ALL"]}
             readOnlyRootFilesystem: false
-          readinessProbe:
-            httpGet: {path: /v1/models, port: 8000}
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            failureThreshold: 60
           volumeMounts:
             - {name: cache, mountPath: /cache, readOnly: true}
             - {name: tmp, mountPath: /tmp}
