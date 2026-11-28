@@ -21,7 +21,7 @@ metadata:
     app.kubernetes.io/part-of: mlscan
     app: mlscan-judge-engine
 spec:
-  suspend: false
+  suspend: true
   backoffLimit: 0
   template:
     metadata:
