@@ -94,8 +94,9 @@ judge_min=0.6)`; чтобы включить, сервис должен пере
 позволяет подключить её без изменений кода.
 
 Отдельный движок-судья как нагрузка тенанта: [`deploy/tenant/workloads/gpu/judge-engine.yaml`](../deploy/tenant/workloads/gpu/judge-engine.yaml)
-(vLLM, `kata-gpu`, модель из общего кэша, `replicas: 0` — включается осознанно, занимает 1 GPU).
-Включение: поднять `replicas` до 1 и задать `POST /v4/judge {"url": "http://mlscan-judge-engine.t-mlscan-gpu.svc:8000", "model": "m"}`.
+(Job, vLLM, `kata-gpu`, модель из общего кэша, `suspend: true` — включается осознанно, занимает 1 GPU).
+Включение: `suspend: false` и `POST /v4/judge {"url": "http://mlscan-judge-engine.t-mlscan-gpu.svc:8000", "model": "m"}`.
+Живой запуск под `kata-gpu` требует доработки инфры (см. комментарии в манифесте).
 
 ### 4.1 Модель-судья и её инференс — где «живёт»
 - Судья — **отдельный LLM** (обычно более сильная/доверенная модель), разворачивается как обычный
