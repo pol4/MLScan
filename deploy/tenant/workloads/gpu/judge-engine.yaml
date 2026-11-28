@@ -63,8 +63,8 @@ spec:
             - {name: openai, containerPort: 8000}
           resources:
             limits:
-              memory: 16Gi
-              cpu: "4"
+              # kata-gpu: cpu/memory НЕ задаём (VM-память из limits → известная ошибка QEMU hotplug),
+              # как и в job'ах тестов (см. llm_env: для kata оставляем только GPU/диск).
               ephemeral-storage: 20Gi
           securityContext:
             allowPrivilegeEscalation: false
