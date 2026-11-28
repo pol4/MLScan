@@ -27,9 +27,6 @@ spec:
     metadata:
       labels:
         app: mlscan-judge-engine
-      annotations:
-        # GPU без device-plugin: прямая CDI-инъекция (как у job'ов тестов).
-        cdi.k8s.io/mlscan-gpu: "nvidia.com/gpu=0"
     spec:
       restartPolicy: Never
       runtimeClassName: kata-gpu
@@ -67,8 +64,9 @@ spec:
             - {name: openai, containerPort: 8000}
           resources:
             limits:
-              # kata-gpu: cpu/memory НЕ задаём (VM-память из limits → ошибка QEMU hotplug),
-              # как и в job'ах тестов.
+              # GPU как у job'ов тестов: MLSCAN_GPU_MODE=device-plugin → nvidia.com/gpu.
+              # cpu/memory НЕ задаём (kata-gpu: VM-память из limits → ошибка QEMU hotplug).
+              nvidia.com/gpu: 1
               ephemeral-storage: 20Gi
           securityContext:
             allowPrivilegeEscalation: false
